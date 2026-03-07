@@ -1,0 +1,23 @@
+# Rust
+/target/
+Cargo.lock
+
+# Generated output
+/generated/*
+!/generated/.gitkeep
+
+/graphs/*
+!/graphs/.gitkeep
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak
