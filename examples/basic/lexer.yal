@@ -1,18 +1,8 @@
-{
-(* header opcional *)
-}
+(* Especificación léxica de ejemplo para el generador *)
 
-let digit = ['0'-'9']
-let letter = ['a'-'z''A'-'Z']
-let ws = [' ''\t''\n']
+let digit = 0|1|2|3|4|5|6|7|8|9
+let letter = a|b|c
 
 rule tokens =
-    {ws}+        { /* ignore */ }
+    {digit}+ { NUMBER }
   | {letter}({letter}|{digit})* { ID }
-  | {digit}+     { NUMBER }
-  | '+'          { PLUS }
-  | '-'          { MINUS }
-
-{
-(* trailer opcional *)
-}

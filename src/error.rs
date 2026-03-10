@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+// LexerGenError: enum para representar los diferentes tipos de
+// errores que pueden ocurrir durante el proceso de generación del lexer
 #[derive(Debug, Error)]
 pub enum LexerGenError {
     #[error("formato de especificación inválido: {0}")]

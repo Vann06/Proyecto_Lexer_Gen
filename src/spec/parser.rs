@@ -1,9 +1,9 @@
-// Entender el archivo .yal y su estructura
-// Lectura del archivo YALex
-// definiciones let
-// reglas
-// acciones 
-// header y trailer opc
+// Lectura y parsing del archivo .yal
+// Detecta y separa:
+//   - Definiciones (let name = regex)
+//   - Sección de reglas (rule tokens = ...)
+//   - Bloques de código opcionales (header y trailer)
+// El resultado queda en la estructura SpecIR
 
 use crate::error::LexerGenError;
 use crate::spec::ast::{Definition, Rule, SpecIR};
@@ -71,7 +71,8 @@ pub fn parse_yalex(input: &str) -> Result<SpecIR, LexerGenError> {
             continue;
         }
 
-        // Inicio de reglas
+        // Inicio de la sección de reglas: "rule <nombre> ="
+        // Todo lo que sigue (hasta fin de archivo o nuevo bloque) son reglas
         if line.starts_with("rule ") {
             in_rule_section = true;
             i += 1;
