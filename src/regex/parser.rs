@@ -98,6 +98,72 @@ impl Parser {
                 self.consume();
                 Ok(RegexAst::Group(Box::new(expr)))
             }
+
+            Some ('[') => {
+                self.consume();
+                let mut class_content = String::new();
+                while let Some(c) = self.peek() {
+                    if c == ']' {
+                        break;
+                    }
+                    class_content.push(c);
+                    self.consume();
+                }
+
+                if self.peek() != Some(']') {
+                    return Err(LexerGenError::InvalidSpec(
+                        "Corchete no se cerro en la clase de caracteres".to_string(),
+                    ));
+                }
+
+                self.consume();
+                Ok(RegexAst::CharClass(class_content))
+            }
+
+            Some('"') => {
+                self.consume();
+                let mut nodes = Vec::new();
+                while let Some(c) = self.peek() {
+                    if c == '"' {
+                        break;
+                    }
+                    nodes.push(RegexAst::Literal(c));
+                    self.consume();
+                }
+
+                if self.peek() != Some('"') {
+                    return Err(LexerGenError::InvalidSpec(
+                        String::from("Comillas dobles no cerradas"),
+                    ));
+                }
+                self.consume(); 
+
+                if nodes.is_empty() {
+                    return Ok(RegexAst::Empty);
+                }
+
+                let mut result = nodes.remove(0);
+                for node in nodes {
+                    result = RegexAst::Concat(Box::new(result), Box::new(node));
+                }
+                
+                Ok(result)
+            }
+
+            Some('\\') => {
+                // Nuevo: Soporte de secuencias de escape (ej. \s, \+, \n)
+                self.consume(); // consumimos la barra invertida
+                if let Some(c) = self.peek() {
+                    self.consume();
+                    // Aquí devolverías un literal escapado
+                    Ok(RegexAst::Literal(c))
+                } else {
+                    Err(LexerGenError::InvalidSpec(
+                        "Barra invertida al final de la regex".to_string(),
+                    ))
+                }
+            }
+
             Some(c) => {
                 self.consume();
                 Ok(RegexAst::Literal(c))
