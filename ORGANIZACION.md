@@ -193,13 +193,79 @@ Convierte el AST a un formato graficable.
 * exportar un archivo `.dot`
 * opcionalmente permitir luego generar `.png`
 
-### Entrada
+### Modelo de Entrada / Salida (contrato)
 
-* AST de regex
+#### Entrada (datos en memoria)
 
-### Salida
+* **AST de regex**: raíz del árbol (p.ej. `RegexNode`) ya parseado desde la regex expandida.
+  * Ejemplo: `RegexNode::Concat(Box::new(RegexNode::Literal('a')), Box::new(RegexNode::Star(Box::new(RegexNode::Literal('b')))))`
+* **Autómatas (opcional)**: representación del **AFN/NFA** y/o **AFD/DFA** cuando se quiera graficar una fase posterior.
+  * Ejemplo (DFA): `start=0`, transición `(0, 'a', 1)`, estado de aceptación `{1 -> "ID"}`
+* **Opciones de exportación (opcional)**:
+  * tipo de grafo: `AST | NFA | DFA`
+  * metadatos: título/label del grafo (“AST”, “DFA minimizado”, etc.)
+  * normalización/escape de labels (comillas, saltos de línea, `ε`)
+  * Ejemplo: `{ tipo: "DFA", label: "DFA minimizado", escape: true }`
 
-* archivo de grafo
+#### Entrada (archivos)
+
+* **No requerido**: esta fase no necesita leer archivos; consume estructuras construidas por fases anteriores.
+  * Ejemplo: N/A (no se lee ningún archivo en esta fase)
+
+#### Salida (archivos / artefactos)
+
+* **Archivo `.dot`** (Graphviz DOT, texto)
+  * destino sugerido: `output/ast.dot`, `output/nfa.dot`, `output/dfa.dot`
+  * Ejemplo (ruta): `output/dfa.dot`
+* **Render opcional (fuera de Rust)**: `.png/.svg` generado con Graphviz, por ejemplo `dot -Tpng input.dot -o output.png`
+  * Ejemplo (comando): `dot -Tpng output/dfa.dot -o output/dfa.png`
+
+#### Salida (datos en memoria)
+
+* **Ninguna** (por diseño): es una fase de exportación/observabilidad.
+  * Ejemplo: N/A (solo se produce el archivo `.dot`)
+
+#### Reglas importantes
+
+* **Determinismo de salida**: mismo input ⇒ mismo DOT (orden estable de nodos/aristas) para facilitar diffs.
+* **Compatibilidad**: el DOT debe ser válido para Graphviz sin post-procesamiento.
+
+**Archivo**: `src/graph/dot.rs`  
+**Parte del lexer**: Exportación/visualización (Graphviz DOT)
+
+#### Ejemplo visual (entrada → proceso → salida)
+
+**Caso**: graficar el AST de la regex `ab*` (concatenación de `a` con `b*`).
+
+**Entrada (formato real, dato en memoria)**: AST ya construido.
+
+```text
+RegexNode::Concat(
+  Literal('a'),
+  Star(Literal('b'))
+)
+```
+
+**Qué pasa en el proceso**:
+
+* Se recorre el árbol en profundidad, asignando IDs incrementales `n0, n1, n2, ...`.
+* Por cada nodo se emite un nodo DOT con `label`.
+* Por cada relación padre→hijo se emite una arista DOT.
+
+**Salida (formato real, archivo)**: `output/ast.dot` (snippet).
+
+```dot
+digraph AST {
+  node [shape=box];
+  n0 [label="·"];
+  n1 [label="'a'"];
+  n2 [label="*"];
+  n3 [label="'b'"];
+  n0 -> n1;
+  n0 -> n2;
+  n2 -> n3;
+}
+```
 
 ---
 
@@ -325,13 +391,89 @@ Transforma el AFD en una tabla fácil de usar durante la simulación.
 * `accept[state]`
 * `start_state`
 
-### Entrada
+### Modelo de Entrada / Salida (contrato)
 
-* AFD minimizado
+#### Entrada (datos en memoria)
 
-### Salida
+* **AFD minimizado (`DFA`)**
+  * estados, transiciones `(from, symbol, to)`, `start`
+  * conjunto de aceptaciones y token por estado (y prioridad si aplica)
+  * Ejemplo: `n_states=3`, `start=0`, `accept={2}`, `token_of[2]="NUM"`, transiciones `[(0,'0',2),(0,'1',2),(2,'0',2)]`
+* **Dominio de símbolos**
+  * alfabeto “efectivo” (símbolos presentes en transiciones) y/o el alfabeto objetivo (p.ej. ASCII 0..127)
+  * Ejemplo: alfabeto efectivo `['0','1','2','3','4','5','6','7','8','9']` y tabla dimensionada a ASCII 128
 
-* tabla de transición
+#### Entrada (archivos)
+
+* **No requerido**: se construye desde el DFA ya en memoria.
+  * Ejemplo: N/A (no se lee ningún archivo en esta fase)
+
+#### Salida (datos en memoria)
+
+* **`TransitionTable`**
+  * `delta[state][c] -> next_state | DEAD`
+  * `accept[state] -> Option<token>`
+  * `start_state`
+  * (opcional) `alphabet` para debug/impresión
+  * Ejemplo:
+    * `start_state=0`
+    * `accept[2]=Some("NUM")`
+    * `delta[0]['7']=2`, `delta[0]['a']=DEAD`
+
+#### Salida (archivos / artefactos) (opcional)
+
+* **Dump de depuración**: tabla impresa o exportada a `output/transition_table.txt`/`.csv`
+  * Ejemplo (ruta): `output/transition_table.csv`
+
+#### Reglas importantes
+
+* **Estado muerto (`DEAD`)**: valor centinela único y consistente.
+* **Carácteres fuera de dominio**: documentar qué pasa si \(c\) no está representado (p.ej. tratarlo como `DEAD`).
+
+**Archivo**: `src/table/transition_table.rs`  
+**Parte del lexer**: Construcción de la tabla de transición (\(\delta\))
+
+#### Ejemplo visual (entrada → proceso → salida)
+
+**Caso**: token `NUM` para regex `[0-9]+` con tabla ASCII-128.
+
+**Entrada (formato real, dato en memoria)**: DFA minimizado (vista “humana” de transiciones relevantes).
+
+```text
+Estados: 0 (inicio), 1 (aceptación: NUM)
+Transiciones:
+  0 --'0'..'9'--> 1
+  1 --'0'..'9'--> 1
+Aceptación:
+  token_of[1] = "NUM"
+```
+
+**Qué pasa en el proceso**:
+
+* Se crea `delta[n_states][128]` inicializada a `DEAD`.
+* Se cargan transiciones: `delta[from][sym] = to`.
+* Se genera `accept[state] = Some(token)` para estados de aceptación.
+
+**Salida (formato real, dato en memoria)**: `TransitionTable` (fragmento).
+
+```text
+start_state = 0
+accept[0] = None
+accept[1] = Some("NUM")
+
+delta[0]['5'] = 1
+delta[0]['a'] = DEAD
+delta[1]['0'] = 1
+delta[1]['9'] = 1
+```
+
+**Salida (visual opcional, archivo)**: `output/transition_table.csv` (snippet).
+
+```csv
+state,'0','1','2','3','4','5','6','7','8','9',accept
+0,1,1,1,1,1,1,1,1,1,1,
+1,1,1,1,1,1,1,1,1,1,1,NUM
+```
 
 ### Idea simple
 
@@ -357,15 +499,82 @@ Usa la tabla para analizar texto real.
 * emitir tokens
 * reportar error cuando no haya coincidencia
 
-### Entrada
+### Modelo de Entrada / Salida (contrato)
 
-* tabla de transición
-* texto de entrada
+#### Entrada (datos en memoria)
 
-### Salida
+* **`TransitionTable`**: `start_state`, `delta`, `accept` (y opcionalmente `alphabet`)
+  * Ejemplo: `start_state=0`, `accept[5]=Some("ID")`
+* **Política de matching**
+  * **maximal munch**: prefijo más largo aceptado
+  * **desempate por prioridad**: si hay empate, gana la regla/token de mayor prioridad (normalmente: primera regla declarada)
+  * Ejemplo: con entrada `"=="`, si hay reglas `"="` y `"=="`, se retorna token `"EQEQ"` por maximal munch
 
-* secuencia de tokens
-* errores léxicos
+#### Entrada (archivos / fuentes)
+
+* **Texto a analizar**
+  * puede venir como `&str` (ya leído por CLI) o desde un archivo fuente si el runtime lo implementa así
+  * Ejemplo (archivo): `tests/inputs/ejemplo.txt`
+  * Ejemplo (contenido): `"var x = 123;"`
+
+#### Salida (datos en memoria)
+
+* **Tokens**: `Vec<Token>` (o stream `Token/Error/EOF`)
+* **Errores léxicos**: `Vec<String>` (o stream de errores)
+  * Ejemplo (token): `Token { kind: "NUM", lexeme: "123", line: 1, col: 9 }`
+  * Ejemplo (error): `"Error línea 3:17 — carácter '@'"`
+
+#### Salida (archivos / artefactos) (opcional)
+
+* **Log**: `output/tokens.txt` y/o `output/errors.txt` si se decide persistir.
+  * Ejemplo (ruta): `output/tokens.txt`
+
+#### Reglas importantes
+
+* **Tracking de posición**: actualización correcta de `line/col` (manejo de `\n`).
+* **Tokens “skip”**: documentar si whitespace/comentarios se emiten o se omiten.
+* **EOF**: comportamiento explícito (evento `EOF` o fin del stream).
+
+**Archivo**: `src/runtime/simulator.rs`  
+**Parte del lexer**: Simulación/ejecución del lexer (maximal munch)
+
+#### Ejemplo visual (entrada → proceso → salida)
+
+**Caso**: analizar `var x = 123;` suponiendo tokens `ID`, `NUM`, `EQ`, `SEMI` y que whitespace se omite.
+
+**Entrada (formato real, archivo)**: `tests/inputs/ejemplo.txt`
+
+```text
+var x = 123;
+```
+
+**Qué pasa en el proceso** (resumen):
+
+* Se avanza por la tabla (`delta`) carácter por carácter.
+* Se recuerda la **última aceptación** (posición+token) mientras se avanza.
+* Al caer a `DEAD`, se aplica **maximal munch**: se retrocede a la última aceptación y se emite el token.
+* Se repite hasta `EOF`.
+
+**Salida (formato real, dato en memoria)**: tokens emitidos (visual).
+
+```text
+Token(kind="ID",   lexeme="var", line=1, col=1)
+Token(kind="ID",   lexeme="x",   line=1, col=5)
+Token(kind="EQ",   lexeme="=",   line=1, col=7)
+Token(kind="NUM",  lexeme="123", line=1, col=9)
+Token(kind="SEMI", lexeme=";",   line=1, col=12)
+EOF
+```
+
+**Salida (visual opcional, archivo)**: `output/tokens.txt` (snippet).
+
+```text
+1:1   ID   "var"
+1:5   ID   "x"
+1:7   EQ   "="
+1:9   NUM  "123"
+1:12  SEMI ";"
+```
 
 
 ---
@@ -386,16 +595,102 @@ Genera el archivo fuente final del analizador léxico.
 * insertar acciones de usuario
 * guardar el archivo generado, por ejemplo `generated/lexer.rs`
 
-### Entrada
+### Modelo de Entrada / Salida (contrato)
 
-* tabla de transición
-* reglas
-* acciones
-* código auxiliar
+#### Entrada (datos en memoria)
 
-### Salida
+* **`TransitionTable`** (de `table/transition_table.rs`)
+  * `delta` serializable a `static`/`const`
+  * `accept` serializable (tokens por estado)
+  * `start_state`
+  * Ejemplo: `static DELTA: [[i32; 128]; N] = [...]` y `static ACCEPT: [Option<&'static str>; N] = [...]`
+* **Reglas expandidas**
+  * lista ordenada de reglas con `token_name` y `priority`
+  * acciones asociadas (si el diseño las integra en el lexer generado)
+  * Ejemplo: `[ { token_name: "ID", priority: 0 }, { token_name: "NUM", priority: 1 } ]`
+* **Código auxiliar (si existe en el `.yal`)**
+  * `header`/`trailer` (imports, helpers, definiciones del usuario)
+  * Ejemplo (header): `use std::fmt;`
+* **Opciones de generación (opcional)**
+  * nombre/ruta del archivo de salida
+  * estrategia de dominio de símbolos (ASCII fijo vs mapeo/compresión)
+  * Ejemplo: `{ out: "generated/lexer.rs", domain: "ASCII-128" }`
 
-* archivo fuente del lexer generado
+#### Entrada (archivos)
+
+* **No requerido directo**: este módulo típicamente recibe estructuras ya construidas; no necesita releer el `.yal`.
+  * Ejemplo: N/A (la lectura del `.yal` ocurre en fases anteriores)
+
+#### Salida (archivos / artefactos)
+
+* **Archivo Rust generado**: p.ej. `generated/lexer.rs`
+  * Ejemplo (ruta): `generated/lexer.rs`
+* (opcional) **archivos auxiliares**:
+  * `generated/tokens.rs` (enum o tipos de token)
+  * `generated/actions.rs` (dispatch de acciones)
+  * Ejemplo (ruta): `generated/tokens.rs`
+
+#### Salida (datos en memoria)
+
+* **Ninguna** (por diseño): la finalidad es persistir código fuente.
+  * Ejemplo: N/A (se escribe archivo, no se retorna estructura)
+
+#### Reglas importantes
+
+* **Reproducibilidad**: mismo input ⇒ misma salida (orden estable y formato estable).
+* **Separación data/lógica**: tabla como “data-only”; runtime mínimo (loop de `next_token`, maximal munch, etc.).
+* **Acciones**: documentar claramente si se generan como `match kind { ... }` o si solo se retorna `(kind, lexeme)`.
+
+**Archivo**: `src/codegen/rust_codegen.rs`  
+**Parte del lexer**: Generación de código (emitir `generated/lexer.rs`)
+
+#### Ejemplo visual (entrada → proceso → salida)
+
+**Caso**: generar `generated/lexer.rs` con una tabla pequeña para `NUM = [0-9]+`.
+
+**Entrada (formato real, dato en memoria)**: `TransitionTable` (resumen de lo que se serializa).
+
+```text
+n_states = 2
+start_state = 0
+accept[0] = None
+accept[1] = Some("NUM")
+delta[0]['0'..'9'] = 1
+delta[1]['0'..'9'] = 1
+resto = DEAD
+```
+
+**Qué pasa en el proceso**:
+
+* Se “imprime” la tabla como arreglos Rust `static`/`const` (`DELTA`, `ACCEPT`).
+* Se genera la función `next_token(...)` que implementa maximal munch sobre `DELTA/ACCEPT`.
+* Se escribe el archivo final a disco.
+
+**Salida (formato real, archivo)**: `generated/lexer.rs` (snippet).
+
+```rust
+// Generado automáticamente — NO editar
+const DEAD: i32 = -1;
+const START: usize = 0;
+
+static ACCEPT: [Option<&'static str>; 2] = [
+    None,
+    Some("NUM"),
+];
+
+static DELTA: [[i32; 128]; 2] = [
+    /* state 0 */ [/* ... 128 ints ... */],
+    /* state 1 */ [/* ... 128 ints ... */],
+];
+
+#[derive(Debug, Clone)]
+pub struct Token {
+    pub kind: &'static str,
+    pub lexeme: String,
+    pub line: usize,
+    pub col: usize,
+}
+```
 
 
 ---
