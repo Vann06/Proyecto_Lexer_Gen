@@ -84,18 +84,42 @@ fn main() {
             rule.priority, rule.pattern_expanded, rule.action_code);
     }
 
-    // ── Fase 3: Construir AST de cada regex ─────────────────────────────────
+    // ── Fase 3 y 7: Construir AST de cada regex y su Autómata ─────────────
     println!("\n╔══════════════════════════════════════════╗");
-    println!("║      FASE 3 — AST DE CADA REGLA          ║");
+    println!("║   FASE 3 Y 7 — AST Y CONSTRUCCIÓN NFA    ║");
     println!("╚══════════════════════════════════════════╝");
 
     let mut all_ok = true;
+    let mut id_counter = 0; // El contador maestro de bolitas que le pasaremos al autómata
+    
+    // Aquí vamos a ir guardando los mini-autómatas de cada regla
+    let mut nfas_list = Vec::new();
+
     for rule in &expanded {
         println!("\n  Regla [{}] — acción: {{ {} }}", rule.priority, rule.action_code);
         println!("  Regex expandida: {}", rule.pattern_expanded);
-        println!("  AST:");
+        
         match parse_regex(&rule.pattern_expanded) {
-            Ok(ast) => println!("{}", ast.pretty_print(2)),
+            Ok(ast) => {
+                println!("  [AST Construido Correctamente]");
+                
+                // Opcional: Generar gráfica DOT para la Fase 6
+                // let dot_filename = format!("graphs/ast_regex_rule_{}.dot", rule.priority);
+                // if let Err(e) = crate::graph::dot::generate_dot(&ast, &dot_filename) {
+                //     eprintln!("  ⚠ No se pudo generar la gráfica para {}: {}", dot_filename, e);
+                // }
+                
+                // 🔴 FASE 7: Creamos el Autómata chiquito y lo guardamos
+                let mut rule_nfa = crate::automata::nfa::build_nfa_from_ast(&ast, &mut id_counter);
+                
+                // Le damos su premio a esta regla (Para saber qué acción era, al final)
+                if let Some(final_state) = rule_nfa.states.get_mut(&rule_nfa.end_state) {
+                    final_state.accept_action = Some((rule.priority, rule.action_code.clone()));
+                }
+                
+                println!("  [AFN Construido: {} estados generados]", rule_nfa.states.len());
+                nfas_list.push(rule_nfa);
+            },
             Err(e) => {
                 eprintln!("  ✗ Error al parsear regex: {}", e);
                 all_ok = false;
@@ -103,15 +127,41 @@ fn main() {
         }
     }
 
-    // ── Resumen ──────────────────────────────────────────────────────────────
+    // ── Resumen y Pegamento ──────────────────────────────────────────────────
     println!();
     if all_ok {
-        println!("✓ Fase 1 completada: {} definición(es), {} regla(s) leídas.",
-            spec.definitions.len(), spec.rules.len());
-        println!("✓ Fase 2 completada: macros expandidas correctamente.");
-        println!("✓ Fase 3 completada: AST construido para todas las reglas.");
+        println!("✓ Fase 1 a 3 completadas.");
+        
+        // 🔴 FASE 7 (Final): Juntamos los 25 autómatas en uno solo gigante
+        let master_nfa = crate::automata::nfa::combine_nfas(nfas_list, &mut id_counter);
+        
+        println!("✓ Fase 7 completada: ¡Super AFN maestro construido!");
+        println!("  Total de Estados (Bolitas) en memoria: {}", master_nfa.states.len());
+        println!("  Estado Inicial de Entrada: {}", master_nfa.start_state);
+        
+        // 🔴 FASE 8 Y 9: Construimos el Autómata Finito Determinista
+        println!("\n╔══════════════════════════════════════════╗");
+        println!("║      FASE 8 Y 9 — CONSTRUCCIÓN AFD       ║");
+        println!("╚══════════════════════════════════════════╝");
+        
+        let dfa = crate::automata::subset::build_dfa_from_nfa(&master_nfa);
+        println!("✓ Fase 8 y 9 completadas: ¡AFD compacto construido usando Subconjuntos!");
+        println!("  De {} mágicos, sobrevivieron: {} Estados Deterministas Seguros.", master_nfa.states.len(), dfa.states.len());
+        println!("  Estado Inicial del AFD: {}", dfa.start_state);
+        
+        // 🔴 FASE 10: Minimizamos el AFD
+        println!("\n╔══════════════════════════════════════════╗");
+        println!("║      FASE 10 — MINIMIZACIÓN DE AFD       ║");
+        println!("╚══════════════════════════════════════════╝");
+        
+        let min_dfa = crate::automata::minimize::minimize_dfa(&dfa);
+        println!("✓ Fase 10 completada: ¡AFD Minimizado con éxito!");
+        println!("  Estados antes (Subset AFD): {}", dfa.states.len());
+        println!("  Estados finales (Min AFD) : {}", min_dfa.states.len());
+        println!("  Estado Inicial Minimizado : {}", min_dfa.start_state);
+        
     } else {
-        eprintln!("✗ Hubo errores en la construcción del AST.");
+        eprintln!("✗ Hubo errores en las fases previas.");
         std::process::exit(1);
     }
 }

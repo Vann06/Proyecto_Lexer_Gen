@@ -1,8 +1,95 @@
-(* Especificación léxica de ejemplo para el generador *)
+(* Especificación léxica para un subconjunto de C *)
+(* Demostrando el poder del nuevo parser con rangos, strings y escapes *)
 
-let digit = 0|1|2|3|4|5|6|7|8|9
-let letter = a|b|c
+{
+// Este es el bloque HEADER: Código Rust que se copiará tal cual al inicio del lexer generado.
+// Aquí suelen ir los imports y la definición del tipo de Token.
+#[derive(Debug, PartialEq, Clone)]
+pub enum Token {
+    // Palabras reservadas
+    If, Else, While, Return, Int, Float, Struct,
+    // Literales y Variables
+    Id(String),
+    NumInt(i64),
+    NumFloat(f64),
+    StringLiteral(String),
+    // Operadores y Puntuación
+    Plus, Minus, Star, Slash, Assign, Equals,
+    LBrace, RBrace, LParen, RParen, Semicolon, Comma,
+    // Ignorables
+    Whitespace,
+    Comment,
+    // Control
+    Error(String),
+}
+}
 
+(* --- DEFINICIONES (Macros) --- *)
+
+(* Ahora sí podemos usar la elegancia de los rangos [x-y] *)
+let digit = [0-9]
+let lower = [a-z]
+let upper = [A-Z]
+let letter = {lower}|{upper}
+
+(* Uso del escape de barra invertida (\) que implementamos *)
+let ws = \s|\t|\n|\r
+
+(* Tipos de datos complejos *)
+let id = ({letter}|_)(({letter}|_)|{digit})*
+let int_num = {digit}+
+let float_num = {digit}+\.{digit}+
+
+(* --- REGLAS LÉXICAS --- *)
+(* RECUERDA: El orden importa. Lo de arriba tiene mayor prioridad en caso de empate *)
 rule tokens =
-    {digit}+ { NUMBER }
-  | {letter}({letter}|{digit})* { ID }
+    (* 1. Ignorables (Espacios en blanco) *)
+    {ws}+               { return Token::Whitespace; }
+    
+    (* 2. Comentarios de línea plana: "//" seguido de cualquier cosa hasta el final *)
+    (* (Nota: Un lexer real usaría una exclusión de salto de línea, aquí simplificamos) *)
+  | //({letter}|{digit}|{ws})* { return Token::Comment; }
+
+    (* 3. Palabras Reservadas (Literal strings exactos entre comillas) *)
+  | "if"                { return Token::If; }
+  | "else"              { return Token::Else; }
+  | "while"             { return Token::While; }
+  | "return"            { return Token::Return; }
+  | "int"               { return Token::Int; }
+  | "float"             { return Token::Float; }
+  | "struct"            { return Token::Struct; }
+
+    (* 4. Variables e Identificadores (Tienen menor prioridad que las reservas) *)
+  | {id}                { return Token::Id(lexeme.to_string()); }
+
+    (* 5. Números Constantes *)
+  | {float_num}         { return Token::NumFloat(lexeme.parse().unwrap()); }
+  | {int_num}           { return Token::NumInt(lexeme.parse().unwrap()); }
+
+    (* 6. Cadenas de Texto Literales (ej. "Hola Mundo") *)
+    (* Usamos las comillas explícitas y capturamos su contenido *)
+  | "({letter}|{digit}|{ws})*" { return Token::StringLiteral(lexeme.to_string()); }
+
+    (* 7. Puntuación y Agrupamiento *)
+  | "{"                   { return Token::LBrace; }
+  | "}"                   { return Token::RBrace; }
+  | "("                   { return Token::LParen; }
+  | ")"                   { return Token::RParen; }
+  | ";"                   { return Token::Semicolon; }
+  | ","                   { return Token::Comma; }
+
+    (* 8. Operadores Matemáticos y Lógicos *)
+  | "+"                   { return Token::Plus; }
+  | "-"                   { return Token::Minus; }
+  | "*"                   { return Token::Star; }
+  | "/"                   { return Token::Slash; }
+  | "=="                  { return Token::Equals; } (* Doble igual para comparación '==' *)
+  | "="                   { return Token::Assign; } (* Un solo igual para asignación '=' *)
+
+{
+// Este es el bloque TRAILER: Código Rust que se copiará tal cual al final.
+// Normalmente aquí va código auxiliar de ayuda o la función principal si el lexer corre solo.
+fn lexer_error(lex: &str) {
+    eprintln!("Error léxico encontrado: símbolo irreconocible '{}'", lex);
+}
+}
