@@ -159,6 +159,40 @@ fn main() {
         println!("  Estados antes (Subset AFD): {}", dfa.states.len());
         println!("  Estados finales (Min AFD) : {}", min_dfa.states.len());
         println!("  Estado Inicial Minimizado : {}", min_dfa.start_state);
+
+        // ── Fase 6: Exportar DFA a DOT ───────────────────────────────────────
+        fs::create_dir_all("graphs").ok();
+        if let Err(e) = crate::graph::dot::write_dfa_dot("graphs/dfa.dot", &min_dfa) {
+            eprintln!("⚠ No se pudo escribir graphs/dfa.dot: {}", e);
+        } else {
+            println!("\n✓ Fase 6: graphs/dfa.dot generado.");
+        }
+
+        // ── Fase 11: Tabla de transición ────────────────────────────────────
+        let table = crate::table::transition_table::build(&min_dfa);
+        println!("✓ Fase 11: Tabla de transición construida ({} estados).", table.n_states);
+
+        // ── Fase 13: Generar lexer.rs ───────────────────────────────────────
+        if let Err(e) = crate::codegen::rust_codegen::emit_file(
+            "generated/lexer.rs",
+            &table,
+            &expanded,
+            spec.header.as_deref(),
+            spec.trailer.as_deref(),
+        ) {
+            eprintln!("Error al generar lexer: {}", e);
+            std::process::exit(1);
+        }
+        println!("✓ Fase 13: generated/lexer.rs generado.");
+
+        // ── Fase 12 (opcional): Probar simulador en memoria ─────────────────
+        let test_input = "42 abc";
+        let mut sim = crate::runtime::simulator::Simulator::new(&table, test_input);
+        let (tokens, errors) = sim.tokenize();
+        println!("\n✓ Fase 12: Simulador probado con \"{}\": {} token(s), {} error(es).", test_input, tokens.len(), errors.len());
+        for t in &tokens {
+            println!("    Token: kind={:?} lexeme={:?} line={} col={}", t.kind, t.lexeme, t.line, t.col);
+        }
         
     } else {
         eprintln!("✗ Hubo errores en las fases previas.");
