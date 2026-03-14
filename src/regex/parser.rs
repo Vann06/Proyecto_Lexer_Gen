@@ -99,7 +99,8 @@ impl Parser {
                 Ok(RegexAst::Group(Box::new(expr)))
             }
 
-            Some ('[') => {
+            Some('[') => {
+                // Inicio de clase de caracteres: [ ... ]
                 self.consume();
                 let mut class_content = String::new();
                 while let Some(c) = self.peek() {
@@ -112,12 +113,43 @@ impl Parser {
 
                 if self.peek() != Some(']') {
                     return Err(LexerGenError::InvalidSpec(
-                        "Corchete no se cerro en la clase de caracteres".to_string(),
+                        "Corchete no se cerró en la clase de caracteres".to_string(),
                     ));
                 }
-
                 self.consume();
-                Ok(RegexAst::CharClass(class_content))
+
+                // EXPANSIÓN DE LA CLASE DE CARACTERES
+                let chars_in_class: Vec<char> = class_content.chars().collect();
+                let mut expanded_nodes = Vec::new();
+
+                // Lógica básica para expandir rangos como "0-9" o "a-z"
+                if chars_in_class.len() == 3 && chars_in_class[1] == '-' {
+                    let start = chars_in_class[0] as u32;
+                    let end = chars_in_class[2] as u32;
+
+                    for code in start..=end {
+                        if let Some(ch) = std::char::from_u32(code) {
+                            expanded_nodes.push(RegexAst::Literal(ch));
+                        }
+                    }
+                } else {
+                    // Si no es un rango, solo es una lista de caracteres ej. [abc]
+                    for ch in chars_in_class {
+                        expanded_nodes.push(RegexAst::Literal(ch));
+                    }
+                }
+
+                if expanded_nodes.is_empty() {
+                    return Ok(RegexAst::Empty);
+                }
+
+                // Convertir el vector de literales en un árbol de Uniones (a | b | c ...)
+                let mut result = expanded_nodes.remove(0);
+                for node in expanded_nodes {
+                    result = RegexAst::Union(Box::new(result), Box::new(node));
+                }
+
+                Ok(result)
             }
 
             Some('"') => {

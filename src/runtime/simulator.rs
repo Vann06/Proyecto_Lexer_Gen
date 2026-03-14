@@ -106,7 +106,11 @@ impl<'a> Simulator<'a> {
         let mut tokens = Vec::new();
         let mut errors = Vec::new();
         loop {
-            match self.next_token() {
+            match self.next_token() {                
+                // Consumimos pero no devolvemos tokens de Whitespace
+                LexResult::Token(t) if t.kind.contains("Whitespace") => {
+                    // simplemente los ignoramos
+                }
                 LexResult::Token(t) => tokens.push(t),
                 LexResult::Error { lexeme, line, col } => {
                     errors.push(format!("Error línea {}:{} — carácter '{}'", line, col, lexeme));

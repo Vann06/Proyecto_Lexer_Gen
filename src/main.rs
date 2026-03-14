@@ -171,6 +171,8 @@ fn main() {
         // ── Fase 11: Tabla de transición ────────────────────────────────────
         let table = crate::table::transition_table::build(&min_dfa);
         println!("✓ Fase 11: Tabla de transición construida ({} estados).", table.n_states);
+        // Visualización opcional de la tabla en consola
+        crate::table::transition_table::print_table(&table);
 
         // ── Fase 13: Generar lexer.rs ───────────────────────────────────────
         if let Err(e) = crate::codegen::rust_codegen::emit_file(

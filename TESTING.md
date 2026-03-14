@@ -10,6 +10,9 @@ Este documento describe cómo probar cada fase del pipeline (Fase 6, 11, 12 y 13
 - **Graphviz** (opcional): para validar y renderizar archivos `.dot` (`dot -Tpng archivo.dot -o archivo.png`).
 - Archivos de ejemplo: `examples/basic/lexer.yal`, `examples/basic/ejemplo_c.yal`.
 
+> Nota: **no necesitas ninguna herramienta externa tipo YALex**.  
+> Todo el pipeline (parser de regex, construcción de NFA/DFA, minimización, simulador y codegen) se ejecuta únicamente con `cargo run` / `cargo test` sobre este proyecto.
+
 ---
 
 ## Fase 6 — `src/graph/dot.rs` (exportar a DOT)
@@ -95,8 +98,17 @@ Este documento describe cómo probar cada fase del pipeline (Fase 6, 11, 12 y 13
    - Segundo token con `lexeme == "abc"`.
    - Sin errores en la lista de errores para esa entrada.
 
-2. **Pipeline completo**  
-   Al final de `main.rs` se hace una prueba con una cadena fija (p. ej. `"42 abc"`). Revisar la salida en consola: se listan los tokens (kind, lexeme, line, col) y el número de errores.
+2. **Pipeline completo (sin usar lexer generado)**  
+   Ejecutar el pipeline con una especificación `.yal` de ejemplo:
+   ```bash
+   cargo run -- examples/basic/lexer.yal
+   ```
+   Al final de `main.rs` se hace una prueba del **simulador en memoria** con una cadena fija (por defecto `"42 abc"`):
+   - Se construye el DFA minimizado.
+   - Se construye la `TransitionTable`.
+   - Se instancia `Simulator::new(&table, "42 abc")` y se llama a `tokenize()`.
+   Revisar la salida en consola: se listan los tokens (kind, lexeme, line, col) y el número de errores.
+   - Debes ver un token numérico para `"42"` y un identificador para `"abc"`, **sin errores léxicos**.
 
 3. **Carácter inválido**  
    Probar con una entrada que contenga un carácter no reconocido por ninguna regla; debe aparecer un `LexResult::Error` y el mensaje correspondiente en la lista de errores.
@@ -148,17 +160,25 @@ Este documento describe cómo probar cada fase del pipeline (Fase 6, 11, 12 y 13
 
 Pasos recomendados para una prueba de extremo a extremo:
 
-1. **Generar**  
+1. **Generar (todo el pipeline interno)**  
    ```bash
    cargo run -- examples/basic/lexer.yal
    ```
 
-2. **Comprobar artefactos**  
+2. **Comprobar artefactos del pipeline (opcional)**  
    - `graphs/dfa.dot` existe y, con Graphviz, `dot -Tpng graphs/dfa.dot -o graphs/dfa.png` no falla.
-   - `generated/lexer.rs` existe y contiene las tablas y funciones descritas arriba.
+   - `generated/lexer.rs` existe y contiene las tablas y funciones descritas arriba (no es obligatorio usar este archivo para las pruebas básicas; basta con el simulador en memoria).
 
-3. **Probar simulador en memoria**  
-   La salida en consola ya muestra una prueba con una cadena fija; revisar que los tokens y el número de errores son los esperados.
+3. **Probar simulador en memoria (recomendado)**  
+   La salida en consola muestra una prueba con una cadena fija (por defecto `"42 abc"`); revisar que los tokens y el número de errores son los esperados.
+
+4. **Correr todos los tests automáticos**  
+   ```bash
+   cargo test
+   ```
+   Esto ejecuta los tests unitarios de:
+   - Construcción de `TransitionTable` dummy (Fase 11).
+   - Simulador `Simulator` con casos simples como `"42"` y `"42x"` (Fase 12).
 
 4. **Opcional: usar el lexer generado**  
    Integrar `generated/lexer.rs` en un programa o test que llame a `tokenize(input)` y comparar con la salida del simulador para la misma `input`.
