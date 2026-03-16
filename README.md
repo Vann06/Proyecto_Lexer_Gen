@@ -71,5 +71,16 @@ lexer-generator/
 
 
 ## Ejecución
+
+Pruebas con varios .txt de entrada en `examples/` y generación de lexers en `generated/`.
+Input txt propuestos en el proyecto:
+* `examples/basic/input.txt`: texto de prueba con tokens válidos e inválidos para el lexer generado a partir de `examples/basic/lexer.yal`.
+* `examples/basic/input_test.txt`: otro texto de prueba para verificar el comportamiento del lexer.
+* `examples/basic/input_test2.txt`: otro texto de prueba para verificar el comportamiento del lexer.
+* `examples/basic/input_errors.txt`: texto de prueba con errores léxicos.
+
 ```bash
-cargo run 
+
+cargo run -- examples/basic/ejemplo_c.yal examples/basic/input_test2.txt
+
+```

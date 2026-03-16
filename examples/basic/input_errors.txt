@@ -1,0 +1,13 @@
+int main() {
+    int x = 5;
+    int y = 8;
+
+    if (x != y) {
+        x = x + 1;
+    }
+
+    float z = 3.14.15;
+    int wrong$name = 4;
+    char *text = "hello world;
+    return %x;
+}

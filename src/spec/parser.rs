@@ -31,12 +31,21 @@ pub fn parse_yalex(input: &str) -> Result<SpecIR, LexerGenError> {
         if i == 0 && line.starts_with('{') {
             let mut block = String::new();
             let mut found_end = false;
+            let mut brace_count = 0;
 
             while i < lines.len() {
+                for c in lines[i].chars() {
+                    if c == '{' {
+                        brace_count += 1;
+                    } else if c == '}' {
+                        brace_count -= 1;
+                    }
+                }
+                
                 block.push_str(lines[i]);
                 block.push('\n');
 
-                if lines[i].trim().ends_with('}') {
+                if brace_count == 0 {
                     found_end = true;
                     break;
                 }
@@ -49,7 +58,15 @@ pub fn parse_yalex(input: &str) -> Result<SpecIR, LexerGenError> {
                 ));
             }
 
-            header = Some(block);
+            let mut block_trimmed = block.trim().to_string();
+            if block_trimmed.starts_with('{') {
+                block_trimmed.remove(0);
+            }
+            if block_trimmed.ends_with('}') {
+                block_trimmed.pop();
+            }
+
+            header = Some(block_trimmed);
             i += 1;
             continue;
         }
@@ -85,12 +102,21 @@ pub fn parse_yalex(input: &str) -> Result<SpecIR, LexerGenError> {
                 // possible trailer
                 let mut block = String::new();
                 let mut found_end = false;
+                let mut brace_count = 0;
 
                 while i < lines.len() {
+                    for c in lines[i].chars() {
+                        if c == '{' {
+                            brace_count += 1;
+                        } else if c == '}' {
+                            brace_count -= 1;
+                        }
+                    }
+
                     block.push_str(lines[i]);
                     block.push('\n');
 
-                    if lines[i].trim().ends_with('}') {
+                    if brace_count == 0 {
                         found_end = true;
                         break;
                     }
@@ -103,7 +129,15 @@ pub fn parse_yalex(input: &str) -> Result<SpecIR, LexerGenError> {
                     ));
                 }
 
-                trailer = Some(block);
+                let mut block_trimmed = block.trim().to_string();
+                if block_trimmed.starts_with('{') {
+                    block_trimmed.remove(0);
+                }
+                if block_trimmed.ends_with('}') {
+                    block_trimmed.pop();
+                }
+
+                trailer = Some(block_trimmed);
                 i += 1;
                 continue;
             }

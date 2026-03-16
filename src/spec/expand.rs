@@ -22,12 +22,39 @@ pub struct ExpandedRule {
 /// Las definiciones se ordenan de mayor a menor longitud de nombre para evitar
 /// que un nombre corto reemplace parcialmente a uno más largo (p.ej. "id" vs "id2").
 pub fn expand_definitions(spec: &SpecIR) -> Vec<ExpandedRule> {
-    // Construir mapa nombre -> regex
-    let defs: HashMap<String, String> = spec
+    // 1. Recoger los defs
+    let mut defs: HashMap<String, String> = spec
         .definitions
         .iter()
         .map(|d| (d.name.clone(), d.regex.clone()))
         .collect();
+
+    // 2. Expandir las definiciones entre sí hasta que no haya más llaves 
+    //    (expansión recursiva de macros dentro de macros)
+    let mut changed = true;
+    let mut iterations = 0;
+    while changed && iterations < 100 {
+        changed = false;
+        let mut new_defs = defs.clone();
+        
+        let mut sorted_keys: Vec<String> = defs.keys().cloned().collect();
+        sorted_keys.sort_by(|a, b| b.len().cmp(&a.len()));
+
+        for (k, v) in defs.iter() {
+            let mut expanded_v = v.clone();
+            for sub_k in &sorted_keys {
+                let placeholder = format!("{{{}}}", sub_k);
+                if expanded_v.contains(&placeholder) {
+                    let replacement = format!("({})", defs[sub_k]);
+                    expanded_v = expanded_v.replace(&placeholder, &replacement);
+                    changed = true;
+                }
+            }
+            new_defs.insert(k.clone(), expanded_v);
+        }
+        defs = new_defs;
+        iterations += 1;
+    }
 
     // Ordenar por longitud descendente para evitar reemplazos parciales
     let mut sorted_names: Vec<&String> = defs.keys().collect();

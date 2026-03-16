@@ -5,6 +5,7 @@ use crate::regex::ast::RegexAst;
 use crate::automata::dfa::Dfa;
 
 /// Genera un archivo .dot con el árbol de la expresión regular.
+#[allow(dead_code)]
 pub fn write_ast_dot(path: &str, root: &RegexAst) -> std::io::Result<()> {
     let mut out = String::from("digraph AST {\n  node [shape=box];\n");
     let mut id = 0usize;
@@ -13,6 +14,7 @@ pub fn write_ast_dot(path: &str, root: &RegexAst) -> std::io::Result<()> {
     fs::write(path, out)
 }
 
+#[allow(dead_code)]
 fn ast_node(out: &mut String, node: &RegexAst, id: &mut usize) -> usize {
     let my_id = *id;
     *id += 1;

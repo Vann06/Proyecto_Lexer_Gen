@@ -60,13 +60,21 @@ pub fn emit_file(
     code.push_str("];\n\n");
 
     code.push_str(&format!(
-        "static ACCEPT: [Option<&'static str>; {}] = [\n",
+        "static ACCEPT: [Option<(&'static str, &'static str)>; {}] = [\n",
         n
     ));
     for s in 0..n {
         match &tt.accept[s] {
             Some(act) => {
-                code.push_str(&format!("    Some(\"{}\"),\n", escape_rust_string(act)));
+                let mut kind_name = "Unknown".to_string();
+                if let Some(idx) = act.find("Token::") {
+                    let tail = &act[idx + 7..];
+                    let end = tail.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(tail.len());
+                    kind_name = tail[..end].to_string();
+                } else if act.contains("None") {
+                    kind_name = "Ignored".to_string();
+                }
+                code.push_str(&format!("    Some((\"{}\", \"{}\")),\n", kind_name, escape_rust_string(act)));
             }
             None => code.push_str("    None,\n"),
         }
@@ -75,6 +83,7 @@ pub fn emit_file(
 
     code.push_str("#[derive(Debug, Clone)]\npub struct Token {\n");
     code.push_str("    pub kind: &'static str,\n");
+    code.push_str("    pub action: &'static str,\n");
     code.push_str("    pub lexeme: String,\n");
     code.push_str("    pub line: usize,\n");
     code.push_str("    pub col: usize,\n");
@@ -90,7 +99,7 @@ pub fn emit_file(
     code.push_str("    let start = *pos;\n");
     code.push_str("    let start_line = *line;\n");
     code.push_str("    let start_col = *col;\n");
-    code.push_str("    let (mut last_pos, mut last_tok) = (None::<usize>, None::<&str>);\n\n");
+    code.push_str("    let (mut last_pos, mut last_tok, mut last_action) = (None::<usize>, None::<&str>, None::<&str>);\n\n");
     code.push_str("    while *pos < input.len() {\n");
     code.push_str("        let c = input[*pos] as usize;\n");
     code.push_str("        if c >= 128 { break; }\n");
@@ -98,14 +107,14 @@ pub fn emit_file(
     code.push_str("        if next == DEAD { break; }\n");
     code.push_str("        state = next; *pos += 1;\n");
     code.push_str("        if input[*pos - 1] == '\\n' { *line += 1; *col = 1; } else { *col += 1; }\n");
-    code.push_str("        if let Some(tok) = ACCEPT[state as usize] {\n");
-    code.push_str("            last_pos = Some(*pos); last_tok = Some(tok);\n");
+    code.push_str("        if let Some((tok, act)) = ACCEPT[state as usize] {\n");
+    code.push_str("            last_pos = Some(*pos); last_tok = Some(tok); last_action = Some(act);\n");
     code.push_str("        }\n");
     code.push_str("    }\n\n");
     code.push_str("    if let Some(p) = last_pos {\n");
     code.push_str("        *pos = p;\n");
     code.push_str("        let lexeme: String = input[start..p].iter().collect();\n");
-    code.push_str("        Some(Ok(Token { kind: last_tok.unwrap(), lexeme, line: start_line, col: start_col }))\n");
+    code.push_str("        Some(Ok(Token { kind: last_tok.unwrap(), action: last_action.unwrap(), lexeme, line: start_line, col: start_col }))\n");
     code.push_str("    } else {\n");
     code.push_str("        let bad = input[start]; *pos = start + 1;\n");
     code.push_str("        if bad == '\\n' { *line += 1; *col = 1; } else { *col += 1; }\n");

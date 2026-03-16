@@ -107,8 +107,28 @@ impl Parser {
                     if c == ']' {
                         break;
                     }
-                    class_content.push(c);
-                    self.consume();
+                    
+                    if c == '\\' {
+                        self.consume();
+                        if let Some(escaped) = self.peek() {
+                            match escaped {
+                                'n' => class_content.push('\n'),
+                                't' => class_content.push('\t'),
+                                'r' => class_content.push('\r'),
+                                's' => {
+                                    class_content.push(' ');
+                                    class_content.push('\t');
+                                    class_content.push('\n');
+                                    class_content.push('\r');
+                                }
+                                other => class_content.push(other),
+                            }
+                            self.consume();
+                        }
+                    } else {
+                        class_content.push(c);
+                        self.consume();
+                    }
                 }
 
                 if self.peek() != Some(']') {
@@ -118,38 +138,8 @@ impl Parser {
                 }
                 self.consume();
 
-                // EXPANSIÓN DE LA CLASE DE CARACTERES
-                let chars_in_class: Vec<char> = class_content.chars().collect();
-                let mut expanded_nodes = Vec::new();
-
-                // Lógica básica para expandir rangos como "0-9" o "a-z"
-                if chars_in_class.len() == 3 && chars_in_class[1] == '-' {
-                    let start = chars_in_class[0] as u32;
-                    let end = chars_in_class[2] as u32;
-
-                    for code in start..=end {
-                        if let Some(ch) = std::char::from_u32(code) {
-                            expanded_nodes.push(RegexAst::Literal(ch));
-                        }
-                    }
-                } else {
-                    // Si no es un rango, solo es una lista de caracteres ej. [abc]
-                    for ch in chars_in_class {
-                        expanded_nodes.push(RegexAst::Literal(ch));
-                    }
-                }
-
-                if expanded_nodes.is_empty() {
-                    return Ok(RegexAst::Empty);
-                }
-
-                // Convertir el vector de literales en un árbol de Uniones (a | b | c ...)
-                let mut result = expanded_nodes.remove(0);
-                for node in expanded_nodes {
-                    result = RegexAst::Union(Box::new(result), Box::new(node));
-                }
-
-                Ok(result)
+                // DEVOLVEMOS EL NODO CHARCLASS PARA QUE EL NFA LO PROCESE (REGLA 9)
+                Ok(RegexAst::CharClass(class_content))
             }
 
             Some('"') => {
@@ -187,8 +177,19 @@ impl Parser {
                 self.consume(); // consumimos la barra invertida
                 if let Some(c) = self.peek() {
                     self.consume();
-                    // Aquí devolverías un literal escapado
-                    Ok(RegexAst::Literal(c))
+                    let node = match c {
+                        'n' => RegexAst::Literal('\n'),
+                        't' => RegexAst::Literal('\t'),
+                        'r' => RegexAst::Literal('\r'),
+                        's' => {
+                            // Expandimos \s a espacio, \t, \n y \r
+                            let space = RegexAst::Union(Box::new(RegexAst::Literal(' ')), Box::new(RegexAst::Literal('\t')));
+                            let return_chars = RegexAst::Union(Box::new(RegexAst::Literal('\n')), Box::new(RegexAst::Literal('\r')));
+                            RegexAst::Union(Box::new(space), Box::new(return_chars))
+                        }
+                        _ => RegexAst::Literal(c),
+                    };
+                    Ok(node)
                 } else {
                     Err(LexerGenError::InvalidSpec(
                         "Barra invertida al final de la regex".to_string(),

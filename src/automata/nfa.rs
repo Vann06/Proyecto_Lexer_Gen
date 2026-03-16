@@ -1,4 +1,4 @@
-// Convertir cada AST a un AFN
+﻿// Convertir cada AST a un AFN
 // un NFA por regla
 // luego super_start para unir todos
 
@@ -13,6 +13,7 @@ pub enum Transition{
 
 #[derive(Debug, Clone)]
 pub struct State{
+    #[allow(dead_code)]
     pub id: usize, //Identificador único
     pub is_accept: bool, //Ver si es un estado de aceptacion
     pub accept_action: Option<(usize, String)>, //Acción a realizar
@@ -93,7 +94,7 @@ pub fn build_nfa_from_ast(ast: &crate::regex::ast::RegexAst, id_counter: &mut us
         RegexAst::Concat(left, right) => {
             // Evaluamos la rama izquierda y derecha para que se conviertan en autómatas chiquitos primero
             let mut left_nfa = build_nfa_from_ast(left, id_counter);
-            let mut right_nfa = build_nfa_from_ast(right, id_counter);
+            let right_nfa = build_nfa_from_ast(right, id_counter);
             // Trazamos el puente: Flecha épsilon desde el final de A, al inicio de B
             left_nfa.add_transition(left_nfa.end_state, right_nfa.start_state, Transition::Epsilon);
             // Mudamos toda la memoria de casillas (estados) para absorber a B dentro de A
@@ -185,17 +186,64 @@ pub fn build_nfa_from_ast(ast: &crate::regex::ast::RegexAst, id_counter: &mut us
 
         // --- Regla 9: Clase de Caracteres ([a-z] y más) ---
         RegexAst::CharClass(c_string) => {
-            // Un 'CharClass' se construye traduciendo su rango a una Unión gigante de Literales...
-            // Por tiempo lo haremos que si nos dicen [a-c], lo tratemos como (a|b|c)
-            let mut nfa = Nfa::new(id_counter);
+            // Un 'CharClass' se construye traduciendo su rango a una Unión gigante de Literales
+            let chars: Vec<char> = c_string.chars().collect();
+            let mut expanded_chars = Vec::new();
+
+            // Lógica para expandir rangos como "0-9", "a-z", "A-Z", "0-9a-f"
+            let mut is_negated = false;
+            let mut i = 0;
+            if !chars.is_empty() && chars[0] == '^' {
+                is_negated = true;
+                i = 1;
+            }
+
+            while i < chars.len() {
+                // Check if we have a range: char - char
+                if i + 2 < chars.len() && chars[i+1] == '-' {
+                    let start = chars[i];
+                    let end = chars[i+2];
+                    if start <= end {
+                        for code in (start as u32)..=(end as u32) {
+                             if let Some(ch) = std::char::from_u32(code) {
+                                 expanded_chars.push(ch);
+                             }
+                        }
+                    }
+                    i += 3; // Skip start, dash, end
+                } else {
+                    // Just a literal char
+                    expanded_chars.push(chars[i]);
+                    i += 1;
+                }
+            }
             
-            for c in c_string.chars() {
+            if is_negated {
+                let mut inverted = Vec::new();
+                for code in 9..=126u8 {
+                    let ch = code as char;
+                    if !expanded_chars.contains(&ch) {
+                        inverted.push(ch);
+                    }
+                }
+                expanded_chars = inverted;
+            }
+
+            // Si la clase estaba vacía (ej []), se expande a nada (nunca matchea epsilon en lexers reales usualmente)
+            // Pero para NFA debe tener inicio y fin.
+            if expanded_chars.is_empty() {
+                 let nfa = Nfa::new(id_counter);
+                 // Un autómata "muerto" que no acepta nada, o epsilon si queremos.
+                 // Usualmente [] no matchea nada. Dejemoslo desconectado
+                 return nfa;
+            }
+
+            let mut nfa = Nfa::new(id_counter);    
+            for c in expanded_chars {
                 // Creamos un mini-NFA para cada letra y copiamos la topología "Unión"
-                // Nota: para hacer esto 100% completo, deberíamos llamar una función que expanda los rangos
-                // Pero como prueba de concepto mapearemos los literales directos:
                 let mut char_nfa = Nfa::new(id_counter);
                 char_nfa.add_transition(char_nfa.start_state, char_nfa.end_state, Transition::Literal(c));
-                
+
                 nfa.add_transition(nfa.start_state, char_nfa.start_state, Transition::Epsilon);
                 char_nfa.add_transition(char_nfa.end_state, nfa.end_state, Transition::Epsilon);
                 nfa.states.extend(char_nfa.states);
@@ -205,7 +253,7 @@ pub fn build_nfa_from_ast(ast: &crate::regex::ast::RegexAst, id_counter: &mut us
     }
 }
 
-pub fn combine_nfas(mut nfas: Vec<Nfa>, id_counter: &mut usize) -> Nfa {
+pub fn combine_nfas(nfas: Vec<Nfa>, id_counter: &mut usize) -> Nfa {
     let mut super_nfa = Nfa::new(id_counter);
     // Por cada pequeño AFN que recibimos:
     for mut nfa in nfas {
@@ -223,3 +271,13 @@ pub fn combine_nfas(mut nfas: Vec<Nfa>, id_counter: &mut usize) -> Nfa {
     }
     super_nfa
 }
+
+
+
+
+
+
+
+
+
+

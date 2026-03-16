@@ -10,9 +10,11 @@ pub enum LexerGenError {
     #[error("definición inválida: {0}")]
     InvalidDefinition(String),
 
+    #[allow(dead_code)]
     #[error("regla inválida: {0}")]
     InvalidRule(String),
 
+    #[allow(dead_code)]
     #[error("error interno: {0}")]
     Internal(String),
 }

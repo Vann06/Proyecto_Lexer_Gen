@@ -6,6 +6,8 @@ use crate::table::transition_table::{TransitionTable, DEAD};
 #[derive(Debug, Clone)]
 pub struct Token {
     pub kind: String,
+    #[allow(dead_code)]
+    pub action: String,
     pub lexeme: String,
     pub line: usize,
     pub col: usize,
@@ -78,8 +80,18 @@ impl<'a> Simulator<'a> {
         if let Some(accept_pos) = last_accept_pos {
             self.pos = accept_pos;
             let lexeme: String = self.input[start_pos..accept_pos].iter().collect();
+            let act = last_accept_token.unwrap_or_default();
+            let mut kind_name = "Unknown".to_string();
+            if let Some(idx) = act.find("Token::") {
+                let tail = &act[idx + 7..];
+                let end = tail.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(tail.len());
+                kind_name = tail[..end].to_string();
+            } else if act.contains("None") {
+                kind_name = "Ignored".to_string();
+            }
             LexResult::Token(Token {
-                kind: last_accept_token.unwrap_or_default(),
+                kind: kind_name,
+                action: act,
                 lexeme,
                 line: start_line,
                 col: start_col,
@@ -106,10 +118,10 @@ impl<'a> Simulator<'a> {
         let mut tokens = Vec::new();
         let mut errors = Vec::new();
         loop {
-            match self.next_token() {                
-                // Consumimos pero no devolvemos tokens de Whitespace
-                LexResult::Token(t) if t.kind.contains("Whitespace") => {
-                    // simplemente los ignoramos
+            match self.next_token() {
+                // Ignore whitespace and comments
+                LexResult::Token(t) if t.kind.contains("Whitespace") || t.kind.contains("Comment") || t.kind.contains("Ignored") => {
+                    // ignore
                 }
                 LexResult::Token(t) => tokens.push(t),
                 LexResult::Error { lexeme, line, col } => {
@@ -154,3 +166,5 @@ mod tests {
         assert!(errors[0].contains('x'));
     }
 }
+
+

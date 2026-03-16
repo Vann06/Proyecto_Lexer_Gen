@@ -29,6 +29,7 @@ pub enum RegexAst {
 impl RegexAst {
     /// Imprime el AST como árbol indentado para visualización en consola.
     /// `indent` controla el nivel de sangría (multiplicado por 2 espacios).
+    #[allow(dead_code)]
     pub fn pretty_print(&self, indent: usize) -> String {
         let pad = "  ".repeat(indent);
         match self {
