@@ -82,13 +82,27 @@ impl<'a> Simulator<'a> {
             let lexeme: String = self.input[start_pos..accept_pos].iter().collect();
             let act = last_accept_token.unwrap_or_default();
             let mut kind_name = "Unknown".to_string();
-            if let Some(idx) = act.find("Token::") {
+            
+            let clean_act = act.trim();
+            if clean_act.is_empty() {
+                // Reglas con acciones vacías normalmente ignoran el token (ej. ws {})
+                kind_name = "Ignored".to_string();
+            } else if let Some(idx) = act.find("Token::") {
                 let tail = &act[idx + 7..];
                 let end = tail.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(tail.len());
                 kind_name = tail[..end].to_string();
             } else if act.contains("None") {
                 kind_name = "Ignored".to_string();
+            } else if let Some(first_quote) = act.find('"') {
+                if let Some(second_quote) = act[first_quote + 1..].find('"') {
+                    kind_name = act[first_quote + 1 .. first_quote + 1 + second_quote].to_string();
+                } else {
+                    kind_name = clean_act.to_string();
+                }
+            } else {
+                kind_name = clean_act.to_string();
             }
+
             LexResult::Token(Token {
                 kind: kind_name,
                 action: act,

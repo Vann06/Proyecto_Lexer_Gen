@@ -1,0 +1,51 @@
+(* Sección opcional de encabezado *)
+
+(* Definición de delimitadores y espacios en blanco *)
+let delim = [' ''\t''\n']
+let ws = delim+
+
+(* Letras y dígitos *)
+let letter = ['a'-'z''A'-'Z']
+let digit = ['0'-'9']
+let digits = digit+
+
+(* Identificadores: inician con letra, pueden contener letras y dígitos *)
+let id = letter (letter | digit)*
+
+(* Números enteros *)
+let number = '-'? digits
+
+(* Cadenas entre comillas dobles, sin escapes *)
+let string = '"' (letter | digit | ' ')* '"'
+
+(* Comentario de una línea tipo Python *)
+let comentario = '#' (letter | digit | ' ')*
+
+(* Palabras clave *)
+let if_kw = if
+
+(* Operadores *)
+let igual = '='
+let suma = '+'
+let resta = '-'
+let mult = '*'
+let div = '/'
+let menor = '<'
+let mayor = '>'
+
+(* Reglas *)
+rule tokens =
+    if_kw { "IF" }
+    | print_kw { "PRINT" }
+    | igual { "ASIGNACION" }
+    | suma { "SUMA" }
+    | resta { "RESTA" }
+    | mult { "MULTIPLICACION" }
+    | div { "DIVISION" }
+    | menor { "MENOR QUE" }
+    | mayor { "MAYOR QUE" }
+    | number { "NUMERO" }
+    | id { "IDENTIFICADOR" }
+    | string { "STRING" }
+    | comentario { "COMENTARIO" }
+    | ws {}

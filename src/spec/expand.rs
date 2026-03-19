@@ -1,10 +1,10 @@
 // Expansión de macros en los patrones de las reglas.
-// Las macros tienen la forma {nombre} y son reemplazadas por
-// la expresión regular correspondiente de la sección "let".
+// Las macros pueden tener la forma {nombre} o simplemente nombre,
+// y son reemplazadas por la expresión regular correspondiente 
+// de la sección "let".
 //
-// Ejemplo:
-//   let digit = 0|1|2|3|4|5|6|7|8|9
-//   {digit}+  =>  (0|1|2|3|4|5|6|7|8|9)+
+// Se expanden las definiciones primero (para que una pueda usar anteriores)
+// y luego se expanden en las reglas.
 
 use std::collections::HashMap;
 
@@ -19,72 +19,98 @@ pub struct ExpandedRule {
 }
 
 /// Recorre todas las reglas del SpecIR y expande sus macros.
-/// Las definiciones se ordenan de mayor a menor longitud de nombre para evitar
-/// que un nombre corto reemplace parcialmente a uno más largo (p.ej. "id" vs "id2").
 pub fn expand_definitions(spec: &SpecIR) -> Vec<ExpandedRule> {
-    // 1. Recoger los defs
-    let mut defs: HashMap<String, String> = spec
-        .definitions
-        .iter()
-        .map(|d| (d.name.clone(), d.regex.clone()))
-        .collect();
+    let mut expanded_defs: HashMap<String, String> = HashMap::new();
 
-    // 2. Expandir las definiciones entre sí hasta que no haya más llaves 
-    //    (expansión recursiva de macros dentro de macros)
-    let mut changed = true;
-    let mut iterations = 0;
-    while changed && iterations < 100 {
-        changed = false;
-        let mut new_defs = defs.clone();
-        
-        let mut sorted_keys: Vec<String> = defs.keys().cloned().collect();
-        sorted_keys.sort_by(|a, b| b.len().cmp(&a.len()));
-
-        for (k, v) in defs.iter() {
-            let mut expanded_v = v.clone();
-            for sub_k in &sorted_keys {
-                let placeholder = format!("{{{}}}", sub_k);
-                if expanded_v.contains(&placeholder) {
-                    let replacement = format!("({})", defs[sub_k]);
-                    expanded_v = expanded_v.replace(&placeholder, &replacement);
-                    changed = true;
-                }
-            }
-            new_defs.insert(k.clone(), expanded_v);
-        }
-        defs = new_defs;
-        iterations += 1;
+    // Las definiciones se expanden secuencialmente de arriba a abajo.
+    // Una definición solo puede utilizar macros definidas antes que ella.
+    for def in &spec.definitions {
+        let expanded_regex = expand_string(&def.regex, &expanded_defs);
+        expanded_defs.insert(def.name.clone(), expanded_regex);
     }
-
-    // Ordenar por longitud descendente para evitar reemplazos parciales
-    let mut sorted_names: Vec<&String> = defs.keys().collect();
-    sorted_names.sort_by(|a, b| b.len().cmp(&a.len()));
 
     spec.rules
         .iter()
-        .map(|rule| expand_rule(rule, &defs, &sorted_names))
+        .map(|rule| ExpandedRule {
+            pattern_expanded: expand_string(&rule.pattern_raw, &expanded_defs),
+            action_code: rule.action_code.clone(),
+            priority: rule.priority,
+        })
         .collect()
 }
 
-/// Expande todas las referencias {macro} en el patrón de una sola regla.
-/// Aplica sustituciones en orden de mayor a menor longitud de nombre.
-fn expand_rule(
-    rule: &Rule,
-    defs: &HashMap<String, String>,
-    sorted_names: &[&String],
-) -> ExpandedRule {
-    let mut expanded = rule.pattern_raw.clone();
-
-    for name in sorted_names {
-        let placeholder = format!("{{{}}}", name);
-        // Cada macro se envuelve en paréntesis para preservar precedencia
-        let replacement = format!("({})", defs[*name]);
-        expanded = expanded.replace(&placeholder, &replacement);
+/// Expande todas las referencias a macros en un string, respetando 
+/// el contexto de comillas simples, dobles y clases de caracteres.
+fn expand_string(input: &str, defs: &HashMap<String, String>) -> String {
+    let mut result = String::new();
+    let chars: Vec<char> = input.chars().collect();
+    let mut i = 0;
+    
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_class = false;
+    
+    while i < chars.len() {
+        let c = chars[i];
+        
+        if c == '\\' {
+            result.push(c);
+            i += 1;
+            if i < chars.len() {
+                result.push(chars[i]);
+            }
+        } else if c == '\'' && !in_double && !in_class {
+            in_single = !in_single;
+            result.push(c);
+        } else if c == '"' && !in_single && !in_class {
+            in_double = !in_double;
+            result.push(c);
+        } else if c == '[' && !in_single && !in_double {
+            in_class = true;
+            result.push(c);
+        } else if c == ']' && in_class {
+            in_class = false;
+            result.push(c);
+        } else if !in_single && !in_double && !in_class && (c.is_alphabetic() || c == '_') {
+            // Recolectar identificador
+            let mut id = String::new();
+            while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                id.push(chars[i]);
+                i += 1;
+            }
+            
+            // Reemplazar si es una macro conocida
+            if let Some(replacement) = defs.get(&id) {
+                // Solo insertamos los paréntesis si el reemplazo no los tiene ya a los bordes,
+                // O siempre, para simplificar e igualar la lógica original de `final-mod` (que añade paréntesis)
+                result.push_str(&format!("({})", replacement));
+            } else {
+                result.push_str(&id);
+            }
+            continue; // i ya fue incrementado en el while
+        } else {
+            // Soporte para formato {macro} (opcional en YALex, pero útil)
+            if c == '{' && !in_single && !in_double && !in_class {
+                let mut id = String::new();
+                let mut j = i + 1;
+                while j < chars.len() && chars[j] != '}' {
+                    id.push(chars[j]);
+                    j += 1;
+                }
+                if j < chars.len() && chars[j] == '}' {
+                    if let Some(replacement) = defs.get(&id) {
+                        result.push_str(&format!("({})", replacement));
+                        i = j + 1;
+                        continue;
+                    }
+                }
+            }
+            
+            result.push(c);
+        }
+        
+        i += 1;
     }
-
-    ExpandedRule {
-        pattern_expanded: expanded,
-        action_code: rule.action_code.clone(),
-        priority: rule.priority,
-    }
+    
+    result
 }

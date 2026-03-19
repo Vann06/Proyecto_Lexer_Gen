@@ -172,6 +172,36 @@ impl Parser {
                 Ok(result)
             }
 
+            Some('\'') => {
+                self.consume();
+                let mut nodes = Vec::new();
+                while let Some(c) = self.peek() {
+                    if c == '\'' {
+                        break;
+                    }
+                    nodes.push(RegexAst::Literal(c));
+                    self.consume();
+                }
+
+                if self.peek() != Some('\'') {
+                    return Err(LexerGenError::InvalidSpec(
+                        String::from("Comillas simples no cerradas"),
+                    ));
+                }
+                self.consume(); 
+
+                if nodes.is_empty() {
+                    return Ok(RegexAst::Empty);
+                }
+
+                let mut result = nodes.remove(0);
+                for node in nodes {
+                    result = RegexAst::Concat(Box::new(result), Box::new(node));
+                }
+                
+                Ok(result)
+            }
+
             Some('\\') => {
                 // Nuevo: Soporte de secuencias de escape (ej. \s, \+, \n)
                 self.consume(); // consumimos la barra invertida

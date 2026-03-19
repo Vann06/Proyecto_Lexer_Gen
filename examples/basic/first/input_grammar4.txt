@@ -1,0 +1,23 @@
+x := 10;
+y := 20;
+z := x + y;
+result := x * y;
+total := x + y - z;
+a_1 := 5 + 3;
+b2 := a_1 * 2;
+val := (x + y) * z;
+x := x + 1;
+counter := 0;
+x < 100
+y = 50
+result < x + y
+a_1 = b2 * 2
+z < (x + y) * 2
+x := 3.5E+1;
+myVar_ := 100 / 4;
+res := myVar_ + 2.0E2;
+total := (x + y) / (z - 1);
+check := a_1 * b2 + 3;
+check < 200
+res = 0
+total < res + myVar_

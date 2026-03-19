@@ -1,4 +1,4 @@
-﻿// Convertir cada AST a un AFN
+// Convertir cada AST a un AFN
 // un NFA por regla
 // luego super_start para unir todos
 
@@ -187,7 +187,8 @@ pub fn build_nfa_from_ast(ast: &crate::regex::ast::RegexAst, id_counter: &mut us
         // --- Regla 9: Clase de Caracteres ([a-z] y más) ---
         RegexAst::CharClass(c_string) => {
             // Un 'CharClass' se construye traduciendo su rango a una Unión gigante de Literales
-            let chars: Vec<char> = c_string.chars().collect();
+            let clean_string = c_string.replace('\'', "").replace('"', "");
+            let chars: Vec<char> = clean_string.chars().collect();
             let mut expanded_chars = Vec::new();
 
             // Lógica para expandir rangos como "0-9", "a-z", "A-Z", "0-9a-f"

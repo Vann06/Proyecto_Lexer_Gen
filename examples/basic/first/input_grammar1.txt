@@ -1,0 +1,12 @@
+A + B
+(A + B) * C
+x * (y + z)
+(A * B) + (C * D)
+a + b + c
+(x + y) * (z + w)
+A * B * C
+(a + b) * (c + d) * e
+x
+(A)
+a + (b * (c + d))
+(X + Y) * Z + W

@@ -1,0 +1,114 @@
+(* La sección header es opcional *)
+
+(* Definiendo los tokens a usar en este archivo *)
+
+(* Definiendo el break de línea *)
+let delim = [' ''\t''\n''\r']
+let ws = delim+
+
+let extraToken = ['.''!''?''¿''!']
+
+(* Primer token: expresión regular que solo acepte letras *)
+let letter = ['a'-'z''A'-'Z']
+
+(* Segundo token: expresión regular que acepte números *)
+let digit = ['0'-'9']
+
+(* Tercer token: hacer un digito *)
+let digits = digit+
+
+(* Séptimo token: hacer los signos *)
+let completeDigits = '-'?(digits)
+
+(* Octavo token: hacer un número *)
+let number = (completeDigits)','(digits)
+
+(* Sexto token: hacer un identificador *)
+let id = letter(letter|digit)*
+
+(* El token que detecta las cadenas de caracteres esta puede estar compuesta por letras, números o espacios en blanco *)
+let string = '"'(letter|digit|' '|extraToken)+'"'
+
+(* Octavo token: for *)
+let cada = for
+
+(* Noveno token: if *)
+let condicional = if
+
+(* Decimo token: while *)
+let mientras = while
+
+(* Undécimo token: comentario de una línea *)
+let comentario = '#'(letter|digit|' '|extraToken)+
+
+(* Duodécimo token: comentario multilínea *)
+let comentarioMultilinea = '"''"''"'(letter|digit|' '|ws|extraToken)*'"''"''"'
+
+(* Decimotercer token: comparación *)
+let comparacion = '=''='
+
+(* Decimocuarto token: diferente *)
+let noIgual = '!''='
+
+(* Decimoquinto token: mayor o igual que *)
+let mayorIGual = >=
+
+(* Decimosexto token: menor o igual que *)
+let menorIGUAL = <=
+
+(* Decimoséptimo token: definición de función *)
+let function = def
+
+(* Decimoctavo token: operador lógico OR *)
+let or = or
+
+(* Decimonoveno token: operador lógico AND *)
+let and = and
+
+(* Vigésimo token: operador lógico NOT *)
+let not = not
+
+(* Vigésimo primer token: palabra reservada in *)
+let in = in
+
+(* Vigésimo segundo token: palabra reservada return *)
+let return = return
+
+(* Vigésimo tercer token: palabra reservada print *)
+let print = print
+
+
+(* La sección de trailer es opcional *)
+rule tokens =
+    condicional { "IF" }
+    | cada { "FOR" }
+    | mientras { "WHILE" }
+    | function { "DEF" }
+    | or { "OR" }
+    | and { "AND" }
+    | not { "NOT" }
+    | in { "IN" }
+    | return { "RETURN" }
+    | print { "PRINT" }
+    | '+' { "SUMA" }
+    | '-' { "RESTA" }
+    | '*' { "MULTIPLICACION"}
+    | '/' { "DIVISION"}
+    | '(' { "PARENTESIS_IZQUIERDO"}
+    | ')' { "PARENTESIS_DERECHO"}
+    | '=' { "ASIGNACION" }
+    | '<' { "MENOR QUE" }
+    | '>' { "MAYOR QUE" }
+    | ':' { "DOS PUNTOS" }
+    | ',' { "COMA" }
+    | menorIGUAL { "MENOR IGUAL QUE" }
+    | mayorIGual { "MAYOR IGUAL QUE" }
+    | comparacion { "COMPARACION" }
+    | noIgual { "DIFERENTE" }
+    | id { "IDENTIFICADOR" }
+    | completeDigits { "DIGITO" }
+    | number { "NUMERO CON DECIMAL" }
+    | string { "STRING" }
+    | comentario { "COMENTARIO" }
+    | comentarioMultilinea { "COMENTARIO MULTILINEA" }
+    | ws {}
