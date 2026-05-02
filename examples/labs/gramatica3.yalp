@@ -1,0 +1,17 @@
+/* Laboratorio: Gramatica 3 */
+/* S -> (L) | a */
+/* L -> L,S | S */
+
+%token a , ( )
+
+%%
+
+S:
+    ( L )
+  | a
+;
+
+L:
+    L , S
+  | S
+;

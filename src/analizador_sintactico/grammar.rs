@@ -1,9 +1,9 @@
-// parseo de archivos .yalp y sus delimitadores /* %token %% // src/analizador_sintactico/grammar.rs
+// parseo de archivos .yalp y sus delimitadores /* %token %% // 
 use std::collections::HashSet;
 use std::fs;
 
 /// Representa cualquier elemento dentro de una regla de la gramática.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Symbol {
     Terminal(String),    // Tokens que vienen del YALex (ej. TOKEN_1, WS)
     NonTerminal(String), // Otras producciones (ej. production1)

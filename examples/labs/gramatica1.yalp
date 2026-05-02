@@ -1,0 +1,6 @@
+/* Laboratorio: Gramatica 1 */
+%token A B C D
+%%
+s_prima: s ;
+s: a A | B a C | D C | B D A ;
+a: D ;

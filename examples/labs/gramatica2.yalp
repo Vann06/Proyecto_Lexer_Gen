@@ -1,0 +1,7 @@
+/* Laboratorio: Gramatica 2 */
+%token ID IGUAL ASTERISCO
+%%
+s_prima: s ;
+s: l IGUAL r | r ;
+l: ASTERISCO r | ID ;
+r: l ;
