@@ -1,4 +1,4 @@
-// parseo del archivo .yalp y sus delimitadores /* %token %%// src/analizador_sintactico/grammar.rs
+// parseo de archivos .yalp y sus delimitadores /* %token %% // src/analizador_sintactico/grammar.rs
 use std::collections::HashSet;
 use std::fs;
 
@@ -13,7 +13,7 @@ pub enum Symbol {
 /// Ejemplo: production1 : production1 TOKEN_2 | TOKEN_3 ;
 #[derive(Debug, Clone)]
 pub struct Production {
-    pub head: String,               // El lado izquierdo (ej. "production1")
+    pub head: String,               // El lado izquierdo 
     pub bodies: Vec<Vec<Symbol>>,   // El lado derecho, separado por '|'
 }
 
@@ -26,12 +26,14 @@ pub struct Grammar {
     pub start_symbol: String,         // El no-terminal inicial (la primera producción)
 }
 
-
 impl Grammar {
     /// Lee un archivo YAPar y construye la gramática en memoria.
     pub fn parse_from_file(filepath: &str) -> Result<Self, String> {
-        let content = fs::read_to_string(filepath)
+        let raw_content = fs::read_to_string(filepath)
             .map_err(|e| format!("Error al leer el archivo: {}", e))?;
+
+        // 0. NUEVO: Limpiamos todos los comentarios /* ... */ del texto antes de parsear
+        let content = Self::remove_comments(&raw_content);
 
         // 1. Dividir el archivo en la sección de tokens y la sección de producciones usando '%%'
         let sections: Vec<&str> = content.split("%%").collect();
@@ -52,19 +54,69 @@ impl Grammar {
         // 3. Procesar la segunda sección (Producciones)
         grammar.parse_productions_section(sections[1]);
 
+        // 4. Validar que no haya tokens olvidados actuando como falsos no-terminales
+        grammar.validate()?;
+
         Ok(grammar)
+    }
+
+    /// Función auxiliar de limpieza: Borra todo lo que esté entre /* y */
+    fn remove_comments(input: &str) -> String {
+        let mut result = String::new();
+        let mut chars = input.chars().peekable();
+        let mut in_comment = false;
+
+        while let Some(c) = chars.next() {
+            if in_comment {
+                if c == '*' {
+                    if let Some(&'/') = chars.peek() {
+                        chars.next(); // Consumir la '/'
+                        in_comment = false;
+                    }
+                }
+            } else {
+                if c == '/' {
+                    if let Some(&'*') = chars.peek() {
+                        chars.next(); // Consumir el '*'
+                        in_comment = true;
+                        continue;
+                    }
+                }
+                result.push(c);
+            }
+        }
+        result
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        let mut valid_non_terminals = HashSet::new();
+        for prod in &self.productions {
+            valid_non_terminals.insert(prod.head.clone());
+        }
+
+        for prod in &self.productions {
+            for body in &prod.bodies {
+                for symbol in body {
+                    if let Symbol::NonTerminal(nt) = symbol {
+                        if !valid_non_terminals.contains(nt) {
+                            return Err(format!(
+                                "Error crítico de gramática: El símbolo '{}' fue tratado como un No-Terminal porque no está en la lista de %token, pero tampoco existe ninguna regla que lo defina.", 
+                                nt
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn parse_tokens_section(&mut self, section: &str) {
         for line in section.lines() {
             let line = line.trim();
-            // Ignorar comentarios delimitados por /* y */ (puedes mejorar esto para multilínea)
-            if line.starts_with("/*") || line.is_empty() {
-                continue;
-            }
+            if line.is_empty() { continue; }
 
             if line.starts_with("%token") {
-                // Una línea puede tener múltiples tokens separados por espacio
                 let tokens_decl: Vec<&str> = line[6..].split_whitespace().collect();
                 for t in tokens_decl {
                     self.tokens.insert(t.to_string());
@@ -79,37 +131,27 @@ impl Grammar {
     }
 
     fn parse_productions_section(&mut self, section: &str) {
-        // Separamos por ';' para obtener cada bloque de producción individual
         let prod_blocks = section.split(';');
 
         for block in prod_blocks {
             let block = block.trim();
-            if block.is_empty() || block.starts_with("/*") {
-                continue;
-            }
+            if block.is_empty() { continue; }
 
-            // Separamos la cabeza (head) de las reglas usando ':'
             let parts: Vec<&str> = block.split(':').collect();
-            if parts.len() != 2 {
-                continue; // O manejar el error de sintaxis
-            }
+            if parts.len() != 2 { continue; }
 
             let head = parts[0].trim().to_string();
             
-            // Asignar el símbolo inicial si es la primera producción
             if self.start_symbol.is_empty() {
                 self.start_symbol = head.clone();
             }
 
             let mut bodies = Vec::new();
-            // Separamos las diferentes reglas usando el símbolo '|'
             let rules = parts[1].split('|');
 
             for rule in rules {
                 let mut symbol_list = Vec::new();
                 for sym_str in rule.split_whitespace() {
-                    // Clasificamos: si está en nuestro HashSet de tokens, es Terminal. 
-                    // Si no, es un No-Terminal.
                     if self.tokens.contains(sym_str) {
                         symbol_list.push(Symbol::Terminal(sym_str.to_string()));
                     } else {
