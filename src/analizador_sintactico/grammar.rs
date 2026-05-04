@@ -1,5 +1,5 @@
 // parseo de archivos .yalp y sus delimitadores /* %token %% // 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 
 /// Representa cualquier elemento dentro de una regla de la gramática.
@@ -83,7 +83,14 @@ impl Grammar {
         // ─────────────────────────────────────────────────────────────────────────
         grammar.eliminate_ambiguity();
 
-        // 5. Validar que no haya tokens olvidados actuando como falsos no-terminales
+        // 5. Verificar que no quede ningún ciclo de recursión izquierda (directa o indirecta)
+        //    después de la transformación. Si la gramática del usuario tiene un ciclo que
+        //    el algoritmo no pudo romper (ej. A → B α y B → A β con producciones que no
+        //    tienen alternativa no-recursiva), se devuelve un error descriptivo en lugar de
+        //    dejar que el parser LL(1) entre en un bucle infinito.
+        grammar.detect_left_recursion()?;
+
+        // 6. Validar que no haya tokens olvidados actuando como falsos no-terminales
         grammar.validate()?;
 
         Ok(grammar)
@@ -123,44 +130,93 @@ impl Grammar {
     ///
     /// # Transformaciones aplicadas
     ///
-    /// ## 1. Eliminación de recursión por la izquierda (Left Recursion Elimination)
-    /// Una producción de la forma `A → A α | β` es **recursiva por la izquierda**.
-    /// Esto causa que un parser descendente (LL) entre en un bucle infinito y que
-    /// un parser LR genere estados redundantes. Se transforma en:
-    /// ```
-    ///   A  → β A'
-    ///   A' → α A' | ε
-    /// ```
+    /// ## 1. Eliminación de recursión por la izquierda — DIRECTA e INDIRECTA
+    ///
+    /// ### Recursión directa
+    /// `A → A α | β`  →  `A → β A'`  /  `A' → α A' | ε`
+    ///
+    /// ### Recursión indirecta (algoritmo estándar, Aho/Ullman §4.3)
+    /// Se establece un orden A₁, A₂, … Aₙ entre los no-terminales.
+    /// Para cada Aᵢ se sustituyen todas las ocurrencias de Aⱼ (j < i) al
+    /// principio de un cuerpo de Aᵢ por las producciones de Aⱼ, y luego se
+    /// aplica la eliminación de recursión directa sobre Aᵢ.
+    /// Con ello se garantiza que ningún ciclo de la forma
+    /// `A → B α` / `B → A β` permanezca en la gramática resultante.
+    ///
+    /// ### Nota sobre Épsilon (`ε`)
+    /// La representación canónica de ε en este sistema es un `Vec<Symbol>`
+    /// **vacío** (`vec![]`).  Los algoritmos `calculate_first` (first.rs) y
+    /// `calculate_follow` (follow.rs) detectan `body.is_empty()` y lo
+    /// tratan como ε de forma nativa.  El parser LL(1) DEBE hacer lo mismo:
+    /// cuando selecciona una producción cuyo cuerpo es vacío, no debe consumir
+    /// ningún token, simplemente hace pop de la pila.
     ///
     /// ## 2. Factorización por la izquierda (Left Factoring)
-    /// Cuando dos producciones del mismo no-terminal comparten un prefijo común:
-    /// `A → α β | α γ`, un parser LL no puede decidir cuál aplicar sin hacer
-    /// backtracking. Se factoriza como:
-    /// ```
-    ///   A  → α A'
-    ///   A' → β | γ
-    /// ```
+    /// `A → α β | α γ`  →  `A → α A'`  /  `A' → β | γ`
     ///
     /// # Por qué AQUÍ y no en otro lugar
     /// Esta función es llamada en `parse_from_file` inmediatamente después de
     /// construir las producciones y ANTES de `validate()`, `calculate_first()`,
-    /// `calculate_follow()` y `LR0Automaton::build()`.  
-    /// Si se ejecutara después, los algoritmos recibirían una gramática potencialmente
-    /// ambigua y producirían resultados silenciosamente incorrectos.
+    /// `calculate_follow()` y `LR0Automaton::build()`.
     pub fn eliminate_ambiguity(&mut self) {
-        // ── FASE 1: Eliminar recursión izquierda directa ──────────────────────
-        // Recorremos cada producción buscando cuerpos que comiencen con su propia cabeza.
-        let mut new_productions: Vec<Production> = Vec::new();
+        // ── FASE 1: Eliminación de recursión izquierda (directa + indirecta) ──
+        //
+        // Algoritmo estándar (Aho/Ullman):
+        //   Sea A₁, A₂, …, Aₙ un orden fijo de los no-terminales.
+        //   Para i = 1..n:
+        //     Para j = 1..i-1:
+        //       Sustituir cada producción Aᵢ → Aⱼ γ por
+        //         Aᵢ → δ₁ γ | δ₂ γ | …   (donde Aⱼ → δ₁ | δ₂ | … son las
+        //         producciones actuales de Aⱼ)
+        //     Eliminar recursión izquierda DIRECTA de Aᵢ.
 
-        for prod in &self.productions {
-            // Separar cuerpos recursivos (A → A α) de los no-recursivos (A → β)
+        // Trabajamos sobre un Vec<(nombre, cuerpos)> para preservar el orden de aparición.
+        let mut ordered: Vec<(String, Vec<Vec<Symbol>>)> = self
+            .productions
+            .iter()
+            .map(|p| (p.head.clone(), p.bodies.clone()))
+            .collect();
+
+        // IMPORTANTE: usamos `while` en lugar de `for i in 0..len` porque
+        // podemos insertar nuevas entradas (A') dentro del vector durante el
+        // bucle y queremos que esas entradas también sean procesadas.
+        let mut i = 0;
+        while i < ordered.len() {
+            // Paso 1 – Para cada j < i, sustituir Aⱼ al inicio de los cuerpos de Aᵢ
+            for j in 0..i {
+                let aj_name = ordered[j].0.clone();
+                let aj_bodies = ordered[j].1.clone();
+
+                let ai_bodies = ordered[i].1.clone();
+                let mut new_ai_bodies: Vec<Vec<Symbol>> = Vec::new();
+
+                for body in &ai_bodies {
+                    if body.first() == Some(&Symbol::NonTerminal(aj_name.clone())) {
+                        // Aᵢ → Aⱼ γ  →  expandir con las producciones de Aⱼ
+                        let gamma = &body[1..]; // sufijo tras Aⱼ
+                        for aj_body in &aj_bodies {
+                            // δ γ  (δ son los símbolos de la producción de Aⱼ)
+                            let mut new_body = aj_body.clone();
+                            new_body.extend_from_slice(gamma);
+                            new_ai_bodies.push(new_body);
+                        }
+                    } else {
+                        new_ai_bodies.push(body.clone());
+                    }
+                }
+                ordered[i].1 = new_ai_bodies;
+            }
+
+            // Paso 2 – Eliminar recursión izquierda DIRECTA de Aᵢ
+            let ai_name = ordered[i].0.clone();
+            let ai_bodies = ordered[i].1.clone();
+
             let mut recursive_bodies: Vec<Vec<Symbol>> = Vec::new();
             let mut non_recursive_bodies: Vec<Vec<Symbol>> = Vec::new();
 
-            for body in &prod.bodies {
-                if body.first() == Some(&Symbol::NonTerminal(prod.head.clone())) {
-                    // Es recursivo por la izquierda: A → A α
-                    // Guardamos sólo el 'α' (el resto tras A)
+            for body in &ai_bodies {
+                if body.first() == Some(&Symbol::NonTerminal(ai_name.clone())) {
+                    // A → A α  →  guardar solo α
                     recursive_bodies.push(body[1..].to_vec());
                 } else {
                     non_recursive_bodies.push(body.clone());
@@ -168,13 +224,13 @@ impl Grammar {
             }
 
             if recursive_bodies.is_empty() {
-                // No hay recursión izquierda: la producción queda igual
-                new_productions.push(prod.clone());
+                // Sin recursión directa: queda igual
+                ordered[i].1 = non_recursive_bodies;
             } else {
-                // Creamos el no-terminal auxiliar A'
-                let prime_head = format!("{}'", prod.head);
+                // Crear A' (prima)
+                let prime_head = format!("{}'", ai_name);
 
-                // Transformar A → β  en  A → β A'
+                // A → β A'
                 let transformed_non_recursive: Vec<Vec<Symbol>> = non_recursive_bodies
                     .into_iter()
                     .map(|mut body| {
@@ -183,19 +239,18 @@ impl Grammar {
                     })
                     .collect();
 
-                // Si no había cuerpos no-recursivos, la cabeza base puede derivar solo A'
                 let base_bodies = if transformed_non_recursive.is_empty() {
+                    // Sólo había recursión directa sin alternativa no-recursiva
                     vec![vec![Symbol::NonTerminal(prime_head.clone())]]
                 } else {
                     transformed_non_recursive
                 };
 
-                new_productions.push(Production {
-                    head: prod.head.clone(),
-                    bodies: base_bodies,
-                });
+                ordered[i].1 = base_bodies;
 
-                // Construir A' → α A' | ε
+                // A' → α A' | ε
+                // ε = vec![]  ← representación canónica en todo el sistema
+                // Los módulos first.rs y follow.rs reconocen body.is_empty() como ε.
                 let mut prime_bodies: Vec<Vec<Symbol>> = recursive_bodies
                     .into_iter()
                     .map(|mut alpha| {
@@ -203,17 +258,29 @@ impl Grammar {
                         alpha
                     })
                     .collect();
-                // Agregar la producción épsilon para A'
-                prime_bodies.push(vec![]); // ε representado como cuerpo vacío
+                prime_bodies.push(vec![]); // ε
 
-                new_productions.push(Production {
-                    head: prime_head,
-                    bodies: prime_bodies,
-                });
+                // Insertar A' inmediatamente después de Aᵢ en el orden.
+                // El while-loop visitará A' en la próxima iteración (i+1) y
+                // le aplicará la substitución j < i+1, lo que es correcto:
+                // A' sólo puede heredar recursividad de los mismos Aⱼ que Aᵢ,
+                // no de sí misma (porque su cuerpo empieza con α, no con A').
+                ordered.insert(
+                    i + 1,
+                    (prime_head, prime_bodies),
+                );
             }
+            i += 1; // avanzar el índice del while
         }
 
-        self.productions = new_productions;
+        // Reconstruir self.productions preservando el orden y eliminando
+        // duplicados de cabeza (puede haber si la gramática original ya tenía A')
+        let mut seen_heads: HashSet<String> = HashSet::new();
+        self.productions = ordered
+            .into_iter()
+            .filter(|(head, _)| seen_heads.insert(head.clone()))
+            .map(|(head, bodies)| Production { head, bodies })
+            .collect();
 
         // ── FASE 2: Factorización por la izquierda ────────────────────────────
         // Se repite hasta que no haya más prefijos comunes que factorizar.
@@ -235,6 +302,62 @@ impl Grammar {
 
             self.productions = result;
         }
+    }
+
+    /// Verifica que no quede ninguna recursión izquierda (directa o indirecta)
+    /// después de `eliminate_ambiguity`.  Usa un análisis de alcanzabilidad
+    /// (DFS) sobre el grafo de «puede comenzar con» entre no-terminales:
+    /// hay un arco A → B si A tiene algún cuerpo cuyo primer símbolo es B.
+    /// Un ciclo en ese grafo implica recursión izquierda indirecta.
+    ///
+    /// Devuelve `Ok(())` si la gramática es segura, o un `Err` descriptivo
+    /// con el ciclo detectado para que el usuario pueda corregir la gramática
+    /// de entrada en lugar de sufrir un bucle infinito en el parser LL(1).
+    pub fn detect_left_recursion(&self) -> Result<(), String> {
+        // Construir el grafo: para cada NT A, qué NTs B pueden aparecer como
+        // primer símbolo de alguno de sus cuerpos (arco A → B).
+        let mut graph: HashMap<String, Vec<String>> = HashMap::new();
+        for prod in &self.productions {
+            let neighbors = graph.entry(prod.head.clone()).or_default();
+            for body in &prod.bodies {
+                if let Some(Symbol::NonTerminal(nt)) = body.first() {
+                    if !neighbors.contains(nt) {
+                        neighbors.push(nt.clone());
+                    }
+                }
+            }
+        }
+
+        // DFS desde cada nodo buscando ciclos
+        for start in graph.keys() {
+            let mut visited: HashSet<String> = HashSet::new();
+            let mut stack: Vec<(String, Vec<String>)> = Vec::new(); // (nodo, camino)
+            stack.push((start.clone(), vec![start.clone()]));
+
+            while let Some((node, path)) = stack.pop() {
+                if let Some(neighbors) = graph.get(&node) {
+                    for neighbor in neighbors {
+                        if neighbor == start {
+                            // Ciclo detectado
+                            let mut cycle = path.clone();
+                            cycle.push(start.clone());
+                            return Err(format!(
+                                "Recursión izquierda indirecta no eliminable detectada: {}. \
+                                 Revisa la gramática; el parser LL(1) entraría en bucle infinito.",
+                                cycle.join(" → ")
+                            ));
+                        }
+                        if !visited.contains(neighbor.as_str()) {
+                            visited.insert(neighbor.clone());
+                            let mut new_path = path.clone();
+                            new_path.push(neighbor.clone());
+                            stack.push((neighbor.clone(), new_path));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Factoriza por la izquierda UNA producción. Devuelve 1 producción si no
