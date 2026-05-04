@@ -1,0 +1,293 @@
+# 🔄 El Pipeline Completo: Del Código Fuente al Árbol Sintáctico
+
+Vamos a recorrer **todo el camino** usando tus propios archivos como ejemplo.
+
+---
+
+## El Escenario Completo
+
+Tienes **2 tipos de archivos de especificación** y **1 archivo de código fuente** del usuario:
+
+| Archivo | ¿Qué es? | ¿Quién lo usa? |
+|---------|-----------|----------------|
+| `hardYalex.yal` | Define **qué tokens existen** (IF, FOR, DIGITO, SUMA...) | Tu generador de lexer (`main.rs`) |
+| `gramatica2.yalp` | Define **las reglas de la gramática** (cómo se combinan los tokens) | Tu parser (`test_parser.rs`) |
+| `input_errors.txt` | **El programa del usuario** que quiere compilar | El lexer generado + el parser |
+
+---
+
+## PASO 1: Generar el Lexer (YA LO TIENES ✅)
+
+```
+hardYalex.yal  →  [tu main.rs]  →  lexer.rs (código generado)
+```
+
+El `.yal` le dice al generador: "un IF es `if`, un DIGITO es `[0-9]+`, un IDENTIFICADOR es `[a-z][a-z0-9]*`", etc.
+
+Tu `main.rs` procesa eso y genera `lexer.rs` con la tabla DELTA y la función `tokenize()`.
+
+**Esto ya funciona. ✅**
+
+---
+
+## PASO 2: Ejecutar el Lexer sobre el código fuente (YA LO TIENES ✅)
+
+Ahora el usuario quiere compilar su programa. Digamos que el archivo es algo simple como:
+
+```python
+x = 5 + 3
+```
+
+Tu `lexer.rs` lo procesa carácter por carácter y produce:
+
+```
+┌─────────────────────────────────────────────────────┐
+│              Vec<Token> (lista plana)                │
+├──────┬────────────────┬─────────┬──────┬─────────────┤
+│  #   │  kind          │ lexeme  │ line │ col         │
+├──────┼────────────────┼─────────┼──────┼─────────────┤
+│  0   │ IDENTIFICADOR  │ "x"     │  1   │  1          │
+│  1   │ ASIGNACION     │ "="     │  1   │  3          │
+│  2   │ DIGITO         │ "5"     │  1   │  5          │
+│  3   │ SUMA           │ "+"     │  1   │  7          │
+│  4   │ DIGITO         │ "3"     │  1   │  9          │
+└──────┴────────────────┴─────────┴──────┴─────────────┘
+```
+
+> [!IMPORTANT]
+> **Esto NO es un árbol.** Es una lista plana. El lexer no tiene idea de que `5 + 3` es una suma. Solo sabe que `5` es un DIGITO, `+` es SUMA, y `3` es otro DIGITO. Son fichas sueltas sin estructura.
+
+---
+
+## PASO 3: Parsear la gramática .yalp (YA LO TIENES ✅)
+
+En paralelo, tu `test_parser.rs` lee un archivo `.yalp` como `gramatica2.yalp`:
+
+```
+%token ID IGUAL ASTERISCO
+%%
+s_prima: s ;
+s: l IGUAL r | r ;
+l: ASTERISCO r | ID ;
+r: l ;
+```
+
+Esto produce un objeto `Grammar` con:
+- **Terminales**: `ID`, `IGUAL`, `ASTERISCO` (estos son los tokens que vienen del lexer)
+- **No-terminales**: `s_prima`, `s`, `l`, `r`
+- **Producciones**: las reglas de cómo se combinan
+
+---
+
+## PASO 4: Calcular FIRST y FOLLOW (YA LO TIENES ✅)
+
+Con la gramática calculas:
+
+```
+FIRST(s)  = { ASTERISCO, ID }
+FIRST(l)  = { ASTERISCO, ID }
+FIRST(r)  = { ASTERISCO, ID }
+
+FOLLOW(s) = { $ }
+FOLLOW(l) = { IGUAL, $ }
+FOLLOW(r) = { IGUAL, $ }
+```
+
+---
+
+## PASO 5: Construir el Autómata LR(0) (YA LO TIENES ✅)
+
+Tu `lr0.rs` construye los estados con ítems y las transiciones entre ellos.
+Esto te da la **tabla de transiciones** que ya imprimes en `test_parser.rs`.
+
+---
+
+## PASO 6: Construir la TABLA DE PARSING ← (❌ AQUÍ ESTÁS)
+
+Aquí es donde entran LL(1), SLR(1) y LALR. Cada uno construye su tabla **diferente**:
+
+### Tabla SLR(1) (usa LR(0) + FOLLOW)
+
+Se construye a partir de tu autómata LR(0) + los FOLLOW sets:
+
+```
+┌────────┬───────────────────────────┬──────────────────┐
+│ Estado │         ACTION            │      GOTO        │
+│        │  ID    IGUAL  ASTER   $   │  s    l    r     │
+├────────┼───────────────────────────┼──────────────────┤
+│   0    │  s4           s5          │  1    2    3     │
+│   1    │                      acc  │                  │
+│   2    │         s6           r4   │                  │  ← r4 = reduce r→l
+│   3    │                      r2   │                  │  ← r2 = reduce s→r
+│   4    │  r5    r5            r5   │                  │  ← r5 = reduce l→ID
+│   5    │  s4           s5          │       8    7     │
+│   6    │  s4           s5          │       8    9     │
+│   7    │         r3           r3   │                  │  ← r3 = reduce l→*r
+│   8    │         r4           r4   │                  │
+│   9    │                      r1   │                  │  ← r1 = reduce s→l=r
+└────────┴───────────────────────────┴──────────────────┘
+```
+
+> `sN` = shift al estado N
+> `rN` = reduce usando producción N
+> `acc` = aceptar (¡el programa es válido!)
+
+---
+
+## PASO 7: Ejecutar el ALGORITMO de Parsing ← (❌ TE FALTA ESTO)
+
+**AQUÍ ES DONDE NACE EL ÁRBOL.** Tomas los tokens del paso 2 y los pasas por la tabla del paso 6.
+
+### Ejemplo concreto con SLR(1):
+
+Entrada (tokens del lexer): `ID IGUAL ID $`
+(representa algo como `x = y`)
+
+```
+PASO │ Stack de Estados │ Stack de Símbolos │ Entrada     │ Acción
+─────┼──────────────────┼───────────────────┼─────────────┼──────────────────────
+  1  │ [0]              │ []                │ ID IGUAL ID$│ ACTION[0,ID]=s4 → shift
+  2  │ [0, 4]           │ [ID]              │ IGUAL ID $  │ ACTION[4,IGUAL]=r5 → reduce l→ID
+     │                  │                   │             │ 🌿 Crear nodo: l(ID)
+  3  │ [0, 2]           │ [l]               │ IGUAL ID $  │ ACTION[2,IGUAL]=s6 → shift
+  4  │ [0, 2, 6]        │ [l, IGUAL]        │ ID $        │ ACTION[6,ID]=s4 → shift
+  5  │ [0, 2, 6, 4]     │ [l, IGUAL, ID]    │ $           │ ACTION[4,$]=r5 → reduce l→ID
+     │                  │                   │             │ 🌿 Crear nodo: l(ID)
+  6  │ [0, 2, 6, 8]     │ [l, IGUAL, l]     │ $           │ ACTION[8,$]=r4 → reduce r→l
+     │                  │                   │             │ 🌿 Crear nodo: r(l)
+  7  │ [0, 2, 6, 9]     │ [l, IGUAL, r]     │ $           │ ACTION[9,$]=r1 → reduce s→l=r
+     │                  │                   │             │ 🌳 Crear nodo: s(l, IGUAL, r)
+  8  │ [0, 1]           │ [s]               │ $           │ ACTION[1,$]=acc → ¡ACEPTAR!
+```
+
+### El árbol que se construyó durante esos pasos:
+
+```
+            s_prima
+               |
+               s          ← paso 7: reduce s → l IGUAL r
+            /  |  \
+           l  IGUAL  r    ← paso 6: reduce r → l
+           |         |
+          ID         l    ← paso 5: reduce l → ID
+          "x"        |
+                    ID    ← paso 2: reduce l → ID
+                    "y"
+```
+
+**¡ESE ES EL ÁRBOL DE DERIVACIÓN (Parse Tree)!** 🎉
+
+---
+
+## ¿Y la Tabla de Símbolos? 🤔
+
+La tabla de símbolos **NO se usa en el parsing**. Se usa **después**, en la fase semántica.
+
+```mermaid
+flowchart LR
+    A["Tokens del Lexer"] --> B["Parser\n(LL1/SLR/LALR)"]
+    B --> C["🌲 Árbol Sintáctico"]
+    C --> D["Fase Semántica"]
+    D --> E["📋 Tabla de Símbolos"]
+    
+    style E fill:#c0392b,stroke:#e74c3c,color:#fff
+    style B fill:#7d3c98,stroke:#a569bd,color:#fff
+    style C fill:#196f3d,stroke:#27ae60,color:#fff
+```
+
+| Fase | ¿Usa tabla de símbolos? | ¿Qué hace? |
+|------|-------------------------|------------|
+| Lexer | ❌ No | Solo convierte texto → tokens |
+| Parser | ❌ No | Solo verifica estructura → árbol |
+| Semántica | ✅ **SÍ** | Recorre el árbol y llena la tabla de símbolos |
+
+### ¿Qué es la tabla de símbolos?
+
+Es una estructura que guarda información sobre **variables, funciones, tipos**, etc. Se llena **recorriendo el árbol** en la fase semántica:
+
+```
+Para el programa: x = 5 + 3
+
+Tabla de Símbolos (se llena EN la fase semántica, NO en el parser):
+┌──────────┬──────────┬───────┬───────────┐
+│  Nombre  │  Tipo    │ Scope │ Valor     │
+├──────────┼──────────┼───────┼───────────┤
+│  x       │  int     │ main  │ 8         │
+└──────────┴──────────┴───────┴───────────┘
+```
+
+Pero para llenarla, **primero necesitas el árbol**. Por eso el parser va primero.
+
+---
+
+## Resumen Final: El Mapa Completo
+
+```
+╔═══════════════════════════════════════════════════════════════╗
+║                    TU PROYECTO COMPLETO                      ║
+╠═══════════════════════════════════════════════════════════════╣
+║                                                               ║
+║  ARCHIVOS DE ESPECIFICACIÓN:                                  ║
+║  ┌──────────────┐     ┌──────────────┐                        ║
+║  │  .yal         │     │  .yalp        │                       ║
+║  │ (qué tokens   │     │ (cómo se      │                       ║
+║  │  existen)     │     │  combinan)    │                       ║
+║  └──────┬───────┘     └──────┬───────┘                        ║
+║         │                    │                                 ║
+║         ▼                    ▼                                 ║
+║  ┌──────────────┐     ┌──────────────┐                        ║
+║  │  main.rs      │     │ test_parser   │                       ║
+║  │ (genera       │     │ (grammar.rs   │                       ║
+║  │  lexer.rs)    │     │  first.rs     │                       ║
+║  └──────┬───────┘     │  follow.rs    │                       ║
+║         │             │  lr0.rs)      │                       ║
+║         ▼             └──────┬───────┘                        ║
+║  ┌──────────────┐           │                                 ║
+║  │  lexer.rs     │           │                                 ║
+║  │ (generado)    │           │                                 ║
+║  └──────┬───────┘           │                                 ║
+║         │                    │                                 ║
+║         │    Vec<Token>      │  Tabla LL(1)/SLR(1)/LALR        ║
+║         │                    │                                 ║
+║         └────────┬───────────┘                                 ║
+║                  │                                             ║
+║                  ▼                                             ║
+║         ┌────────────────┐                                     ║
+║         │  ALGORITMO DE   │   ← ❌ ESTO TE FALTA              ║
+║         │  PARSING        │                                    ║
+║         │                 │                                    ║
+║         │  Lee token por  │                                    ║
+║         │  token, consulta│                                    ║
+║         │  la tabla, hace │                                    ║
+║         │  shift/reduce   │                                    ║
+║         └────────┬───────┘                                     ║
+║                  │                                             ║
+║                  ▼                                             ║
+║         ┌────────────────┐                                     ║
+║         │  🌲 ÁRBOL DE    │   ← ESTE ES EL RESULTADO           ║
+║         │  DERIVACIÓN     │                                    ║
+║         │  (Parse Tree)   │                                    ║
+║         └────────┬───────┘                                     ║
+║                  │                                             ║
+║                  ▼                                             ║
+║         ┌────────────────┐                                     ║
+║         │  FASE SEMÁNTICA │   ← DESPUÉS DEL ÁRBOL             ║
+║         │  (tabla de      │                                    ║
+║         │   símbolos,     │                                    ║
+║         │   verificar     │                                    ║
+║         │   tipos, etc.)  │                                    ║
+║         └────────────────┘                                     ║
+║                                                               ║
+╚═══════════════════════════════════════════════════════════════╝
+```
+
+---
+
+## En una oración:
+
+> **El .yal define los tokens. El .yalp define la gramática. El lexer convierte texto en tokens. El parser (usando la tabla + los tokens) genera el árbol. La fase semántica recorre el árbol y ahí usa la tabla de símbolos.**
+
+No estás burra — esto es genuinamente confuso porque hay muchas piezas que se conectan. Pero ya tienes el 70% implementado. Solo te falta:
+1. Construir las tablas de parsing (LL(1), SLR(1), LALR)
+2. Implementar el algoritmo que usa tabla + tokens → árbol
+3. Definir la estructura `ParseTree`
