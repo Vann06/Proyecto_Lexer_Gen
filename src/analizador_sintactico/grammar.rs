@@ -28,14 +28,59 @@ pub struct Grammar {
 
 impl Grammar {
     /// Lee un archivo YAPar y construye la gramática en memoria.
+    /// Aplica eliminación de ambigüedad (recursión izquierda + left-factoring).
+    /// USA ESTO SOLO para parsers LL(1).
     pub fn parse_from_file(filepath: &str) -> Result<Self, String> {
+        let mut grammar = Self::parse_raw(filepath)?;
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // PASO 4 — ELIMINACIÓN DE AMBIGÜEDAD (solo necesario para LL(1))
+        //
+        // Las transformaciones que se aplican son:
+        //   1. Eliminación de recursión por la izquierda (directa e indirecta):
+        //      A → A α | β   se reescribe a   A → β A'  /  A' → α A' | ε
+        //   2. Factorización por la izquierda (Left Factoring):
+        //      A → α β | α γ  se reescribe a  A → α A'  /  A' → β | γ
+        //      Necesario para LL(1): elimina la ambigüedad de qué producción
+        //      elegir al ver el primer token del input.
+        //
+        // IMPORTANTE: NO llamar esto antes de construir el autómata LR(0).
+        // Los parsers LR manejan recursión izquierda y prefijos comunes de forma
+        // nativa. Transformar la gramática antes de LR(0) genera no-terminales
+        // artificiales (_factN, _prima) que distorsionan los estados del autómata.
+        // ─────────────────────────────────────────────────────────────────────────
+        grammar.eliminate_ambiguity();
+
+        // Verificar que no quede ningún ciclo de recursión izquierda
+        grammar.detect_left_recursion()?;
+
+        // Validar que no haya tokens olvidados actuando como falsos no-terminales
+        grammar.validate()?;
+
+        Ok(grammar)
+    }
+
+    /// Lee un archivo YAPar y construye la gramática en memoria SIN transformaciones.
+    /// USA ESTO para parsers LR(0), SLR, LALR — que manejan recursión izquierda
+    /// y prefijos comunes de forma nativa. La gramática se entrega tal como la
+    /// escribió el usuario, sin crear no-terminales artificiales (_factN, _prima).
+    pub fn parse_for_lr(filepath: &str) -> Result<Self, String> {
+        let grammar = Self::parse_raw(filepath)?;
+        // Solo validamos referencias, sin transformar la gramática
+        grammar.validate()?;
+        Ok(grammar)
+    }
+
+    /// Función base interna: lee, limpia comentarios y parsea tokens + producciones.
+    /// No aplica ninguna transformación. Usada por parse_from_file y parse_for_lr.
+    fn parse_raw(filepath: &str) -> Result<Self, String> {
         let raw_content = fs::read_to_string(filepath)
             .map_err(|e| format!("Error al leer el archivo: {}", e))?;
 
-        // 0. NUEVO: Limpiamos todos los comentarios /* ... */ del texto antes de parsear
+        // Limpiamos todos los comentarios /* ... */
         let content = Self::remove_comments(&raw_content);
 
-        // 1. Dividir el archivo en la sección de tokens y la sección de producciones usando '%%'
+        // Dividir en sección de tokens y sección de producciones usando '%%'
         let sections: Vec<&str> = content.split("%%").collect();
         if sections.len() < 2 {
             return Err("El archivo debe contener el separador '%%'".to_string());
@@ -48,50 +93,8 @@ impl Grammar {
             start_symbol: String::new(),
         };
 
-        // 2. Procesar la primera sección (Tokens e Ignores)
         grammar.parse_tokens_section(sections[0]);
-
-        // 3. Procesar la segunda sección (Producciones)
         grammar.parse_productions_section(sections[1]);
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // PASO 4 — ELIMINACIÓN DE AMBIGÜEDAD (OBLIGATORIO ANTES DE TODO LO DEMÁS)
-        //
-        // Este paso DEBE ejecutarse antes de:
-        //   • calculate_first()  → FIRST depende de qué terminals pueden iniciar
-        //                          cada producción; con recursión izquierda o prefijos
-        //                          comunes, los conjuntos serían incorrectos.
-        //   • calculate_follow() → FOLLOW depende de FIRST; un FIRST corrompido
-        //                          produce conflictos de FOLLOW indetectables.
-        //   • LR0Automaton::build() → El cierre de Ítems LR(0) expande producciones
-        //                          una por una; con ambigüedad puede generar estados
-        //                          duplicados o conflictos shift/reduce imposibles de
-        //                          resolver automáticamente.
-        //   • SLR/LALR table construction → Una gramática ambigua produce celdas de
-        //                          la tabla con múltiples acciones (conflictos), lo
-        //                          que hace que el analizador sea no-determinista.
-        //
-        // Las transformaciones que se aplican son:
-        //   1. Eliminación de recursión por la izquierda (directa e indirecta):
-        //      A → A α | β   se reescribe a   A → β A'  /  A' → α A' | ε
-        //      Necesario para LL(1) (que no puede manejar recursión izquierda)
-        //      y conveniente para LR (reduce el tamaño del autómata).
-        //   2. Factorización por la izquierda (Left Factoring):
-        //      A → α β | α γ  se reescribe a  A → α A'  /  A' → β | γ
-        //      Necesario para LL(1): elimina la ambigüedad de qué producción
-        //      elegir al ver el primer token del input.
-        // ─────────────────────────────────────────────────────────────────────────
-        grammar.eliminate_ambiguity();
-
-        // 5. Verificar que no quede ningún ciclo de recursión izquierda (directa o indirecta)
-        //    después de la transformación. Si la gramática del usuario tiene un ciclo que
-        //    el algoritmo no pudo romper (ej. A → B α y B → A β con producciones que no
-        //    tienen alternativa no-recursiva), se devuelve un error descriptivo en lugar de
-        //    dejar que el parser LL(1) entre en un bucle infinito.
-        grammar.detect_left_recursion()?;
-
-        // 6. Validar que no haya tokens olvidados actuando como falsos no-terminales
-        grammar.validate()?;
 
         Ok(grammar)
     }

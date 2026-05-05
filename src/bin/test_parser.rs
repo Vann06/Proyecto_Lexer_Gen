@@ -3,8 +3,6 @@
 mod analizador_sintactico;
 
 use analizador_sintactico::grammar::{Grammar, Symbol};
-use analizador_sintactico::first::calculate_first;
-use analizador_sintactico::follow::calculate_follow;
 use analizador_sintactico::lr0::LR0Automaton;
 use std::io::{self, Write};
 
@@ -17,13 +15,15 @@ fn main() {
     io::stdin().read_line(&mut input).unwrap();
     let filepath = input.trim();
 
-    match Grammar::parse_from_file(filepath) {
+    // Usamos parse_for_lr() en lugar de parse_from_file() para que la gramática
+    // NO sea transformada (sin left-factoring ni eliminación de recursión izquierda).
+    // Los parsers LR(0) manejan prefijos comunes y recursión izquierda de forma
+    // nativa — transformar la gramática antes crea no-terminales artificiales
+    // (_factN) que distorsionan los estados del autómata.
+    match Grammar::parse_for_lr(filepath) {
         Ok(grammar) => {
-            println!("\nGramática '{}' validada exitosamente.", filepath);
-            
-            let first_sets = calculate_first(&grammar);
-            let follow_sets = calculate_follow(&grammar, &first_sets);
-            
+            println!("\nGramática '{}' cargada exitosamente (sin transformaciones LL(1)).", filepath);
+
             println!("\n--- CONSTRUYENDO AUTÓMATA LR(0) ---");
             let automata = LR0Automaton::build(&grammar);
             
