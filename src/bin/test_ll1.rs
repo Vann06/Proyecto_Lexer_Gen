@@ -1,4 +1,4 @@
-// src/bin/test_ll1.rs
+
 #[path = "../analizador_sintactico/mod.rs"]
 mod analizador_sintactico;
 
@@ -20,10 +20,62 @@ fn main() {
     match Grammar::parse_from_file(filepath) {
         Ok(grammar) => {
             println!("\nGramática '{}' cargada exitosamente.", filepath);
-            
+             
+            println!("\n--- PROCEDIMIENTO DE LIMPIEZA LL(1) ---");
+
+            if grammar.transformation_log.is_empty() {
+                println!("No se registraron transformaciones.");
+            } else {
+                for step in &grammar.transformation_log {
+                    println!("- {}", step);
+                }
+            }
+
+            println!("\n--- GRAMÁTICA DESPUÉS DE LIMPIEZA LL(1) ---");
+
+            for prod in &grammar.productions {
+                let bodies: Vec<String> = prod.bodies.iter().map(|body| {
+                    if body.is_empty() {
+                        return "ε".to_string();
+                    }
+
+                    body.iter().map(|sym| match sym {
+                        Symbol::Terminal(t) => t.clone(),
+                        Symbol::NonTerminal(nt) => nt.clone(),
+                    }).collect::<Vec<_>>().join(" ")
+                }).collect();
+
+                println!("{} -> {}", prod.head, bodies.join(" | "));
+            }
+
+
             let first_sets = calculate_first(&grammar);
             let follow_sets = calculate_follow(&grammar, &first_sets);
             
+            println!("\n--- FIRST ---");
+
+            let mut first_keys: Vec<_> = first_sets.keys().collect();
+            first_keys.sort();
+
+            for nt in first_keys {
+                let mut values: Vec<_> = first_sets[nt].iter().cloned().collect();
+                values.sort();
+
+                println!("FIRST({}) = {{ {} }}", nt, values.join(", "));
+            }
+
+            println!("\n--- FOLLOW ---");
+
+            let mut follow_keys: Vec<_> = follow_sets.keys().collect();
+            follow_keys.sort();
+
+            for nt in follow_keys {
+                let mut values: Vec<_> = follow_sets[nt].iter().cloned().collect();
+                values.sort();
+
+                println!("FOLLOW({}) = {{ {} }}", nt, values.join(", "));
+            }
+
             println!("\n--- CONSTRUYENDO TABLA LL(1) ---");
             match LL1Parser::build(&grammar, &first_sets, &follow_sets) {
                 Ok(parser) => {
@@ -45,8 +97,10 @@ fn main() {
                         print!(" {:<15} |", col);
                     }
                     println!();
-                    println!("|{:-<17}|", "");
-                    for _ in &cols { print!("{:-<17}|", ""); }
+                    print!("|{:-<17}|", "");
+                    for _ in &cols { 
+                        print!("{:-<17}|", "");
+                    }
                     println!();
 
                     let mut heads: Vec<_> = parser.table.keys().collect();

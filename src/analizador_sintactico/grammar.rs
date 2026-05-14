@@ -24,6 +24,7 @@ pub struct Grammar {
     pub ignores: HashSet<String>,     // Tokens a ignorar
     pub productions: Vec<Production>, // Lista de todas las producciones
     pub start_symbol: String,         // El no-terminal inicial (la primera producción)
+    pub transformation_log: Vec<String>, // Para registrar las transformaciones aplicadas (eliminación de ambigüedad)
 }
 
 impl Grammar {
@@ -34,7 +35,7 @@ impl Grammar {
         let mut grammar = Self::parse_raw(filepath)?;
 
         // ─────────────────────────────────────────────────────────────────────────
-        // PASO 4 — ELIMINACIÓN DE AMBIGÜEDAD (solo necesario para LL(1))
+        // PASO 4 — ELIMINACIÓN DE AMBIGÜEDAD 
         //
         // Las transformaciones que se aplican son:
         //   1. Eliminación de recursión por la izquierda (directa e indirecta):
@@ -43,11 +44,6 @@ impl Grammar {
         //      A → α β | α γ  se reescribe a  A → α A'  /  A' → β | γ
         //      Necesario para LL(1): elimina la ambigüedad de qué producción
         //      elegir al ver el primer token del input.
-        //
-        // IMPORTANTE: NO llamar esto antes de construir el autómata LR(0).
-        // Los parsers LR manejan recursión izquierda y prefijos comunes de forma
-        // nativa. Transformar la gramática antes de LR(0) genera no-terminales
-        // artificiales (_factN, _prima) que distorsionan los estados del autómata.
         // ─────────────────────────────────────────────────────────────────────────
         grammar.eliminate_ambiguity();
 
@@ -62,8 +58,7 @@ impl Grammar {
 
     /// Lee un archivo YAPar y construye la gramática en memoria SIN transformaciones.
     /// USA ESTO para parsers LR(0), SLR, LALR — que manejan recursión izquierda
-    /// y prefijos comunes de forma nativa. La gramática se entrega tal como la
-    /// escribió el usuario, sin crear no-terminales artificiales (_factN, _prima).
+ 
     pub fn parse_for_lr(filepath: &str) -> Result<Self, String> {
         let grammar = Self::parse_raw(filepath)?;
         // Solo validamos referencias, sin transformar la gramática
@@ -91,6 +86,7 @@ impl Grammar {
             ignores: HashSet::new(),
             productions: Vec::new(),
             start_symbol: String::new(),
+            transformation_log: Vec::new(),
         };
 
         grammar.parse_tokens_section(sections[0]);
@@ -127,6 +123,92 @@ impl Grammar {
         result
     }
 
+    // Funciones auxiliares 
+
+    // collect_used_names: Recolecta todos los nombres de tokens, ignores, no-terminales
+    fn collect_used_names(&self) -> HashSet<String> {
+        let mut used_names = HashSet::new();
+
+        used_names.extend(self.tokens.iter().cloned());
+        used_names.extend(self.ignores.iter().cloned());
+
+        for prod in &self.productions {
+            used_names.insert(prod.head.clone());
+
+            for body in &prod.bodies {
+                for symbol in body {
+                    match symbol {
+                        Symbol::Terminal(t) | Symbol::NonTerminal(t) => {
+                            used_names.insert(t.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        used_names
+    }
+
+    // sanitize_aux_head: 
+    // Convierte un nombre de cabeza de producción en una forma segura para usar como auxiliar.
+    fn sanitize_aux_head(head: &str) -> String {
+        let sanitized: String = head
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+
+        if sanitized.is_empty() {
+            "NT".to_string()
+        } else {
+            sanitized
+        }
+    }
+
+    // fresh_aux_name: 
+    // Genera un nombre único para un no-terminal auxiliar basado en la cabeza original.
+    fn fresh_aux_name(
+        head: &str,
+        counters: &mut HashMap<String, usize>,
+        used_names: &mut HashSet<String>,
+    ) -> String {
+        let safe_head = Self::sanitize_aux_head(head);
+        let counter = counters.entry(safe_head.clone()).or_insert(0);
+
+        loop {
+            let candidate = format!("__{}_{}", safe_head, *counter);
+            *counter += 1;
+
+            if used_names.insert(candidate.clone()) {
+                return candidate;
+            }
+        }
+    }
+
+    /// Convierte un símbolo en una cadena de texto.
+    fn symbol_to_string(symbol: &Symbol) -> String {
+        match symbol {
+            Symbol::Terminal(t) => t.clone(),
+            Symbol::NonTerminal(nt) => nt.clone(),
+        }
+    }
+    /// Convierte un cuerpo de producción (lista de símbolos) en una cadena legible.
+    fn body_to_string(body: &[Symbol]) -> String {
+        if body.is_empty() {
+            "ε".to_string()
+        } else {
+            body.iter()
+                .map(Self::symbol_to_string)
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+    }
+
     /// Aplica transformaciones para eliminar ambigüedad en la gramática antes
     /// de que cualquier algoritmo posterior (FIRST, FOLLOW, LR0, SLR, LALR)
     /// pueda operar sobre ella.
@@ -135,9 +217,6 @@ impl Grammar {
     ///
     /// ## 1. Eliminación de recursión por la izquierda — DIRECTA e INDIRECTA
     ///
-    /// ### Recursión directa
-    /// `A → A α | β`  →  `A → β A'`  /  `A' → α A' | ε`
-    ///
     /// ### Recursión indirecta (algoritmo estándar, Aho/Ullman §4.3)
     /// Se establece un orden A₁, A₂, … Aₙ entre los no-terminales.
     /// Para cada Aᵢ se sustituyen todas las ocurrencias de Aⱼ (j < i) al
@@ -145,14 +224,6 @@ impl Grammar {
     /// aplica la eliminación de recursión directa sobre Aᵢ.
     /// Con ello se garantiza que ningún ciclo de la forma
     /// `A → B α` / `B → A β` permanezca en la gramática resultante.
-    ///
-    /// ### Nota sobre Épsilon (`ε`)
-    /// La representación canónica de ε en este sistema es un `Vec<Symbol>`
-    /// **vacío** (`vec![]`).  Los algoritmos `calculate_first` (first.rs) y
-    /// `calculate_follow` (follow.rs) detectan `body.is_empty()` y lo
-    /// tratan como ε de forma nativa.  El parser LL(1) DEBE hacer lo mismo:
-    /// cuando selecciona una producción cuyo cuerpo es vacío, no debe consumir
-    /// ningún token, simplemente hace pop de la pila.
     ///
     /// ## 2. Factorización por la izquierda (Left Factoring)
     /// `A → α β | α γ`  →  `A → α A'`  /  `A' → β | γ`
@@ -172,8 +243,16 @@ impl Grammar {
         //         Aᵢ → δ₁ γ | δ₂ γ | …   (donde Aⱼ → δ₁ | δ₂ | … son las
         //         producciones actuales de Aⱼ)
         //     Eliminar recursión izquierda DIRECTA de Aᵢ.
-
         // Trabajamos sobre un Vec<(nombre, cuerpos)> para preservar el orden de aparición.
+        self.transformation_log.clear(); // Limpiar log de transformaciones antes de empezar
+
+        let mut used_names = self.collect_used_names();
+        let mut aux_counters: HashMap<String, usize> = HashMap::new(); // Para generar nombres únicos de auxiliares 
+
+        self.transformation_log.push(
+            "Inicio de limpieza LL(1): eliminación de recursión izquierda y factorización.".to_string()
+        );
+
         let mut ordered: Vec<(String, Vec<Vec<Symbol>>)> = self
             .productions
             .iter()
@@ -231,7 +310,16 @@ impl Grammar {
                 ordered[i].1 = non_recursive_bodies;
             } else {
                 // Crear A' (prima)
-                let prime_head = format!("{}'", ai_name);
+                let prime_head = Self::fresh_aux_name(
+                    &ai_name,
+                    &mut aux_counters,
+                    &mut used_names,
+                );
+
+                self.transformation_log.push(format!(
+                    "Eliminación de recursión izquierda en '{}': se crea '{}' auxiliar.",
+                    ai_name, prime_head
+                ));
 
                 // A → β A'
                 let transformed_non_recursive: Vec<Vec<Symbol>> = non_recursive_bodies
@@ -288,14 +376,18 @@ impl Grammar {
         // ── FASE 2: Factorización por la izquierda ────────────────────────────
         // Se repite hasta que no haya más prefijos comunes que factorizar.
         let mut changed = true;
-        let mut counter = 0usize; // Para nombrar no-terminales auxiliares únicos
 
         while changed {
             changed = false;
             let mut result: Vec<Production> = Vec::new();
 
             for prod in &self.productions {
-                let factored = Self::left_factor_production(prod, &mut counter);
+                let factored = Self::left_factor_production(
+                    prod,
+                    &mut aux_counters,
+                    &mut used_names,
+                    &mut self.transformation_log,
+                );
                 if factored.len() > 1 {
                     // Se generaron producciones nuevas: hubo factorización
                     changed = true;
@@ -365,7 +457,12 @@ impl Grammar {
 
     /// Factoriza por la izquierda UNA producción. Devuelve 1 producción si no
     /// había prefijos comunes, o N producciones si se generaron auxiliares.
-    fn left_factor_production(prod: &Production, counter: &mut usize) -> Vec<Production> {
+    fn left_factor_production(
+        prod: &Production,
+        aux_counters: &mut HashMap<String, usize>,
+        used_names: &mut HashSet<String>,
+        transformation_log: &mut Vec<String>,
+    ) -> Vec<Production> {
         // Agrupar cuerpos por su primer símbolo
         let mut groups: std::collections::BTreeMap<Option<&Symbol>, Vec<&Vec<Symbol>>> =
             std::collections::BTreeMap::new();
@@ -394,8 +491,18 @@ impl Grammar {
                 let prefix: Vec<Symbol> = group[0][..prefix_len].to_vec();
 
                 // Crear A_factN para los sufijos
-                *counter += 1;
-                let aux_head = format!("{}_fact{}", prod.head, counter);
+                let aux_head = Self::fresh_aux_name(
+                    &prod.head,
+                    aux_counters,
+                    used_names,
+                );
+
+                transformation_log.push(format!(
+                    "Factorización por la izquierda en '{}'. Prefijo común '{}' movido a auxiliar '{}'.",
+                    prod.head,
+                    Self::body_to_string(&prefix),
+                    aux_head
+                ));
 
                 // El cuerpo de A pasa a ser: prefijo A_factN
                 let mut new_body = prefix.clone();

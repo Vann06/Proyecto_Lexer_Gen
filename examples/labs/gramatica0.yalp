@@ -1,0 +1,35 @@
+/* Parser YAPar para expresiones aritméticas */
+
+/* Sección de TOKENS */
+%token ID
+%token PLUS
+%token STAR
+%token LPAREN
+%token RPAREN
+
+%%
+
+/* Sección de PRODUCCIONES */
+
+e:
+    t e_prime
+;
+
+e_prime:
+    PLUS t e_prime
+  |
+;
+
+t:
+    f t_prime
+;
+
+t_prime:
+    STAR f t_prime
+  |
+;
+
+f:
+    LPAREN e RPAREN
+  | ID
+;
