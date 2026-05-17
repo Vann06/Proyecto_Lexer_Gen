@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use super::grammar::{Grammar, Symbol, Production};
 use super::first::{FirstSets, first_of_sequence, EPSILON};
 use super::follow::{FollowSets, EOF};
+use super::parse_tree::{ParseNode, ParseToken};
 
 // Tabla de parseo M
 // La tabla LL(1) es un diccionario de diccionarios.
@@ -156,5 +157,122 @@ impl LL1Parser {
         }
 
         Ok(())
+    }
+
+    /// Parsea construyendo el árbol de derivación TOP-DOWN.
+    /// Usa una "arena" `Vec<NodeRaw>` para evitar problemas de aliasing/borrow:
+    /// los nodos viven en un vector y se referencian por índice.
+    pub fn parse_tree(&self, tokens: Vec<ParseToken>) -> Result<ParseNode, String> {
+        let mut arena: Vec<NodeRaw> = Vec::new();
+        // Crear nodo raíz (símbolo inicial, NT)
+        arena.push(NodeRaw {
+            symbol: self.start_symbol.clone(),
+            lexeme: None,
+            children: Vec::new(),
+        });
+        let root_idx = 0usize;
+
+        // La pila lleva pares (símbolo, índice_en_arena). EOF tiene índice usize::MAX
+        // (centinela; nunca se materializa como nodo del árbol).
+        let mut stack: Vec<(String, usize)> = Vec::new();
+        stack.push((EOF.to_string(), usize::MAX));
+        stack.push((self.start_symbol.clone(), root_idx));
+
+        let mut input = tokens;
+        input.push(ParseToken { kind: EOF.to_string(), lexeme: String::new() });
+        let mut ip = 0usize;
+
+        while let Some((top_sym, top_idx)) = stack.pop() {
+            let current = &input[ip];
+
+            if top_sym == EOF && current.kind == EOF {
+                break;
+            }
+
+            // ¿El tope es terminal o EOF? (no tiene fila en la tabla)
+            if !self.table.contains_key(&top_sym) {
+                if top_sym == current.kind {
+                    // Matchea: asignar el lexema al nodo hoja
+                    if top_idx != usize::MAX {
+                        arena[top_idx].lexeme = Some(current.lexeme.clone());
+                    }
+                    ip += 1;
+                } else {
+                    return Err(format!(
+                        "Error de sintaxis: se esperaba '{}', se encontró '{}'",
+                        top_sym, current.kind
+                    ));
+                }
+            } else {
+                // No-terminal: consultar M[top, current.kind]
+                let row = self.table.get(&top_sym).unwrap();
+                let prod = row.get(&current.kind).ok_or_else(|| format!(
+                    "Error de sintaxis: no hay regla en la tabla para [{}, {}]",
+                    top_sym, current.kind
+                ))?;
+
+                let body = &prod.bodies[0];
+
+                if body.is_empty() {
+                    // Producción ε: registrar nodo ε como único hijo
+                    let eps_idx = arena.len();
+                    arena.push(NodeRaw {
+                        symbol: "ε".to_string(),
+                        lexeme: None,
+                        children: Vec::new(),
+                    });
+                    arena[top_idx].children.push(eps_idx);
+                } else {
+                    // Crear nodos hijos en orden y empujarlos en orden inverso
+                    let mut child_indices: Vec<usize> = Vec::with_capacity(body.len());
+                    for sym in body {
+                        let (name, _is_term) = match sym {
+                            Symbol::Terminal(t) => (t.clone(), true),
+                            Symbol::NonTerminal(nt) => (nt.clone(), false),
+                        };
+                        let idx = arena.len();
+                        arena.push(NodeRaw {
+                            symbol: name,
+                            lexeme: None,
+                            children: Vec::new(),
+                        });
+                        child_indices.push(idx);
+                    }
+                    arena[top_idx].children = child_indices.clone();
+
+                    // Push en orden inverso para que el primero del cuerpo quede arriba
+                    for sym in body.iter().rev() {
+                        let name = match sym {
+                            Symbol::Terminal(t) | Symbol::NonTerminal(t) => t.clone(),
+                        };
+                        let idx = child_indices.pop().unwrap();
+                        stack.push((name, idx));
+                    }
+                }
+            }
+        }
+
+        // Convertir la arena en un árbol recursivo de ParseNode
+        Ok(arena_to_tree(&arena, root_idx))
+    }
+}
+
+// Nodo en construcción para la arena de `parse_tree`.
+// Aislado a nivel de módulo para que el helper de conversión pueda referenciarlo.
+struct NodeRaw {
+    symbol: String,
+    lexeme: Option<String>,
+    children: Vec<usize>,
+}
+
+fn arena_to_tree(arena: &[NodeRaw], idx: usize) -> ParseNode {
+    let n = &arena[idx];
+    let children: Vec<ParseNode> = n.children.iter()
+        .map(|&ci| arena_to_tree(arena, ci))
+        .collect();
+    ParseNode {
+        symbol: n.symbol.clone(),
+        lexeme: n.lexeme.clone(),
+        children,
     }
 }

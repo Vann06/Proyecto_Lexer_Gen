@@ -6,6 +6,7 @@ use analizador_sintactico::grammar::{Grammar, Symbol};
 use analizador_sintactico::first::calculate_first;
 use analizador_sintactico::follow::calculate_follow;
 use analizador_sintactico::ll1::LL1Parser;
+use analizador_sintactico::parse_tree::{ParseToken, print_ascii, to_dot};
 use std::io::{self, Write};
 
 fn main() {
@@ -146,11 +147,32 @@ fn main() {
                             break;
                         }
 
-                        let tokens: Vec<String> = input_tokens.split_whitespace().map(|s| s.to_string()).collect();
-                        
-                        println!("Parseando: {:?}", tokens);
-                        match parser.parse(tokens) {
-                            Ok(_) => println!("✓ La cadena es VÁLIDA para esta gramática."),
+                        let kinds: Vec<String> = input_tokens.split_whitespace().map(|s| s.to_string()).collect();
+
+                        println!("Parseando: {:?}", kinds);
+                        match parser.parse(kinds.clone()) {
+                            Ok(_) => {
+                                println!("✓ La cadena es VÁLIDA para esta gramática.");
+
+                                // Construir e imprimir árbol de derivación
+                                let tokens = ParseToken::from_kinds(kinds);
+                                match parser.parse_tree(tokens) {
+                                    Ok(tree) => {
+                                        println!("\n--- ÁRBOL DE DERIVACIÓN ---");
+                                        print_ascii(&tree);
+
+                                        let dot = to_dot(&tree);
+                                        if std::fs::create_dir_all("output").is_ok() {
+                                            if let Err(e) = std::fs::write("output/parse_tree_ll1.dot", &dot) {
+                                                eprintln!("(no se pudo escribir DOT: {})", e);
+                                            } else {
+                                                println!("\n(DOT escrito en output/parse_tree_ll1.dot)");
+                                            }
+                                        }
+                                    }
+                                    Err(e) => eprintln!("✗ Error al construir árbol: {}", e),
+                                }
+                            },
                             Err(e) => eprintln!("✗ Error de parseo: {}", e),
                         }
                     }
