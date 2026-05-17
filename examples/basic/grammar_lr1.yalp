@@ -1,0 +1,16 @@
+/* Gramatica clasica LR(1) del documento de clase
+   Genera cadenas de la forma: c^n d c^n d  (ej. cd, ccdcd, cccdcccd)
+
+   S -> C C
+   C -> c C | d
+*/
+
+%token c d
+
+%%
+
+S : C C ;
+
+C : c C
+  | d
+;
