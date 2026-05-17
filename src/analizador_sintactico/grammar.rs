@@ -66,16 +66,18 @@ impl Grammar {
         Ok(grammar)
     }
 
-    /// Función base interna: lee, limpia comentarios y parsea tokens + producciones.
-    /// No aplica ninguna transformación. Usada por parse_from_file y parse_for_lr.
-    fn parse_raw(filepath: &str) -> Result<Self, String> {
-        let raw_content = fs::read_to_string(filepath)
-            .map_err(|e| format!("Error al leer el archivo: {}", e))?;
+    /// Versión pública que parsea desde un string en memoria (para la API HTTP).
+    /// No aplica transformaciones LL(1) — equivalente a parse_for_lr pero sin leer archivo.
+    pub fn parse_for_lr_from_str(raw_content: &str) -> Result<Self, String> {
+        let grammar = Self::parse_raw_from_str(raw_content)?;
+        grammar.validate()?;
+        Ok(grammar)
+    }
 
-        // Limpiamos todos los comentarios /* ... */
-        let content = Self::remove_comments(&raw_content);
+    /// Versión interna que acepta contenido ya leído como string.
+    fn parse_raw_from_str(raw_content: &str) -> Result<Self, String> {
+        let content = Self::remove_comments(raw_content);
 
-        // Dividir en sección de tokens y sección de producciones usando '%%'
         let sections: Vec<&str> = content.split("%%").collect();
         if sections.len() < 2 {
             return Err("El archivo debe contener el separador '%%'".to_string());
@@ -93,6 +95,13 @@ impl Grammar {
         grammar.parse_productions_section(sections[1]);
 
         Ok(grammar)
+    }
+
+    /// Función base interna: lee el archivo y delega en parse_raw_from_str.
+    fn parse_raw(filepath: &str) -> Result<Self, String> {
+        let raw_content = fs::read_to_string(filepath)
+            .map_err(|e| format!("Error al leer el archivo: {}", e))?;
+        Self::parse_raw_from_str(&raw_content)
     }
 
     /// Función auxiliar de limpieza: Borra todo lo que esté entre /* y */

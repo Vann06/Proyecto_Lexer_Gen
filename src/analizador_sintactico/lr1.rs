@@ -258,6 +258,21 @@ impl LR1Automaton {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Traza de parseo
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Un paso de la traza LR(1).  `stack_states` y `stack_symbols` se intercalan
+/// para formar la pila visual: [s0, sym1, s1, sym2, s2, …]
+#[derive(Debug, Clone)]
+pub struct TraceStep {
+    pub stack_states:  Vec<usize>,
+    pub stack_symbols: Vec<String>,
+    pub remaining:     Vec<String>,
+    pub action:        String,
+    pub desc:          String,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tablas ACTION / GOTO
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -362,6 +377,99 @@ impl LR1Tables {
             }
         } else {
             action.insert(key, new_action);
+        }
+    }
+
+    /// Traza completa del parseo: registra cada paso con la pila visual,
+    /// el input restante, la acción tomada y una descripción legible.
+    /// La pila visual intercala estados y símbolos: [s0, sym, s1, sym, s2, …]
+    pub fn parse_with_trace(&self, tokens: Vec<String>) -> Vec<TraceStep> {
+        let mut state_stack: Vec<usize>  = vec![0];
+        let mut sym_stack:   Vec<String> = Vec::new();
+        let mut input: Vec<String> = tokens;
+        input.push(EOF.to_string());
+        let mut idx = 0;
+        let mut steps: Vec<TraceStep> = Vec::new();
+
+        loop {
+            let top   = *state_stack.last().unwrap();
+            let token = input[idx].clone();
+            let remaining = input[idx..].to_vec();
+
+            match self.action.get(&(top, token.clone())) {
+                Some(LR1Action::Shift(next)) => {
+                    steps.push(TraceStep {
+                        stack_states:  state_stack.clone(),
+                        stack_symbols: sym_stack.clone(),
+                        remaining,
+                        action: format!("s{}", next),
+                        desc:   format!("Estado {}, símbolo '{}' → Shift a I{}", top, token, next),
+                    });
+                    state_stack.push(*next);
+                    sym_stack.push(token);
+                    idx += 1;
+                }
+                Some(LR1Action::Reduce { head, body }) => {
+                    let body_str = if body.is_empty() {
+                        "ε".to_string()
+                    } else {
+                        body.iter().map(|s| match s {
+                            Symbol::Terminal(t) | Symbol::NonTerminal(t) => t.as_str(),
+                        }).collect::<Vec<_>>().join(" ")
+                    };
+                    let n = body.len();
+                    let goto_from = state_stack
+                        .get(state_stack.len().saturating_sub(n + 1))
+                        .copied()
+                        .unwrap_or(0);
+                    let goto_dest = self.goto
+                        .get(&(goto_from, head.clone()))
+                        .copied()
+                        .unwrap_or(0);
+                    steps.push(TraceStep {
+                        stack_states:  state_stack.clone(),
+                        stack_symbols: sym_stack.clone(),
+                        remaining,
+                        action: format!("r({} → {})", head, body_str),
+                        desc:   format!(
+                            "Estado {}, ver '{}' → Reduce ({} → {}), GOTO({},{})={}",
+                            top, token, head, body_str, goto_from, head, goto_dest
+                        ),
+                    });
+                    for _ in 0..n {
+                        state_stack.pop();
+                        sym_stack.pop();
+                    }
+                    let top_after = *state_stack.last().unwrap();
+                    match self.goto.get(&(top_after, head.clone())) {
+                        Some(next_state) => {
+                            state_stack.push(*next_state);
+                            sym_stack.push(head.clone());
+                        }
+                        None => return steps,
+                    }
+                }
+                Some(LR1Action::Accept) => {
+                    steps.push(TraceStep {
+                        stack_states:  state_stack.clone(),
+                        stack_symbols: sym_stack.clone(),
+                        remaining,
+                        action: "acc".to_string(),
+                        desc:   format!("Estado {}, ver '$' → ACEPTAR ✓", top),
+                    });
+                    return steps;
+                }
+                None => {
+                    steps.push(TraceStep {
+                        stack_states:  state_stack.clone(),
+                        stack_symbols: sym_stack.clone(),
+                        remaining,
+                        action: "error".to_string(),
+                        desc:   format!("Error de sintaxis en estado {} con token '{}'", top, token),
+                    });
+                    return steps;
+                }
+            }
         }
     }
 

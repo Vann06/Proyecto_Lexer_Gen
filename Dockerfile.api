@@ -1,0 +1,28 @@
+# ── Stage 1: compilar el binario ─────────────────────────────────────────────
+FROM rust:1.82-slim AS builder
+WORKDIR /app
+
+# Copiar manifiestos primero para aprovechar cache de capas Docker
+COPY Cargo.toml Cargo.lock ./
+
+# Crear fuentes dummy para que Cargo descargue y compile dependencias
+RUN mkdir -p src/bin src/analizador_sintactico src/automata src/codegen \
+             src/graph src/regex src/runtime src/spec src/table && \
+    echo "fn main(){}" > src/main.rs && \
+    for b in api test_ll1 test_parser test_lr1; do \
+        echo "fn main(){}" > src/bin/$b.rs; \
+    done && \
+    touch src/error.rs && \
+    cargo build --release --bin api 2>/dev/null || true && \
+    rm -rf src/
+
+# Copiar el código real y compilar solo el binario api
+COPY src/ ./src/
+RUN touch src/bin/api.rs && cargo build --release --bin api
+
+# ── Stage 2: imagen mínima de ejecución ──────────────────────────────────────
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/api /usr/local/bin/api
+EXPOSE 8080
+CMD ["api"]
