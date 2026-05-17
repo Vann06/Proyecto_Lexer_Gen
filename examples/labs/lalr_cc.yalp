@@ -1,0 +1,10 @@
+/* Gramática clásica S → CC para demostrar fusión LR(1) → LALR.
+   El autómata LR(1) tiene 10 estados; tras fusionar por core
+   quedan 7 estados LALR (I3/I6, I4/I7, I8/I9 se unifican).
+
+   Referencia: Aho/Sethi/Ullman "Compilers" §4.7
+*/
+%token c d
+%%
+S : C C ;
+C : c C | d ;

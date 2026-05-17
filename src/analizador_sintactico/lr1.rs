@@ -1,4 +1,4 @@
-// Autómata LR(1) y tablas ACTION/GOTO
+// Autómata LR(1) canónico.
 //
 // Cada ítem LR(1) lleva un lookahead: el terminal que DEBE seguir después de
 // reducir la regla para que la reducción sea válida.  Eso permite al parser
@@ -79,9 +79,6 @@ impl LR1Automaton {
     ///   - β_plus_a = β ++ [Terminal(a)]
     ///   - Para cada producción B -> γ y cada b ∈ FIRST(β_plus_a):
     ///       agregar [B -> • γ, b]
-    ///
-    /// El lookahead b se calcula por estado, no globalmente (ahí está la
-    /// diferencia con SLR).
     pub fn closure(items: &HashSet<LR1Item>, grammar: &Grammar, first_sets: &FirstSets) -> HashSet<LR1Item> {
         let mut closure_set = items.clone();
         let mut changed = true;
@@ -96,11 +93,10 @@ impl LR1Automaton {
                 }
 
                 let Symbol::NonTerminal(nt_name) = &item.body[item.dot_pos] else {
-                    continue; // terminal tras el punto → sólo hay Shift, no Closure
+                    continue; // terminal tras el punto → solo hay Shift, no Closure
                 };
 
                 // β = sufijo del cuerpo DESPUÉS de B; añadimos el lookahead al final
-                // para que FIRST(β Terminal(a)) capture el contexto exacto
                 let beta_plus_a: Vec<Symbol> = item.body[item.dot_pos + 1..]
                     .iter()
                     .cloned()
@@ -116,7 +112,6 @@ impl LR1Automaton {
                     for body in &production.bodies {
                         for la in &lookaheads {
                             if la == EPSILON {
-                                // nunca debería ocurrir (beta_plus_a termina en terminal)
                                 continue;
                             }
                             let candidate = LR1Item {
@@ -168,7 +163,7 @@ impl LR1Automaton {
     /// Construye el autómata completo por BFS sobre los estados.
     ///
     /// La gramática se AUMENTA automáticamente si el símbolo inicial no tiene
-    /// ya el formato S' / prima (igual que LR0Automaton::build).
+    /// ya el formato S' / prima.
     pub fn build(grammar: &Grammar, first_sets: &FirstSets) -> Self {
         let mut states: Vec<LR1State> = Vec::new();
         let mut transitions: HashMap<(usize, Symbol), usize> = HashMap::new();
@@ -205,7 +200,7 @@ impl LR1Automaton {
         while !unprocessed.is_empty() {
             let current_id = unprocessed.remove(0);
 
-            // Ordenar items: kernel primero (dot_pos > 0 o cabeza aumentada), luego alfabético
+            // Ordenar items: kernel primero, luego alfabético
             let mut sorted_items: Vec<&LR1Item> = states[current_id].items.iter().collect();
             sorted_items.sort_by(|a, b| {
                 let ak = a.dot_pos > 0 || a.head == start_head;
@@ -217,7 +212,7 @@ impl LR1Automaton {
                 }
             });
 
-            // Recoger los símbolos que aparecen tras el punto (en orden de aparición)
+            // Recoger los símbolos que aparecen tras el punto
             let mut symbols_to_visit: Vec<Symbol> = Vec::new();
             for item in &sorted_items {
                 if !item.is_reduce_item() {
@@ -234,7 +229,6 @@ impl LR1Automaton {
                     continue;
                 }
 
-                // ¿Ya existe un estado con exactamente estos ítems?
                 let existing_id = states.iter().find(|s| s.items == next_items).map(|s| s.id);
                 let dest_id = match existing_id {
                     Some(id) => id,
@@ -254,164 +248,5 @@ impl LR1Automaton {
         }
 
         LR1Automaton { states, transitions, start_head }
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Tablas ACTION / GOTO
-// ─────────────────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LR1Action {
-    Shift(usize),
-    Reduce { head: String, body: Vec<Symbol> },
-    Accept,
-}
-
-impl LR1Action {
-    pub fn display(&self) -> String {
-        match self {
-            LR1Action::Shift(s) => format!("d{}", s),
-            LR1Action::Accept => "acc".to_string(),
-            LR1Action::Reduce { head, body } => {
-                let body_str = if body.is_empty() {
-                    "ε".to_string()
-                } else {
-                    body.iter()
-                        .map(|s| match s {
-                            Symbol::Terminal(t) | Symbol::NonTerminal(t) => t.as_str(),
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                };
-                format!("r({} -> {})", head, body_str)
-            }
-        }
-    }
-}
-
-pub struct LR1Tables {
-    pub action: HashMap<(usize, String), LR1Action>,
-    pub goto: HashMap<(usize, String), usize>,
-    pub conflicts: Vec<String>,
-}
-
-impl LR1Tables {
-    /// Construye las tablas ACTION y GOTO a partir del autómata LR(1).
-    ///
-    /// Reglas:
-    ///   • [A -> α • a β, _]  y  transición por terminal a → ACTION[s, a] = Shift(dest)
-    ///   • [A -> α •, a]  (A ≠ S')               → ACTION[s, a] = Reduce(A -> α)
-    ///   • [S' -> S •, $]                          → ACTION[s, $] = Accept
-    ///   • Transición por No-Terminal B            → GOTO[s, B]   = dest
-    pub fn build(automaton: &LR1Automaton) -> Self {
-        let mut action: HashMap<(usize, String), LR1Action> = HashMap::new();
-        let mut goto_map: HashMap<(usize, String), usize> = HashMap::new();
-        let mut conflicts: Vec<String> = Vec::new();
-
-        // Llenar Shift y GOTO desde las transiciones del autómata
-        for ((state_id, symbol), dest) in &automaton.transitions {
-            match symbol {
-                Symbol::NonTerminal(nt) => {
-                    goto_map.insert((*state_id, nt.clone()), *dest);
-                }
-                Symbol::Terminal(t) => {
-                    let key = (*state_id, t.clone());
-                    Self::try_insert(&mut action, key, LR1Action::Shift(*dest), &mut conflicts);
-                }
-            }
-        }
-
-        // Llenar Reduce y Accept desde ítems con el punto al final
-        for state in &automaton.states {
-            for item in &state.items {
-                if !item.is_reduce_item() {
-                    continue;
-                }
-                let key = (state.id, item.lookahead.clone());
-                let new_action = if item.head == automaton.start_head && item.lookahead == EOF {
-                    LR1Action::Accept
-                } else {
-                    LR1Action::Reduce {
-                        head: item.head.clone(),
-                        body: item.body.clone(),
-                    }
-                };
-                Self::try_insert(&mut action, key, new_action, &mut conflicts);
-            }
-        }
-
-        LR1Tables { action, goto: goto_map, conflicts }
-    }
-
-    fn try_insert(
-        action: &mut HashMap<(usize, String), LR1Action>,
-        key: (usize, String),
-        new_action: LR1Action,
-        conflicts: &mut Vec<String>,
-    ) {
-        if let Some(existing) = action.get(&key) {
-            if *existing != new_action {
-                conflicts.push(format!(
-                    "Conflicto en estado {} con '{}': {} vs {}",
-                    key.0,
-                    key.1,
-                    existing.display(),
-                    new_action.display()
-                ));
-            }
-        } else {
-            action.insert(key, new_action);
-        }
-    }
-
-    /// Simulación del parser LR(1) usando pila de estados.
-    ///
-    /// Algoritmo:
-    ///   1. Leer token actual
-    ///   2. ACTION[tope, token] = Shift(s)  → apilar s, avanzar input
-    ///   3. ACTION[tope, token] = Reduce(A->α) → desapilar |α|, GOTO[tope, A] → apilar
-    ///   4. ACTION[tope, token] = Accept → éxito
-    ///   5. Sin entrada → error de sintaxis
-    pub fn parse(&self, tokens: Vec<String>) -> Result<(), String> {
-        let mut stack: Vec<usize> = vec![0];
-        let mut input: Vec<String> = tokens;
-        input.push(EOF.to_string());
-        let mut idx = 0;
-
-        loop {
-            let top = *stack.last().unwrap();
-            let token = input[idx].clone();
-
-            match self.action.get(&(top, token.clone())) {
-                Some(LR1Action::Shift(next)) => {
-                    stack.push(*next);
-                    idx += 1;
-                }
-                Some(LR1Action::Reduce { head, body }) => {
-                    let n = body.len();
-                    for _ in 0..n {
-                        stack.pop();
-                    }
-                    let top_after = *stack.last().unwrap();
-                    match self.goto.get(&(top_after, head.clone())) {
-                        Some(next_state) => stack.push(*next_state),
-                        None => {
-                            return Err(format!(
-                                "Error interno: no hay GOTO[{}, {}]",
-                                top_after, head
-                            ))
-                        }
-                    }
-                }
-                Some(LR1Action::Accept) => return Ok(()),
-                None => {
-                    return Err(format!(
-                        "Error de sintaxis en estado {} con token '{}'",
-                        top, token
-                    ))
-                }
-            }
-        }
     }
 }

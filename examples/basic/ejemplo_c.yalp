@@ -82,8 +82,14 @@ sentencia:
 ;
 
 expresion:
-    expresion PLUS termino
-  | expresion MINUS termino
+    expresion EQUALS   termino
+  | expresion NOTEQUALS termino
+  | expresion LT       termino
+  | expresion LTE      termino
+  | expresion GT       termino
+  | expresion GTE      termino
+  | expresion PLUS     termino
+  | expresion MINUS    termino
   | termino
 ;
 

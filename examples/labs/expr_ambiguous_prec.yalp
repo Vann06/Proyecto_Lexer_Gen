@@ -1,0 +1,22 @@
+/* Gramática ambigua para expresiones aritméticas.
+   Sin directivas %left/%right esta gramática tiene conflictos shift-reduce
+   porque E → E op E es ambigua (¿a+b*c es (a+b)*c o a+(b*c)?).
+
+   Con las directivas %left el parser resuelve todos los conflictos por
+   precedencia sin necesidad de estratificar la gramática manualmente.
+
+   Precedencia (de menor a mayor):
+     %left PLUS MINUS   ← suma y resta, asociativos por la izquierda
+     %left STAR SLASH   ← mul y div, mayor precedencia, asociativos por la izquierda
+*/
+%token ID PLUS MINUS STAR SLASH LPAREN RPAREN
+%left PLUS MINUS
+%left STAR SLASH
+%%
+E : E PLUS E
+  | E MINUS E
+  | E STAR E
+  | E SLASH E
+  | LPAREN E RPAREN
+  | ID
+;

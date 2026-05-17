@@ -77,10 +77,14 @@ let return = return
 (* Vigésimo tercer token: palabra reservada print *)
 let print = print
 
+(* Vigésimo cuarto token: else *)
+let elsekw = else
+
 
 (* La sección de trailer es opcional *)
 rule tokens =
     condicional { "IF" }
+    | elsekw { "ELSE" }
     | cada { "FOR" }
     | mientras { "WHILE" }
     | function { "DEF" }
@@ -97,18 +101,18 @@ rule tokens =
     | '(' { "PARENTESIS_IZQUIERDO"}
     | ')' { "PARENTESIS_DERECHO"}
     | '=' { "ASIGNACION" }
-    | '<' { "MENOR QUE" }
-    | '>' { "MAYOR QUE" }
-    | ':' { "DOS PUNTOS" }
+    | '<' { "MENOR_QUE" }
+    | '>' { "MAYOR_QUE" }
+    | ':' { "DOS_PUNTOS" }
     | ',' { "COMA" }
-    | menorIGUAL { "MENOR IGUAL QUE" }
-    | mayorIGual { "MAYOR IGUAL QUE" }
+    | menorIGUAL { "MENOR_IGUAL_QUE" }
+    | mayorIGual { "MAYOR_IGUAL_QUE" }
     | comparacion { "COMPARACION" }
     | noIgual { "DIFERENTE" }
     | id { "IDENTIFICADOR" }
     | completeDigits { "DIGITO" }
-    | number { "NUMERO CON DECIMAL" }
+    | number { "NUMERO_CON_DECIMAL" }
     | string { "STRING" }
     | comentario { "COMENTARIO" }
-    | comentarioMultilinea { "COMENTARIO MULTILINEA" }
+    | comentarioMultilinea { "COMENTARIO_MULTILINEA" }
     | ws {}
