@@ -144,6 +144,107 @@ impl<'a> LRParser<'a> {
             }
         }
     }
+
+    /// Igual que parse_tree pero con recuperación de errores modo pánico.
+    ///
+    /// Cuando encuentra un token inesperado:
+    ///   1. Registra el error.
+    ///   2. Descarta tokens del input hasta encontrar un símbolo de sincronización.
+    ///   3. Desapila estados hasta encontrar uno que acepte ese símbolo.
+    ///   4. Retoma el parseo desde ahí.
+    ///
+    /// `sync` — lista de token kinds que actúan como puntos de sincronización,
+    ///          típicamente delimitadores: ["SEMICOLON", "RBRACE", "RPAREN"].
+    ///
+    /// Retorna todos los errores encontrados + el árbol si logró completar el parseo.
+    pub fn parse_recovering(
+        &self,
+        tokens: Vec<ParseToken>,
+        sync: &[&str],
+    ) -> (Option<ParseNode>, Vec<String>) {
+        let mut errors: Vec<String> = Vec::new();
+        let mut state_stack: Vec<usize> = vec![self.table.start_state];
+        let mut node_stack:  Vec<ParseNode> = Vec::new();
+
+        let mut input = tokens;
+        input.push(ParseToken { kind: "$".to_string(), lexeme: String::new() });
+        let mut ip = 0usize;
+
+        loop {
+            let s = *state_stack.last().unwrap();
+            let a = input[ip].kind.clone();
+
+            match self.table.action.get(&(s, a.clone())) {
+                Some(Action::Shift(t)) => {
+                    let t = *t;
+                    node_stack.push(ParseNode::leaf(&input[ip]));
+                    state_stack.push(t);
+                    ip += 1;
+                }
+                Some(Action::Reduce { head, body }) => {
+                    let head = head.clone();
+                    let k = body.len();
+                    let split_at = node_stack.len().saturating_sub(k);
+                    let children: Vec<ParseNode> = node_stack.drain(split_at..).collect();
+                    for _ in 0..k { state_stack.pop(); }
+                    let top = *state_stack.last().unwrap();
+                    let next_state = match self.table.goto.get(&(top, head.clone())).copied() {
+                        Some(ns) => ns,
+                        None => {
+                            errors.push(format!(
+                                "Error interno: GOTO[I{}, {}] no definido.", top, head
+                            ));
+                            return (None, errors);
+                        }
+                    };
+                    let children = if children.is_empty() {
+                        vec![ParseNode::epsilon_leaf()]
+                    } else { children };
+                    node_stack.push(ParseNode::internal(head, children));
+                    state_stack.push(next_state);
+                }
+                Some(Action::Accept) => {
+                    return (node_stack.pop(), errors);
+                }
+                None => {
+                    // ── Modo pánico ──────────────────────────────────────────
+                    errors.push(format_error(s, &a, &self.table));
+
+                    // 1. Avanzar el input hasta encontrar un símbolo de sincronización
+                    while ip < input.len()
+                        && !sync.contains(&input[ip].kind.as_str())
+                        && input[ip].kind != "$"
+                    {
+                        ip += 1;
+                    }
+
+                    if ip >= input.len() || input[ip].kind == "$" {
+                        // No hay punto de recuperación — abortamos
+                        return (None, errors);
+                    }
+
+                    let sync_kind = input[ip].kind.clone();
+
+                    // 2. Desapilar estados hasta encontrar uno con acción para sync_kind
+                    let mut recovered = false;
+                    while state_stack.len() > 1 {
+                        let top = *state_stack.last().unwrap();
+                        if self.table.action.contains_key(&(top, sync_kind.clone())) {
+                            recovered = true;
+                            break;
+                        }
+                        state_stack.pop();
+                        if !node_stack.is_empty() { node_stack.pop(); }
+                    }
+
+                    if !recovered {
+                        return (None, errors);
+                    }
+                    // 3. Continuar desde el punto de sincronización
+                }
+            }
+        }
+    }
 }
 
 fn format_error(state: usize, token: &str, table: &LRTable) -> String {
