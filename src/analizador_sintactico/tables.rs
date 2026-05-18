@@ -7,6 +7,8 @@
 use std::collections::HashMap;
 use super::grammar::{Associativity, Grammar, Symbol};
 use super::lalr::{LALRAutomaton, LALRItem};
+use super::lr0::LR0Automaton;
+use super::follow::FollowSets;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -125,6 +127,68 @@ impl LRTable {
                             Action::Reduce { head: item.head.clone(), body: item.body.clone() },
                             &prod_index, &prec_map,
                         );
+                    }
+                }
+            }
+        }
+
+        LRTable { action, goto, start_state: 0, start_head: automaton.start_head.clone(), conflicts }
+    }
+
+    /// Construye la tabla ACTION/GOTO a partir del autómata LR(0) + FOLLOW sets (SLR(1)).
+    ///
+    /// Diferencia vs LALR: los reduces usan FOLLOW(A) global en lugar de lookaheads
+    /// por ítem. Eso hace que SLR tenga más conflictos que LALR en gramáticas ambiguas
+    /// o con solapamiento entre FOLLOW sets. El driver LRParser no cambia.
+    pub fn build_from_slr(automaton: &LR0Automaton, grammar: &Grammar, follow_sets: &FollowSets) -> Self {
+        let mut action: HashMap<(usize, String), Action> = HashMap::new();
+        let mut goto:   HashMap<(usize, String), usize>  = HashMap::new();
+        let mut conflicts: Vec<Conflict> = Vec::new();
+
+        let prod_index = build_production_index(grammar);
+        let prec_map   = build_prec_map(grammar);
+
+        // 1. Shifts y GOTO desde las transiciones del LR(0) — idéntico a LALR
+        for ((from, sym), to) in &automaton.transitions {
+            match sym {
+                Symbol::Terminal(t) => {
+                    insert_action(
+                        &mut action, &mut conflicts,
+                        *from, t.clone(), Action::Shift(*to),
+                        &prod_index, &prec_map,
+                    );
+                }
+                Symbol::NonTerminal(nt) => {
+                    goto.insert((*from, nt.clone()), *to);
+                }
+            }
+        }
+
+        // 2. Reduces desde ítems completos usando FOLLOW(A) — diferencia clave vs LALR
+        for state in &automaton.states {
+            for item in &state.items {
+                if item.dot_pos != item.body.len() {
+                    continue; // ítem no completo
+                }
+
+                if item.head == automaton.start_head {
+                    // Accept: [S' → S •] solo con $
+                    insert_action(
+                        &mut action, &mut conflicts,
+                        state.id, "$".to_string(), Action::Accept,
+                        &prod_index, &prec_map,
+                    );
+                } else {
+                    // Reduce: por cada b ∈ FOLLOW(A)
+                    if let Some(follow) = follow_sets.get(&item.head) {
+                        for terminal in follow {
+                            insert_action(
+                                &mut action, &mut conflicts,
+                                state.id, terminal.clone(),
+                                Action::Reduce { head: item.head.clone(), body: item.body.clone() },
+                                &prod_index, &prec_map,
+                            );
+                        }
                     }
                 }
             }

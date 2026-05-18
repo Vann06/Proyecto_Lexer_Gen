@@ -5,6 +5,7 @@ mod analizador_sintactico;
 use analizador_sintactico::grammar::Grammar;
 use analizador_sintactico::first::calculate_first;
 use analizador_sintactico::lr1::LR1Automaton;
+use analizador_sintactico::lr0::LR0Automaton;
 use analizador_sintactico::lalr::merge_by_core;
 use analizador_sintactico::tables::LRTable;
 use analizador_sintactico::parser_lr::{LRParser, ParseStep};
@@ -12,9 +13,9 @@ use analizador_sintactico::follow::calculate_follow;
 use analizador_sintactico::ll1::LL1Parser;
 use analizador_sintactico::parse_tree::{ParseToken, to_dot};
 
-const EXPR_YALP: &str = "examples/labs/expr_left_recursive.yalp";
-const CC_YALP:   &str = "examples/labs/lalr_cc.yalp";
-const PREC_YALP: &str = "examples/labs/expr_ambiguous_prec.yalp";
+const EXPR_YALP: &str = "examples/grammar/expr_left_recursive.yalp";
+const CC_YALP:   &str = "examples/grammar/lalr_cc.yalp";
+const PREC_YALP: &str = "examples/grammar/expr_ambiguous_prec.yalp";
 
 // ─── Test 1 ──────────────────────────────────────────────────────────────────
 #[test]
@@ -199,4 +200,63 @@ fn lalr_left_recursion_preserved() {
     });
 
     assert!(has_left_recursion, "parse_for_lr debe preservar la recursión izquierda");
+}
+
+// ─── Test 11 ─────────────────────────────────────────────────────────────────
+// SLR(1) construye tabla sin conflictos para la gramática de expresiones.
+// La gramática expr_left_recursive no tiene ambigüedad, por lo que SLR y LALR
+// deben producir tablas equivalentes (sin conflictos).
+#[test]
+fn slr_expr_table_has_no_conflicts() {
+    let grammar     = Grammar::parse_for_lr(EXPR_YALP).expect("debe cargar");
+    let first_sets  = calculate_first(&grammar);
+    let follow_sets = calculate_follow(&grammar, &first_sets);
+    let lr0         = LR0Automaton::build(&grammar);
+    let table       = LRTable::build_from_slr(&lr0, &grammar, &follow_sets);
+
+    assert!(
+        table.conflicts.is_empty(),
+        "SLR no debe tener conflictos en expr_left_recursive: {:?}",
+        table.conflicts.iter().map(|c| c.describe()).collect::<Vec<_>>()
+    );
+}
+
+// ─── Test 12 ─────────────────────────────────────────────────────────────────
+// SLR(1) parsea y construye árbol correctamente para ID PLUS ID.
+#[test]
+fn slr_parses_and_builds_tree() {
+    let grammar     = Grammar::parse_for_lr(EXPR_YALP).expect("debe cargar");
+    let first_sets  = calculate_first(&grammar);
+    let follow_sets = calculate_follow(&grammar, &first_sets);
+    let lr0         = LR0Automaton::build(&grammar);
+    let table       = LRTable::build_from_slr(&lr0, &grammar, &follow_sets);
+    let parser      = LRParser::new(&table);
+
+    let tokens = ParseToken::from_kinds(vec![
+        "ID".to_string(), "PLUS".to_string(), "ID".to_string(),
+    ]);
+    let tree = parser.parse_tree(tokens).expect("SLR debe parsear ID PLUS ID");
+
+    assert_eq!(tree.symbol, "e");
+    assert!(find_symbol(&tree, "PLUS"), "árbol SLR debe contener PLUS");
+    assert_eq!(count_symbol(&tree, "ID"), 2);
+}
+
+// ─── Test 13 ─────────────────────────────────────────────────────────────────
+// SLR tiene MÁS conflictos que LALR en la gramática ambigua con precedencia.
+// La gramática expr_ambiguous_prec tiene conflictos S/R que LALR resuelve por
+// lookahead preciso; SLR los ve igualmente pero los resuelve por precedencia.
+#[test]
+fn slr_ambiguous_resolved_by_precedence() {
+    let grammar     = Grammar::parse_for_lr(PREC_YALP).expect("debe cargar");
+    let first_sets  = calculate_first(&grammar);
+    let follow_sets = calculate_follow(&grammar, &first_sets);
+    let lr0         = LR0Automaton::build(&grammar);
+    let table       = LRTable::build_from_slr(&lr0, &grammar, &follow_sets);
+
+    assert!(
+        table.conflicts.is_empty(),
+        "SLR con %left/%right no debe dejar conflictos sin resolver: {:?}",
+        table.conflicts.iter().map(|c| c.describe()).collect::<Vec<_>>()
+    );
 }

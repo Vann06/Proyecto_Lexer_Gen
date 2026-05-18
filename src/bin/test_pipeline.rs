@@ -1,9 +1,9 @@
 // Pipeline end-to-end: archivo fuente → lexer → parser → árbol de derivación.
 //
 // Uso:
-//   cargo run --bin test_pipeline -- <gramatica.yalp> <lexer.yal> <fuente> [--ll1|--lalr]
+//   cargo run --bin test_pipeline -- <gramatica.yalp> <lexer.yal> <fuente> [--ll1|--lalr|--slr]
 //
-// Por defecto usa LALR(1). Con --ll1 usa el parser predictivo LL(1).
+// Por defecto usa LALR(1). Con --ll1 usa LL(1), con --slr usa SLR(1).
 //
 // Flujo:
 //   1. Construye la tabla del lexer compilando el .yal (mismas fases que main.rs).
@@ -37,6 +37,7 @@ use std::fs;
 use analizador_sintactico::grammar::Grammar;
 use analizador_sintactico::first::calculate_first;
 use analizador_sintactico::follow::calculate_follow;
+use analizador_sintactico::lr0::LR0Automaton;
 use analizador_sintactico::lr1::LR1Automaton;
 use analizador_sintactico::lalr::merge_by_core;
 use analizador_sintactico::tables::LRTable;
@@ -50,12 +51,12 @@ use crate::regex::parser::parse_regex;
 use crate::runtime::simulator::{Simulator, LexResult, Token};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Mode { LALR, LL1 }
+enum Mode { LALR, SLR, LL1 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 4 {
-        eprintln!("Uso: {} <gramatica.yalp> <lexer.yal> <fuente> [--ll1|--lalr]", args[0]);
+        eprintln!("Uso: {} <gramatica.yalp> <lexer.yal> <fuente> [--ll1|--lalr|--slr]", args[0]);
         std::process::exit(1);
     }
     let yalp_path = &args[1];
@@ -64,6 +65,7 @@ fn main() {
     let mode = args.iter().skip(4).find_map(|a| match a.as_str() {
         "--ll1"  => Some(Mode::LL1),
         "--lalr" => Some(Mode::LALR),
+        "--slr"  => Some(Mode::SLR),
         _ => None,
     }).unwrap_or(Mode::LALR);
 
@@ -102,8 +104,8 @@ fn main() {
 
     // ── 3. Cargar gramática y filtrar tokens ────────────────────────────────
     let grammar = match mode {
-        Mode::LALR => Grammar::parse_for_lr(yalp_path),
-        Mode::LL1  => Grammar::parse_from_file(yalp_path),
+        Mode::LALR | Mode::SLR => Grammar::parse_for_lr(yalp_path),
+        Mode::LL1              => Grammar::parse_from_file(yalp_path),
     }.unwrap_or_else(|e| {
         eprintln!("Error al cargar gramática: {}", e);
         std::process::exit(1);
@@ -132,6 +134,18 @@ fn main() {
             let parser = LRParser::new(&table);
             parser.parse_tree(parse_tokens)
         }
+        Mode::SLR => {
+            let first_sets  = calculate_first(&grammar);
+            let follow_sets = calculate_follow(&grammar, &first_sets);
+            let lr0   = LR0Automaton::build(&grammar);
+            let table = LRTable::build_from_slr(&lr0, &grammar, &follow_sets);
+            if !table.conflicts.is_empty() {
+                println!("⚠ {} conflicto(s) en la tabla:", table.conflicts.len());
+                for c in &table.conflicts { println!("   {}", c.describe()); }
+            }
+            let parser = LRParser::new(&table);
+            parser.parse_tree(parse_tokens)
+        }
         Mode::LL1 => {
             let first_sets  = calculate_first(&grammar);
             let follow_sets = calculate_follow(&grammar, &first_sets);
@@ -151,8 +165,11 @@ fn main() {
 
             let dot = to_dot(&t);
             fs::create_dir_all("output").ok();
-            let dot_path = format!("output/parse_tree_{}.dot",
-                                   if mode == Mode::LALR { "lalr" } else { "ll1" });
+            let dot_path = format!("output/parse_tree_{}.dot", match mode {
+                Mode::LALR => "lalr",
+                Mode::SLR  => "slr",
+                Mode::LL1  => "ll1",
+            });
             if let Err(e) = fs::write(&dot_path, &dot) {
                 eprintln!("✗ No se pudo escribir DOT: {}", e);
             } else {
