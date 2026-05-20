@@ -26,13 +26,30 @@ struct Parser {
 }
 
 impl Parser {
+    fn skip_ws(&mut self) {
+        while let Some(c) = self.peek() {
+            if c == ' ' || c == '\t' {
+                self.consume();
+            } else {
+                break;
+            }
+        }
+    }
+
     fn parse_union(&mut self) -> Result<RegexAst, LexerGenError> {
+        self.skip_ws();
         let mut left = self.parse_concat()?;
 
-        while self.peek() == Some('|') {
-            self.consume();
-            let right = self.parse_concat()?;
-            left = RegexAst::Union(Box::new(left), Box::new(right));
+        loop {
+            self.skip_ws();
+            if self.peek() == Some('|') {
+                self.consume();
+                self.skip_ws();
+                let right = self.parse_concat()?;
+                left = RegexAst::Union(Box::new(left), Box::new(right));
+            } else {
+                break;
+            }
         }
 
         Ok(left)
@@ -41,12 +58,12 @@ impl Parser {
     fn parse_concat(&mut self) -> Result<RegexAst, LexerGenError> {
         let mut nodes = Vec::new();
 
-        while let Some(c) = self.peek() {
-            if c == ')' || c == '|' {
-                break;
+        loop {
+            self.skip_ws();
+            match self.peek() {
+                None | Some(')') | Some('|') => break,
+                _ => nodes.push(self.parse_postfix()?),
             }
-
-            nodes.push(self.parse_postfix()?);
         }
 
         if nodes.is_empty() {

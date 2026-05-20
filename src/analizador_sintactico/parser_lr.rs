@@ -284,7 +284,7 @@ pub fn print_trace(trace: &[ParseStep]) {
                 println!("  reduce   :  {} → {}", head, body_str);
             }
             ParseStep::Accept => {
-                println!("  accept   ✓");
+                println!("  accept   ");
             }
         }
     }
