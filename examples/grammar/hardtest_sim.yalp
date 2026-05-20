@@ -1,0 +1,210 @@
+/* ============================================================
+ * hardtest_sim.yalp  -  Gramatica LALR(1) para subconjunto de C
+ *
+ * Cubre:
+ *   - Declaraciones de funciones con parametros tipados
+ *   - Tipos basicos: int, char, void, float, double
+ *   - Sentencias: if/else, while, return, break, continue
+ *   - Declaraciones de variables locales con inicializacion
+ *   - Asignacion simple y compuesta (+=, -=)
+ *   - Expresiones: aritmeticas, comparacion, logicas, llamadas
+ *   - Operadores unarios: negacion aritmetica y logica
+ *
+ * Nota: no soporta punteros, arrays, structs, typedef, for,
+ *       ni expresiones de asignacion encadenada.
+ *       Usar con examples/source/test_c.c
+ * ============================================================ */
+
+%token INT CHAR VOID FLOAT DOUBLE
+%token IF ELSE WHILE FOR DO RETURN BREAK CONTINUE
+%token STRUCT TYPEDEF STATIC CONST ENUM SIZEOF
+%token ID INT_LIT FLOAT_LIT STRING_LIT
+%token EQUALS NEQ LTE GTE AND OR
+%token PLUS_ASSIGN MINUS_ASSIGN INC DEC ARROW
+%token ASSIGN PLUS MINUS STAR SLASH MOD
+%token LT GT NOT AMPERSAND PIPE
+%token LPAREN RPAREN LBRACE RBRACE LBRACKET RBRACKET
+%token SEMICOLON COMMA DOT
+
+/* Sin IGNORE: el yal ya descarta whitespace y comentarios */
+
+%%
+
+programa:
+    lista_externas
+;
+
+lista_externas:
+    lista_externas declaracion_externa
+  | declaracion_externa
+;
+
+declaracion_externa:
+    definicion_funcion
+  | declaracion_var
+;
+
+/* ---- Tipos ---- */
+
+tipo:
+    INT
+  | CHAR
+  | VOID
+  | FLOAT
+  | DOUBLE
+;
+
+/* ---- Funciones ---- */
+
+definicion_funcion:
+    tipo ID LPAREN parametros RPAREN bloque
+;
+
+parametros:
+    lista_parametros
+  | tipo
+  | /* vacio */
+;
+
+lista_parametros:
+    lista_parametros COMMA parametro
+  | parametro
+;
+
+parametro:
+    tipo ID
+;
+
+/* ---- Bloques y sentencias ---- */
+
+bloque:
+    LBRACE lista_sentencias RBRACE
+;
+
+lista_sentencias:
+    lista_sentencias sentencia
+  | /* vacio */
+;
+
+sentencia:
+    declaracion_var
+  | bloque
+  | sentencia_if
+  | sentencia_while
+  | sentencia_return
+  | sentencia_break
+  | sentencia_continue
+  | sentencia_asignacion
+  | sentencia_expr
+  | SEMICOLON
+;
+
+sentencia_if:
+    IF LPAREN expresion RPAREN sentencia
+  | IF LPAREN expresion RPAREN sentencia ELSE sentencia
+;
+
+sentencia_while:
+    WHILE LPAREN expresion RPAREN sentencia
+;
+
+sentencia_return:
+    RETURN expresion SEMICOLON
+  | RETURN SEMICOLON
+;
+
+sentencia_break:
+    BREAK SEMICOLON
+;
+
+sentencia_continue:
+    CONTINUE SEMICOLON
+;
+
+/* Asignacion como sentencia: evita conflictos con expresion SEMICOLON */
+sentencia_asignacion:
+    ID ASSIGN expresion SEMICOLON
+  | ID PLUS_ASSIGN expresion SEMICOLON
+  | ID MINUS_ASSIGN expresion SEMICOLON
+;
+
+/* Expresion como sentencia: llamadas a funcion, INC/DEC, etc. */
+sentencia_expr:
+    expresion SEMICOLON
+;
+
+/* Declaracion de variable local */
+declaracion_var:
+    tipo ID SEMICOLON
+  | tipo ID ASSIGN expresion SEMICOLON
+;
+
+/* ---- Expresiones (gramatica estratificada sin ambiguedad) ---- */
+
+/* Nivel 1 - menor precedencia: OR logico */
+expresion:
+    expresion OR expresion_and
+  | expresion_and
+;
+
+/* Nivel 2: AND logico */
+expresion_and:
+    expresion_and AND expresion_cmp
+  | expresion_cmp
+;
+
+/* Nivel 3: comparaciones */
+expresion_cmp:
+    expresion_cmp EQUALS  expresion_add
+  | expresion_cmp NEQ     expresion_add
+  | expresion_cmp LT      expresion_add
+  | expresion_cmp GT      expresion_add
+  | expresion_cmp LTE     expresion_add
+  | expresion_cmp GTE     expresion_add
+  | expresion_add
+;
+
+/* Nivel 4: suma y resta */
+expresion_add:
+    expresion_add PLUS  termino
+  | expresion_add MINUS termino
+  | termino
+;
+
+/* Nivel 5: multiplicacion, division, modulo */
+termino:
+    termino STAR  factor
+  | termino SLASH factor
+  | termino MOD   factor
+  | factor
+;
+
+/* Nivel 6 - mayor precedencia: operadores unarios */
+factor:
+    NOT factor
+  | MINUS factor
+  | primary
+;
+
+/* Atomos: literales, identificadores, llamadas, subexpresiones */
+primary:
+    ID LPAREN argumentos RPAREN
+  | ID LBRACKET expresion RBRACKET
+  | ID INC
+  | ID DEC
+  | ID
+  | INT_LIT
+  | FLOAT_LIT
+  | STRING_LIT
+  | LPAREN expresion RPAREN
+;
+
+argumentos:
+    lista_args
+  | /* vacio */
+;
+
+lista_args:
+    lista_args COMMA expresion
+  | expresion
+;

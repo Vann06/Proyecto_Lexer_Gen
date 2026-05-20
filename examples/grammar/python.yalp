@@ -88,7 +88,18 @@ termino:
 ;
 
 factor:
-    IDENTIFICADOR
+    IDENTIFICADOR PARENTESIS_IZQUIERDO argumentos PARENTESIS_DERECHO
+  | IDENTIFICADOR
   | DIGITO
   | STRING
+;
+
+argumentos:
+    lista_argumentos
+  | /* vacio */
+;
+
+lista_argumentos:
+    lista_argumentos COMA expresion
+  | expresion
 ;

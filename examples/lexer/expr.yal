@@ -1,0 +1,24 @@
+(* Lexer para expresiones aritméticas — compatible con expr_left_recursive.yalp.
+   Produce tokens: ID, PLUS, STAR, LPAREN, RPAREN. *)
+
+{
+#[derive(Debug, PartialEq, Clone)]
+pub enum Token {
+    ID, PLUS, STAR, LPAREN, RPAREN, Whitespace,
+}
+}
+
+let digit  = [0-9]
+let lower  = [a-z]
+let upper  = [A-Z]
+let letter = {lower}|{upper}
+let ws     = \s|\t|\n|\r
+let id     = ({letter}|_)(({letter}|_)|{digit})*
+
+rule tokens =
+    {ws}+               { return Token::Whitespace; }
+  | {id}                { return Token::ID; }
+  | "+"                 { return Token::PLUS; }
+  | "*"                 { return Token::STAR; }
+  | "("                 { return Token::LPAREN; }
+  | ")"                 { return Token::RPAREN; }

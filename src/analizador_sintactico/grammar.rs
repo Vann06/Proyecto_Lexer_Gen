@@ -2,6 +2,14 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 
+/// Asociatividad de un operador declarada con %left / %right / %nonassoc.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Associativity {
+    Left,
+    Right,
+    NonAssoc,
+}
+
 /// Representa cualquier elemento dentro de una regla de la gramática.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Symbol {
@@ -25,6 +33,9 @@ pub struct Grammar {
     pub productions: Vec<Production>, // Lista de todas las producciones
     pub start_symbol: String,         // El no-terminal inicial (la primera producción)
     pub transformation_log: Vec<String>, // Para registrar las transformaciones aplicadas (eliminación de ambigüedad)
+    /// Niveles de precedencia declarados con %left/%right/%nonassoc.
+    /// El índice en el Vec = nivel (mayor índice = mayor precedencia).
+    pub precedence: Vec<(Associativity, Vec<String>)>,
 }
 
 impl Grammar {
@@ -89,6 +100,7 @@ impl Grammar {
             productions: Vec::new(),
             start_symbol: String::new(),
             transformation_log: Vec::new(),
+            precedence: Vec::new(),
         };
 
         grammar.parse_tokens_section(sections[0]);
@@ -596,6 +608,18 @@ impl Grammar {
                 for t in tokens_decl {
                     self.tokens.insert(t.to_string());
                 }
+            } else if line.starts_with("%nonassoc") {
+                let toks: Vec<String> = line[9..].split_whitespace().map(String::from).collect();
+                for t in &toks { self.tokens.insert(t.clone()); }
+                self.precedence.push((Associativity::NonAssoc, toks));
+            } else if line.starts_with("%left") {
+                let toks: Vec<String> = line[5..].split_whitespace().map(String::from).collect();
+                for t in &toks { self.tokens.insert(t.clone()); }
+                self.precedence.push((Associativity::Left, toks));
+            } else if line.starts_with("%right") {
+                let toks: Vec<String> = line[6..].split_whitespace().map(String::from).collect();
+                for t in &toks { self.tokens.insert(t.clone()); }
+                self.precedence.push((Associativity::Right, toks));
             } else if line.starts_with("IGNORE") {
                 let ignore_decl: Vec<&str> = line[6..].split_whitespace().collect();
                 for i in ignore_decl {
