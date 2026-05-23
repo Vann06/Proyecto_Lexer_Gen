@@ -63,9 +63,9 @@ c d d
 d c d`;
 
 const FILES = {
-  yal:  { name: "lexer.yal",   path: "src/lexer.yal",   src: YAL_SRC,  kind:"yal",  current: 9, badges:{warn:1}, rawContent: YAL_RAW  },
-  yalp: { name: "parser.yalp", path: "src/parser.yalp", src: YALP_SRC, kind:"yalp", current: 7,                  rawContent: YALP_RAW },
-  test: { name: "input.txt",   path: "tests/input.txt", src: TEST_SRC, kind:"txt",  current: 2,                  rawContent: TEST_RAW },
+  yal:  { name: "lexer.yal",   path: "src/lexer.yal",   src: YAL_SRC,  kind:"yal",  current: 9, badges:{warn:1}, rawContent: YAL_RAW,  dirty: false },
+  yalp: { name: "parser.yalp", path: "src/parser.yalp", src: YALP_SRC, kind:"yalp", current: 7,                  rawContent: YALP_RAW, dirty: false },
+  test: { name: "input.txt",   path: "tests/input.txt", src: TEST_SRC, kind:"txt",  current: 2,                  rawContent: TEST_RAW, dirty: false },
 };
 
 /* ---- LR(1) states for S' → S    S → CC    C → cC | d ---- */
@@ -177,5 +177,6 @@ impl<'a> Lexer<'a> {
 
 window.IDE_DATA = {
   FILES, STATES, ACTION, GOTO, TERMINALS, NONTERMINALS,
-  FIRST, FOLLOW, PRODS, TRACE, TOKENS, PROBLEMS, GEN_CODE
+  FIRST, FOLLOW, PRODS, TRACE, TOKENS, PROBLEMS, GEN_CODE,
+  LR0_DOT: "",
 };

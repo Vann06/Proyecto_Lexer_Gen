@@ -1,5 +1,5 @@
 /* eslint-disable */
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useRef, useCallback } = React;
 const D = window.IDE_DATA;
 
 const API = "http://localhost:8080";
@@ -19,57 +19,134 @@ function CodeLine({ row, cur, errFlag, warnFlag }){
   );
 }
 
-function FileTree({ active, onPick }){
-  const Row = ({depth=0, kind, icon, label, file, badge}) => (
-    <div className={"tree-row " + (kind||"file") + (kind!=="folder"&&kind!=="folder-open" ? " "+(D.FILES[file]?.kind||"") : "") + (active===file?" active":"")}
-         onClick={()=> file && onPick(file)}>
-      {Array.from({length:depth}).map((_,i)=><span key={i} className="indent"/>)}
-      <span className="icn"/>
-      <span>{label}</span>
-      {badge && <span className="badge">{badge}</span>}
-    </div>
-  );
+function FileTree({ active, onPick, onLoadFile }){
   return (
     <div className="filetree">
-      <div className="h">▍ FILES · syntra</div>
-      <Row kind="folder" label="src"/>
-      <Row depth={1} file="yal"  label="lexer.yal" badge="!"/>
-      <Row depth={1} file="yalp" label="parser.yalp"/>
-      <div className="tree-row folder"><span className="icn"/>build</div>
-      <div className="tree-row file" style={{opacity:.55}}>
-        <span className="indent"/><span className="icn" style={{background:"var(--tx-mute)"}}/>lexer.rs
+      <div className="h">▍ CARGAR ARCHIVOS</div>
+      <div className="load-btns">
+        <label className="load-btn">
+          ↑ .yal / .yalex
+          <input type="file" accept=".yal,.yalex" hidden onChange={e => e.target.files[0] && onLoadFile("yal", e.target.files[0])}/>
+        </label>
+        <label className="load-btn">
+          ↑ .yalp / .yapar
+          <input type="file" accept=".yalp,.yapar" hidden onChange={e => e.target.files[0] && onLoadFile("yalp", e.target.files[0])}/>
+        </label>
+        <label className="load-btn">
+          ↑ input.txt
+          <input type="file" accept=".txt,text/plain" hidden onChange={e => e.target.files[0] && onLoadFile("test", e.target.files[0])}/>
+        </label>
       </div>
-      <div className="tree-row file" style={{opacity:.55}}>
-        <span className="indent"/><span className="icn" style={{background:"var(--tx-mute)"}}/>parser.rs
-      </div>
-      <Row kind="folder" label="tests"/>
-      <Row depth={1} file="test" label="input.txt"/>
-      <div style={{height:8}}/>
-      <div className="tree-row file"><span className="icn" style={{background:"var(--yellow)"}}/>Cargo.toml</div>
-      <div className="tree-row file"><span className="icn" style={{background:"var(--tx-mute)"}}/>README.md</div>
+
+      <div className="h">▍ WORKSPACE</div>
+      {["yal","yalp","test"].map(id => (
+        <div key={id}
+             className={"tree-row file " + D.FILES[id].kind + (active===id?" active":"")}
+             onClick={() => onPick(id)}>
+          <span className="icn"/>
+          <span>{D.FILES[id].name}</span>
+          {D.FILES[id].dirty && <span className="badge">●</span>}
+        </div>
+      ))}
 
       <div className="h" style={{marginTop:24}}>▍ ANALYSIS</div>
-      <div className="tree-row file"><span className="icn" style={{background:"var(--cyan)"}}/>NFA
-        <span className="badge">12 q</span>
-      </div>
-      <div className="tree-row file"><span className="icn" style={{background:"var(--cyan)"}}/>DFA
-        <span className="badge">7 q</span>
-      </div>
-      <div className="tree-row file"><span className="icn" style={{background:"var(--coral)"}}/>LR(1)
-        <span className="badge">10 I</span>
+      <div className="tree-row file">
+        <span className="icn" style={{background:"var(--coral)"}}/>LR(0)
+        <span className="badge">{D.STATES.length || "?"} I</span>
       </div>
     </div>
   );
 }
 
+/* ============================== Syntax highlight ============================== */
+
+function escHtml(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+const HL_RULES = {
+  yal: [
+    { re: /\(\*[\s\S]*?\*\)/y, cls: "com" },
+    { re: /\b(let|rule|return|skip)\b/y, cls: "kw" },
+    { re: /\[[^\]]*\]/y, cls: "str" },
+    { re: /'[^']*'/y, cls: "str" },
+    { re: /[a-z_][a-zA-Z0-9_]*/y, cls: "fn" },
+    { re: /[0-9]+/y, cls: "num" },
+    { re: /[|*+?()\-={}]/y, cls: "op" },
+  ],
+  yalp: [
+    { re: /\(\*[\s\S]*?\*\)/y, cls: "com" },
+    { re: /%%/y, cls: "kw" },
+    { re: /%(token|start|left|right|nonassoc)\b/y, cls: "kw" },
+    { re: /[A-Z][A-Z0-9_]*/y, cls: "nonterm" },
+    { re: /[a-z_][a-z0-9_]*/y, cls: "term" },
+    { re: /[|:;]/y, cls: "op" },
+  ],
+  txt: [],
+};
+
+function tokenize(text, lang){
+  const rules = HL_RULES[lang] || [];
+  if (!rules.length) return escHtml(text);
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    let matched = false;
+    for (const { re, cls } of rules) {
+      re.lastIndex = i;
+      const m = re.exec(text);
+      if (m) {
+        out += `<span class="${cls}">${escHtml(m[0])}</span>`;
+        i += m[0].length;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) { out += escHtml(text[i]); i++; }
+  }
+  return out;
+}
+
 /* ============================== Editor ============================== */
 
-function Editor({ file }){
+function Editor({ file, onEdit, contentVersion }){
   const f = D.FILES[file];
-  const total = f.src.length;
-  // problems by line (mock per file)
-  const warns = file==="yal" ? new Set([10]) : new Set();
-  const errs  = file==="yal" ? new Set([1])  : new Set();
+  const taRef  = useRef();
+  const gutRef = useRef();
+  const hlRef  = useRef();
+  const lang = file === "yal" ? "yal" : file === "yalp" ? "yalp" : "txt";
+  const [lineCount,   setLineCount]   = useState(() => f.rawContent.split('\n').length);
+  const [highlighted, setHighlighted] = useState(() => tokenize(f.rawContent, lang));
+
+  useEffect(() => {
+    if (taRef.current) taRef.current.value = f.rawContent;
+    setLineCount(f.rawContent.split('\n').length);
+    setHighlighted(tokenize(f.rawContent, lang));
+  }, [file, contentVersion]);
+
+  const errs  = new Set(D.PROBLEMS
+    .filter(p => p.level==="err"  && p.loc && p.loc.includes(f.name))
+    .map(p => parseInt(p.loc.split(":")[1])).filter(n => !isNaN(n)));
+  const warns = new Set(D.PROBLEMS
+    .filter(p => p.level==="warn" && p.loc && p.loc.includes(f.name))
+    .map(p => parseInt(p.loc.split(":")[1])).filter(n => !isNaN(n)));
+
+  const handleChange = e => {
+    const content = e.target.value;
+    D.FILES[file].rawContent = content;
+    D.FILES[file].dirty = true;
+    const newCount = content.split('\n').length;
+    if (newCount !== lineCount) setLineCount(newCount);
+    setHighlighted(tokenize(content, lang));
+    onEdit(file);
+  };
+
+  const syncScroll = () => {
+    if (gutRef.current && taRef.current)
+      gutRef.current.scrollTop = taRef.current.scrollTop;
+    if (hlRef.current && taRef.current){
+      hlRef.current.scrollTop  = taRef.current.scrollTop;
+      hlRef.current.scrollLeft = taRef.current.scrollLeft;
+    }
+  };
 
   return (
     <>
@@ -78,30 +155,35 @@ function Editor({ file }){
         <span className="b">{f.name}</span>
         <div className="right">
           <span className="pill">{file==="yal"?"YALex":file==="yalp"?"YACC":"text"}</span>
-          <span>● modificado</span>
+          {f.dirty && <span style={{color:"var(--yellow)"}}>● modificado</span>}
           <span>UTF-8</span>
         </div>
       </div>
       <div id="editor" className="panel cyan">
-        <div className="gutter">
-          {f.src.map((_,i)=>{
-            const n = i+1;
-            const c = [
-              "ln",
-              n===f.current+1 ? "cur" : "",
-              errs.has(n) ? "err" : "",
-              warns.has(n) ? "warn" : "",
-            ].join(" ");
+        <div className="gutter" ref={gutRef} style={{overflowY:"hidden"}}>
+          {Array.from({length: lineCount}, (_, i) => {
+            const n = i + 1;
+            const c = ["ln", errs.has(n)?"err":"", warns.has(n)?"warn":""].join(" ");
             return <div key={i} className={c}>{String(n).padStart(2,"0")}</div>;
           })}
         </div>
-        <div className="code">
-          {f.src.map((row,i)=>
-            <CodeLine key={i} row={row}
-                      cur={i===f.current}
-                      errFlag={errs.has(i+1)}
-                      warnFlag={warns.has(i+1)}/>
-          )}
+        <div className="editor-body">
+          <div
+            ref={hlRef}
+            className="highlight-layer"
+            aria-hidden="true"
+            dangerouslySetInnerHTML={{__html: highlighted}}
+          />
+          <textarea
+            ref={taRef}
+            className="code-edit"
+            defaultValue={f.rawContent}
+            onChange={handleChange}
+            onScroll={syncScroll}
+            spellCheck={false}
+            autoComplete="off"
+            autoCorrect="off"
+          />
         </div>
       </div>
     </>
@@ -188,7 +270,55 @@ function StatesView({ active, onPick }){
   );
 }
 
-function ActionGotoTable({ stepIdx }){
+function LL1TableView(){
+  // Reconstruct M[NT, terminal] table from D.STATES items
+  // Each state item looks like "M[S, c] → C C"
+  const tableData = {};
+  D.STATES.forEach(state => {
+    state.items.forEach(item => {
+      const m = item.match(/^M\[([^,\]]+),\s*([^\]]+)\]\s*[→>]\s*(.+)$/);
+      if (m) {
+        const nt = m[1].trim(), term = m[2].trim(), rhs = m[3].trim();
+        if (!tableData[nt]) tableData[nt] = {};
+        tableData[nt][term] = rhs;
+      }
+    });
+  });
+  const nts   = Object.keys(tableData).sort();
+  const terms = [...D.TERMINALS].sort();
+  return (
+    <div>
+      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>▍ TABLA LL(1) · M[NT, Terminal]</div>
+      <table className="t">
+        <thead>
+          <tr>
+            <th>NT</th>
+            {terms.map(t=> <th key={t} className="term">{t}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {nts.map(nt=>(
+            <tr key={nt}>
+              <td className="row-h nonterm">{nt}</td>
+              {terms.map(t=>{
+                const v = tableData[nt]?.[t];
+                return <td key={t} className={v?"":"empty"}>{v ? <span className="re">{v}</span> : "·"}</td>;
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{height:10}}/>
+      <div className="dim" style={{fontSize:16}}>
+        Tabla de análisis predictivo LL(1) · celdas vacías = error
+      </div>
+    </div>
+  );
+}
+
+function ActionGotoTable({ stepIdx, mode }){
+  if (mode === "ll1") return <LL1TableView/>;
+
   const cur = D.TRACE[stepIdx] || D.TRACE[0];
   const curState = cur.stack[cur.stack.length-1];
   const curTok   = cur.remaining[0];
@@ -277,80 +407,44 @@ function TokensView(){
   );
 }
 
-function DfaGraph(){
-  // Mini DFA: states 0..4, transitions for example lexer
-  const N = [
-    {id:0, x:60,  y:80, accept:false, label:"q0"},
-    {id:1, x:200, y:40, accept:true,  label:"q1·ID"},
-    {id:2, x:200, y:140,accept:true,  label:"q2·NUM"},
-    {id:3, x:360, y:40, accept:true,  label:"q3·ID"},
-    {id:4, x:360, y:140,accept:true,  label:"q4·NUM"},
-  ];
-  const E = [
-    {a:0,b:1, l:"[a-z]"},
-    {a:0,b:2, l:"[0-9]"},
-    {a:1,b:3, l:"[a-z0-9]"},
-    {a:3,b:3, l:"[a-z0-9]", loop:true},
-    {a:2,b:4, l:"[0-9]"},
-    {a:4,b:4, l:"[0-9]", loop:true},
-  ];
-  const find = id => N.find(n=>n.id===id);
-  const r = 22;
+function LR0Graph({ renderKey }){
+  const containerRef = useRef();
+
+  useEffect(() => {
+    const dot = D.LR0_DOT;
+    if (!dot || !containerRef.current) return;
+    if (!window.Viz) {
+      containerRef.current.innerHTML = '<div style="color:var(--yellow);padding:12px">Cargando viz.js...</div>';
+      return;
+    }
+    window.Viz.instance().then(viz => {
+      if (!containerRef.current) return;
+      try {
+        const svg = viz.renderSVGElement(dot);
+        svg.style.maxWidth = "100%";
+        svg.style.height   = "auto";
+        containerRef.current.innerHTML = "";
+        containerRef.current.appendChild(svg);
+      } catch(err) {
+        containerRef.current.innerHTML = `<div style="color:var(--red);padding:12px">Error al renderizar: ${err}</div>`;
+      }
+    }).catch(err => {
+      if (containerRef.current)
+        containerRef.current.innerHTML = `<div style="color:var(--red);padding:12px">${err}</div>`;
+    });
+  }, [renderKey]);
 
   return (
     <div className="dfa-wrap">
-      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>▍ DFA · lexer · 5 estados · 6 transiciones</div>
+      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
+        ▍ AUTÓMATA LR(0) · {D.STATES.length} estados
+        {!D.LR0_DOT && <span className="dim" style={{marginLeft:10}}>· ejecuta RUN primero</span>}
+      </div>
       <div className="dfa-legend">
-        <span><i style={{background:"var(--cyan)"}}/>start</span>
-        <span><i style={{background:"var(--green)",borderRadius:0}}/>accept</span>
-        <span><i style={{background:"var(--magenta)"}}/>transition</span>
+        <span><i style={{background:"var(--cyan)"}}/>estado inicial</span>
+        <span><i style={{background:"var(--magenta)"}}/>transición</span>
       </div>
-      <div className="dfa" style={{border:"1px solid var(--line)", background:"#080410", padding:8}}>
-        <svg viewBox="0 0 440 200" style={{maxHeight:280}}>
-          <defs>
-            <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-              <path d="M0,0 L10,5 L0,10 z" fill="#c026d3"/>
-            </marker>
-          </defs>
-          {E.map((e,i)=>{
-            const a = find(e.a), b = find(e.b);
-            if (e.loop){
-              return (
-                <g key={i}>
-                  <path d={`M ${a.x+12} ${a.y-r} q 18 -30 36 0`} fill="none" stroke="#c026d3" strokeWidth="1.5" markerEnd="url(#ah)"/>
-                  <text x={a.x+30} y={a.y-r-18} fill="#f9a8d4" fontFamily="VT323" fontSize="14" textAnchor="middle">{e.l}</text>
-                </g>
-              );
-            }
-            // shorten endpoints
-            const dx = b.x-a.x, dy=b.y-a.y, L = Math.hypot(dx,dy);
-            const ux=dx/L, uy=dy/L;
-            const x1 = a.x + ux*r, y1=a.y+uy*r;
-            const x2 = b.x - ux*r, y2=b.y-uy*r;
-            return (
-              <g key={i}>
-                <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#c026d3" strokeWidth="1.5" markerEnd="url(#ah)"/>
-                <text x={(x1+x2)/2} y={(y1+y2)/2 - 6} fill="#f9a8d4" fontFamily="VT323" fontSize="14" textAnchor="middle">{e.l}</text>
-              </g>
-            );
-          })}
-          {N.map(n=>(
-            <g key={n.id}>
-              {n.accept && <rect x={n.x-r-3} y={n.y-r-3} width={(r+3)*2} height={(r+3)*2} fill="none" stroke="#4ade80" strokeDasharray="3 2"/>}
-              <rect x={n.x-r} y={n.y-r} width={r*2} height={r*2}
-                    fill={n.id===0?"#0a2530":"#1a0f24"}
-                    stroke={n.id===0?"#22d3ee":(n.accept?"#4ade80":"#c026d3")}
-                    strokeWidth="2"/>
-              <text x={n.x} y={n.y+5} fontFamily="VT323" fontSize="16" fill="#e8d6f0" textAnchor="middle">{n.label}</text>
-            </g>
-          ))}
-        </svg>
-      </div>
-      <div className="dim" style={{fontSize:16, marginTop:8}}>
-        ▍ Subconjuntos calculados desde NFA · {' '}
-        <span style={{color:"var(--cyan)"}}>q0</span> inicial ·{' '}
-        <span style={{color:"var(--green)"}}>q1..q4</span> de aceptación
-      </div>
+      <div ref={containerRef} className="dfa-container"/>
     </div>
   );
 }
@@ -499,7 +593,7 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
           {isAccepted &&
             <div className="accept-banner">
               <span>✓</span><span>CADENA ACEPTADA</span>
-              <span className="dim" style={{fontFamily:"VT323", fontSize:14}}>· 12 pasos · 0 errores</span>
+              <span className="dim" style={{fontFamily:"VT323", fontSize:14}}>· {D.TRACE.length} pasos · 0 errores</span>
             </div>
           }
         </div>
@@ -510,7 +604,7 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
 
 /* ============================== Right results panel ============================== */
 
-function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActiveState }){
+function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActiveState, mode, renderKey }){
   const TABS = [
     {id:"grammar",   label:"GRAMÁTICA"},
     {id:"first",     label:"FIRST"},
@@ -518,7 +612,7 @@ function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActive
     {id:"states",    label:"ESTADOS", badge: D.STATES.length},
     {id:"action",    label:"ACTION/GOTO"},
     {id:"tokens",    label:"TOKENS", badge: D.TOKENS.length},
-    {id:"dfa",       label:"DFA"},
+    {id:"dfa",       label:"LR(0)"},
     {id:"gen",       label:"CÓD.GEN"},
     {id:"problems",  label:"PROBLEMAS", badge: D.PROBLEMS.length},
   ];
@@ -543,9 +637,9 @@ function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActive
           {activeTab==="first"    && <FirstFollow which="first"/>}
           {activeTab==="follow"   && <FirstFollow which="follow"/>}
           {activeTab==="states"   && <StatesView active={activeState} onPick={setActiveState}/>}
-          {activeTab==="action"   && <ActionGotoTable stepIdx={stepIdx}/>}
+          {activeTab==="action"   && <ActionGotoTable stepIdx={stepIdx} mode={mode}/>}
           {activeTab==="tokens"   && <TokensView/>}
-          {activeTab==="dfa"      && <DfaGraph/>}
+          {activeTab==="dfa"      && <LR0Graph renderKey={renderKey}/>}
           {activeTab==="gen"      && <GeneratedCode/>}
           {activeTab==="problems" && <ProblemsList/>}
         </div>
@@ -558,12 +652,8 @@ function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActive
 
 const MODE_LABELS = { lalr:"LALR(1)", slr:"SLR(1)", ll1:"LL(1)" };
 
-function Header({ activeFile, setFile, onRun, loading, mode, setMode }){
-  const tabs = [
-    { id:"yal",  label:"lexer.yal",   dirty:true },
-    { id:"yalp", label:"parser.yalp", dirty:false },
-    { id:"test", label:"input.txt",   dirty:false },
-  ];
+function Header({ activeFile, setFile, onRun, onSave, loading, mode, setMode }){
+  const tabs = ["yal","yalp","test"];
   return (
     <header data-screen-label="IDE">
       <div className="brand">
@@ -574,15 +664,18 @@ function Header({ activeFile, setFile, onRun, loading, mode, setMode }){
         <span>FILE</span><span>EDIT</span><span>VIEW</span><span className="active">BUILD</span><span>RUN</span><span>?</span>
       </div>
       <div className="filetabs">
-        {tabs.map(t=>
-          <div key={t.id}
-               className={"ftab " + (activeFile===t.id?"active":"") + (t.dirty?" dirty":"")}
-               onClick={()=>setFile(t.id)}>
-            <span className="dot"/>
-            <span>{t.label}</span>
-            <span className="x">×</span>
-          </div>
-        )}
+        {tabs.map(id=>{
+          const f = D.FILES[id];
+          return (
+            <div key={id}
+                 className={"ftab " + (activeFile===id?"active":"") + (f.dirty?" dirty":"")}
+                 onClick={()=>setFile(id)}>
+              <span className="dot"/>
+              <span>{f.name}</span>
+              <span className="x">×</span>
+            </div>
+          );
+        })}
       </div>
       <div className="actions">
         <div className="modegrp">
@@ -597,7 +690,9 @@ function Header({ activeFile, setFile, onRun, loading, mode, setMode }){
         <button className="runbtn" onClick={onRun} disabled={loading} style={{opacity:loading?.5:1}}>
           {loading ? "..." : <><span className="play"/>RUN</>}
         </button>
-        <button className="runbtn stepbtn" onClick={onRun} disabled={loading}><span className="play"/>STEP</button>
+        <button className="runbtn stepbtn" onClick={onSave} title="Guardar archivo activo">
+          SAVE
+        </button>
         <div className="winbtns" style={{marginLeft:14}}>
           <div className="wb wb-min"/>
           <div className="wb wb-max"/>
@@ -634,15 +729,36 @@ function StatusBar({ activeFile, stepIdx, mode }){
 /* ============================== App ============================== */
 
 function App(){
-  const [activeFile, setFile]   = useState("yalp");
-  const [activeTab,  setTab]    = useState("action");
-  const [activeState, setState] = useState(3);
-  const [stepIdx,    setStep]   = useState(3);
-  const [loading,    setLoading]= useState(false);
-  const [mode,       setMode]   = useState("lalr");
-  const [,           bump]      = useState(0); // fuerza re-render cuando D muta
+  const [activeFile,     setFile]          = useState("yalp");
+  const [activeTab,      setTab]           = useState("action");
+  const [activeState,    setState]         = useState(3);
+  const [stepIdx,        setStep]          = useState(3);
+  const [loading,        setLoading]       = useState(false);
+  const [mode,           setMode]          = useState("lalr");
+  const [renderKey,      bump]             = useState(0); // re-render global
+  const [contentVersion, setContentVersion] = useState(0); // señal de carga externa
 
   const rerender = () => bump(n => n + 1);
+
+  // ── WORKSPACE: carga archivos del servidor al arrancar ──────────────────────
+  const fetchWorkspace = async () => {
+    try {
+      const res = await fetch(`${API}/api/workspace`);
+      if (!res.ok) return;
+      const { files } = await res.json();
+      for (const { name, kind } of files) {
+        const slot = kind === "yal" ? "yal" : kind === "yalp" ? "yalp" : "test";
+        const content = await fetch(`${API}/api/workspace/${encodeURIComponent(name)}`).then(r => r.text());
+        D.FILES[slot].rawContent = content;
+        D.FILES[slot].name  = name;
+        D.FILES[slot].dirty = false;
+      }
+      setContentVersion(v => v + 1);
+      rerender();
+    } catch(e) { console.warn("workspace not available, using defaults", e); }
+  };
+
+  useEffect(() => { fetchWorkspace(); }, []);
 
   // sincroniza el estado resaltado en la tabla cuando cambia el paso
   useEffect(()=>{
@@ -651,6 +767,56 @@ function App(){
     const top = cur.stack[cur.stack.length - 1];
     if (typeof top === "number") setState(top);
   }, [stepIdx]);
+
+  // ── EDITAR: Editor ya actualizó D.FILES directamente — solo refrescamos UI ──
+  const handleEdit = () => {
+    rerender(); // actualiza indicadores dirty en sidebar y header
+  };
+
+  // ── CARGAR ARCHIVO: lee un File y también lo sube al workspace ──────────────
+  const handleLoadFile = (fileId, file) => {
+    const reader = new FileReader();
+    reader.onload = async e => {
+      const content = e.target.result;
+      D.FILES[fileId].rawContent = content;
+      D.FILES[fileId].name  = file.name;
+      D.FILES[fileId].dirty = false;
+      try {
+        await fetch(`${API}/api/workspace/${encodeURIComponent(file.name)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "text/plain" },
+          body: content,
+        });
+      } catch(e) { /* funciona localmente aunque el backend falle */ }
+      setFile(fileId);
+      setContentVersion(v => v + 1);
+      rerender();
+    };
+    reader.readAsText(file);
+  };
+
+  // ── GUARDAR: escribe en el workspace del servidor ───────────────────────────
+  const handleSave = async () => {
+    const f = D.FILES[activeFile];
+    try {
+      const res = await fetch(`${API}/api/workspace/${encodeURIComponent(f.name)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "text/plain" },
+        body: f.rawContent,
+      });
+      if (res.ok) { D.FILES[activeFile].dirty = false; rerender(); }
+    } catch(e) {
+      // fallback: descarga Blob si el backend no está disponible
+      const blob = new Blob([f.rawContent], { type: "text/plain" });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href = url; a.download = f.name;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a); URL.revokeObjectURL(url);
+      D.FILES[activeFile].dirty = false;
+      rerender();
+    }
+  };
 
   // ── RUN: compila la gramática y actualiza TODA la data ──────────────────────
   const handleRun = async () => {
@@ -675,12 +841,12 @@ function App(){
         FOLLOW:        data.follow,
         PRODS:         data.prods,
         PROBLEMS:      data.problems,
+        LR0_DOT:       data.lr0_dot || "",
       });
       setStep(0);
       rerender();
     } catch(e) {
       console.error("API /compile:", e);
-      // Agrega el error a PROBLEMS para que aparezca en el tab
       D.PROBLEMS = [{ level:"err", code:"E000", msg: String(e), loc:"api" }];
       rerender();
     } finally {
@@ -710,17 +876,18 @@ function App(){
 
   return (
     <div id="app">
-      <Header activeFile={activeFile} setFile={setFile} onRun={handleRun} loading={loading} mode={mode} setMode={setMode}/>
+      <Header activeFile={activeFile} setFile={setFile} onRun={handleRun} onSave={handleSave}
+              loading={loading} mode={mode} setMode={setMode}/>
 
       <div id="files" className="panel" data-screen-label="files">
         <div className="panel-title">
           <span className="swatch"/>EXPLORER
         </div>
-        <FileTree active={activeFile} onPick={setFile}/>
+        <FileTree active={activeFile} onPick={setFile} onLoadFile={handleLoadFile}/>
       </div>
 
       <div id="editor-wrap" data-screen-label="editor">
-        <Editor file={activeFile}/>
+        <Editor file={activeFile} onEdit={handleEdit} contentVersion={contentVersion}/>
       </div>
 
       <div id="results" data-screen-label="results">
@@ -729,7 +896,9 @@ function App(){
           activeTab={activeTab}
           setActiveTab={setTab}
           activeState={activeState}
-          setActiveState={setState}/>
+          setActiveState={setState}
+          mode={mode}
+          renderKey={renderKey}/>
       </div>
 
       <div id="console-area" data-screen-label="console">

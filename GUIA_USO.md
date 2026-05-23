@@ -15,130 +15,155 @@ docker compose up
 docker compose down
 ```
 
-| Servicio  | URL                        |
-|-----------|----------------------------|
-| IDE (UI)  | http://localhost:4000       |
-| API Rust  | http://localhost:8080       |
+| Servicio | URL |
+|----------|-----|
+| API Rust | [http://localhost:8080](http://localhost:8080) |
+| Health check | [http://localhost:8080/health](http://localhost:8080/health) |
+
+Abrir el IDE en el navegador:
+```
+frontend/IDE/IDE Analizador Sintactico.html
+```
 
 ---
 
 ### Sin Docker (desarrollo local)
 
-Abre **dos terminales**:
-
 ```bash
 # Terminal 1 — servidor Rust
 cargo run --bin api
 
-# Terminal 2 — abrir el IDE en el navegador
+# Terminal 2 — abrir el IDE
 open frontend/IDE/"IDE Analizador Sintactico.html"
-# o arrastrar el archivo al navegador
 ```
 
 ---
 
 ## Flujo de trabajo en el IDE
 
-### 1. Editar la gramática
+### 1. Cargar archivos
 
-En el panel izquierdo haz clic en **parser.yalp**.  
-El editor muestra la gramática activa con syntax highlighting.
+En el panel izquierdo bajo **CARGAR ARCHIVOS**, usa los botones para subir:
 
-> Para cambiar la gramática que analiza el IDE, edita `rawContent`  
-> de la clave `yalp` en `frontend/IDE/data.jsx`.
+- `↑ .yal / .yalex` — definiciones léxicas
+- `↑ .yalp / .yapar` — gramática del parser
+- `↑ input.txt` — cadena de prueba
+
+Los archivos se guardan automáticamente en la carpeta `workspace/` del proyecto.  
+Al abrir el IDE, los archivos del workspace se cargan solos.
 
 ---
 
-### 2. Compilar — botón RUN
+### 2. Editar y guardar
 
-Haz clic en **▶ RUN** (esquina superior derecha).
+El editor es completamente editable con syntax highlighting en tiempo real.  
+Haz clic en **SAVE** (esquina superior derecha) para escribir los cambios a disco.
 
-El botón muestra `...` mientras el backend procesa. Al terminar, los paneles de resultados se actualizan con datos reales del parser Rust:
+---
 
-| Tab         | Qué muestra                                     |
-|-------------|-------------------------------------------------|
+### 3. Compilar — botón RUN
+
+Haz clic en **▶ RUN**.
+
+El botón muestra `...` mientras el backend procesa. Al terminar, los paneles de resultados se actualizan:
+
+| Tab         | Qué muestra                                       |
+|-------------|---------------------------------------------------|
 | GRAMÁTICA   | Producciones numeradas + terminales/no-terminales |
-| FIRST       | Conjuntos FIRST de cada no-terminal              |
-| FOLLOW      | Conjuntos FOLLOW de cada no-terminal             |
-| ESTADOS     | Colección canónica LR(1) con ítems y lookaheads  |
-| ACTION/GOTO | Tabla completa con la celda activa resaltada     |
-| PROBLEMAS   | Conflictos S/R o R/R, o confirmación sin errores |
+| FIRST       | Conjuntos FIRST de cada no-terminal               |
+| FOLLOW      | Conjuntos FOLLOW de cada no-terminal              |
+| ESTADOS     | Colección canónica con ítems y lookaheads         |
+| ACTION/GOTO | Tabla completa con la celda activa resaltada      |
+| LR(0)       | Autómata LR(0) como grafo interactivo             |
+| PROBLEMAS   | Conflictos S/R o R/R, o confirmación sin errores  |
+
+Modos disponibles (selector en el header): **LALR(1)**, **SLR(1)**, **LL(1)**
 
 ---
 
-### 3. Parsear una cadena — consola inferior
+### 4. Parsear una cadena
 
-1. Escribe los tokens en el campo de entrada (separados por espacios)  
-   Ejemplo: `c c d c d`
+1. Escribe los tokens en el campo inferior (separados por espacios), ej: `c c d c d`
 2. Presiona **▶ PARSEAR** o `Enter`
-3. La traza se carga en el panel izquierdo de la consola
+3. Navega la traza paso a paso:
 
-**Navegación paso a paso:**
-
-| Botón | Acción                         |
-|-------|--------------------------------|
-| ⏮     | Ir al primer paso              |
-| ◀ PASO | Retroceder un paso             |
+| Botón  | Acción                        |
+|--------|-------------------------------|
+| ⏮      | Primer paso                   |
+| ◀ PASO | Retroceder un paso            |
 | PASO ▶ | Avanzar un paso               |
-| ⏭     | Ir al último paso (resultado)  |
-
-En cada paso se resaltan:
-- **Tabla ACTION/GOTO**: celda correspondiente al estado actual + token
-- **Panel derecho**: pila visual + input restante + acción tomada
+| ⏭      | Último paso (resultado final) |
 
 ---
 
-### 4. Explorar los estados
+## API — endpoints
 
-Haz clic en el tab **ESTADOS** y luego en cualquier estado `Iₙ`  
-para verlo seleccionado. La tabla ACTION/GOTO resalta la fila de ese estado.
+### Health
 
----
+[GET http://localhost:8080/health](http://localhost:8080/health)
 
-## API — endpoints disponibles
-
-### `GET /health`
 ```json
 { "status": "ok", "service": "syntra-api" }
 ```
 
-### `POST /api/parser/compile`
+---
+
+### Workspace
+
+[GET http://localhost:8080/api/workspace](http://localhost:8080/api/workspace) — lista de archivos
+
+```json
+{ "files": [ { "name": "lexer.yal", "kind": "yal" }, ... ] }
+```
+
+`GET http://localhost:8080/api/workspace/:nombre` — leer archivo
+
+`PUT http://localhost:8080/api/workspace/:nombre` — guardar archivo (body = texto plano)
+
+---
+
+### Compilar gramática
+
+`POST http://localhost:8080/api/parser/compile`
+
 ```json
 // Request
-{ "content": "%token c d\n%%\nS : C C ;\nC : c C | d ;\n" }
+{ "content": "%token c d\n%%\nS : C C ;\nC : c C | d ;\n", "mode": "lalr" }
 
-// Response — datos completos del análisis LR(1)
+// Response
 {
-  "states":        [ { "id": 0, "items": ["[S' -> • S, $]", ...] } ],
-  "action":        { "0": { "c": "s2", "d": "s3" }, "1": { "$": "acc" } },
-  "goto":          { "0": { "S": 1, "C": 4 } },
-  "terminals":     ["$", "c", "d"],
+  "states":        [ { "id": 0, "items": ["S' → • S , $", ...] } ],
+  "action":        { "0": { "c": "s3", "d": "s4" } },
+  "goto":          { "0": { "S": 1, "C": 2 } },
+  "terminals":     ["c", "d", "$"],
   "non_terminals": ["S", "C"],
   "first":         { "S": ["c","d"], "C": ["c","d"] },
   "follow":        { "S": ["$"], "C": ["$","c","d"] },
   "prods":         [ { "n": 1, "lhs": "S", "rhs": ["C","C"] } ],
-  "problems":      [ { "level": "info", "code": "I100", "msg": "..." } ],
-  "start_symbol":  "S"
+  "problems":      [ { "level": "info", "code": "I100", "msg": "sin conflictos" } ],
+  "lr0_dot":       "digraph { ... }"
 }
 ```
 
-### `POST /api/parser/parse`
+Valores de `mode`: `lalr` (default) · `slr` · `ll1`
+
+---
+
+### Parsear tokens
+
+`POST http://localhost:8080/api/parser/parse`
+
 ```json
 // Request
-{ "content": "...", "tokens": ["c", "c", "d", "c", "d"] }
+{ "content": "...", "tokens": ["c", "c", "d", "c", "d"], "mode": "lalr" }
 
-// Response — traza paso a paso
+// Response
 {
   "trace": [
-    {
-      "stack":     [0],
-      "remaining": ["c","c","d","c","d","$"],
-      "action":    "s2",
-      "desc":      "Estado 0, símbolo 'c' → Shift a I2"
-    }
+    { "stack": [0], "remaining": ["c","c","d","c","d","$"], "action": "s3", "desc": "Shift a I3" }
   ],
   "accepted": true,
-  "error":    null
+  "error": null
 }
 ```
 
@@ -147,36 +172,34 @@ para verlo seleccionado. La tabla ACTION/GOTO resalta la fila de ese estado.
 ## Formato del archivo .yalp
 
 ```
-/* comentarios con /* ... */ */
-
 %token TOKEN_A TOKEN_B TOKEN_C
+%start S
 
 %%
 
-produccion_inicial : TOKEN_A produccion_b TOKEN_C ;
+S : TOKEN_A B TOKEN_C ;
 
-produccion_b : TOKEN_B produccion_b
-             | TOKEN_A
-             ;
+B : TOKEN_B B
+  | TOKEN_A
+  ;
 ```
 
-- `%token` declara los terminales (tokens del léxico)
-- `%%` separa la cabecera de las producciones
-- Las producciones usan `:` y terminan con `;`
-- Las alternativas se separan con `|`
-- Los no-terminales son cualquier identificador NO declarado en `%token`
+- `%token` declara terminales
+- `%start` declara el símbolo inicial (opcional, por defecto la primera producción)
+- `%%` separa cabecera de producciones
+- Producciones con `:` y terminadas en `;`
+- Alternativas con `|`
 
 ---
 
 ## Cadenas válidas para la gramática de ejemplo
 
-Gramática: `S → C C`, `C → c C | d` (genera `c^n d c^n d`)
+Gramática: `S → C C`, `C → c C | d`
 
 | Cadena        | Válida |
 |---------------|--------|
 | `d d`         | ✓      |
 | `c d c d`     | ✓      |
 | `c c d c c d` | ✓      |
-| `c d`         | ✗ (solo una C) |
-| `c d c`       | ✗ (segunda C incompleta) |
+| `c d`         | ✗      |
 | `d c d`       | ✗      |

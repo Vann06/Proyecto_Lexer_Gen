@@ -12,7 +12,7 @@ use analizador_sintactico::lr1::LR1Automaton;
 use analizador_sintactico::tables::{Action, Conflict, LRTable};
 
 use axum::{
-    extract::Json,
+    extract::{Json, Path},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -21,6 +21,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 use tower_http::cors::{Any, CorsLayer};
 
 // ─── Request types ────────────────────────────────────────────────────────────
@@ -65,10 +67,61 @@ struct CompileResponse {
     prods:         Vec<ProdData>,
     problems:      Vec<ProblemData>,
     start_symbol:  String,
+    lr0_dot:       String,
 }
 
 #[derive(Serialize)]
 struct ParseResponse { trace: Vec<Value>, accepted: bool, error: Option<String> }
+
+#[derive(Serialize)]
+struct WsFile { name: String, kind: String }
+
+// ─── Workspace helpers ────────────────────────────────────────────────────────
+
+fn workspace_dir() -> PathBuf { PathBuf::from("workspace") }
+
+fn sanitize_filename(name: &str) -> Option<String> {
+    let allowed = [".yal", ".yalex", ".yalp", ".yapar", ".txt"];
+    if name.contains('/') || name.contains('\\') || name.contains("..") { return None; }
+    if !allowed.iter().any(|ext| name.ends_with(ext)) { return None; }
+    Some(name.to_string())
+}
+
+async fn workspace_list() -> impl IntoResponse {
+    let dir = workspace_dir();
+    let mut files: Vec<WsFile> = Vec::new();
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let kind = if name.ends_with(".yal") || name.ends_with(".yalex") { "yal" }
+                       else if name.ends_with(".yalp") || name.ends_with(".yapar") { "yalp" }
+                       else { "txt" };
+            files.push(WsFile { name, kind: kind.to_string() });
+        }
+    }
+    files.sort_by(|a, b| a.name.cmp(&b.name));
+    Json(json!({ "files": files }))
+}
+
+async fn workspace_read(Path(name): Path<String>) -> impl IntoResponse {
+    match sanitize_filename(&name) {
+        None => (StatusCode::BAD_REQUEST, "invalid filename".to_string()),
+        Some(n) => match fs::read_to_string(workspace_dir().join(&n)) {
+            Ok(content) => (StatusCode::OK, content),
+            Err(_)      => (StatusCode::NOT_FOUND, "not found".to_string()),
+        }
+    }
+}
+
+async fn workspace_write(Path(name): Path<String>, body: String) -> impl IntoResponse {
+    match sanitize_filename(&name) {
+        None    => StatusCode::BAD_REQUEST,
+        Some(n) => match fs::write(workspace_dir().join(&n), body.as_bytes()) {
+            Ok(_)  => StatusCode::OK,
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 
@@ -103,17 +156,20 @@ fn build_compile_response(content: &str, mode: &str) -> Result<CompileResponse, 
     let first_sets  = calculate_first(&grammar);
     let follow_sets = calculate_follow(&grammar, &first_sets);
 
-    let (states_data, table) = if mode == "slr" {
+    let (states_data, table, lr0_dot) = if mode == "slr" {
         let lr0   = LR0Automaton::build(&grammar);
+        let dot   = lr0_to_dot(&lr0);
         let data  = lr0_states_to_data(&lr0);
         let table = LRTable::build_from_slr(&lr0, &grammar, &follow_sets);
-        (data, table)
+        (data, table, dot)
     } else {
+        let lr0   = LR0Automaton::build(&grammar);
+        let dot   = lr0_to_dot(&lr0);
         let lr1   = LR1Automaton::build(&grammar, &first_sets);
         let lalr  = merge_by_core(lr1);
         let data  = lalr_states_to_data(&lalr.states);
         let table = LRTable::build_from_lalr(&lalr, &grammar);
-        (data, table)
+        (data, table, dot)
     };
 
     let action_map = action_table_to_map(&table, &grammar);
@@ -146,6 +202,7 @@ fn build_compile_response(content: &str, mode: &str) -> Result<CompileResponse, 
         prods,
         problems,
         start_symbol: grammar.start_symbol.clone(),
+        lr0_dot,
     })
 }
 
@@ -208,6 +265,10 @@ fn build_compile_ll1(content: &str) -> Result<CompileResponse, String> {
         loc:   "parser.yalp".to_string(),
     }];
 
+    let lr0_dot = Grammar::parse_for_lr_from_str(content)
+        .map(|g| { let lr0 = LR0Automaton::build(&g); lr0_to_dot(&lr0) })
+        .unwrap_or_default();
+
     Ok(CompileResponse {
         states,
         action: action_map,
@@ -219,6 +280,7 @@ fn build_compile_ll1(content: &str) -> Result<CompileResponse, String> {
         prods:  grammar_to_prods(&grammar),
         problems,
         start_symbol: grammar.start_symbol.clone(),
+        lr0_dot,
     })
 }
 
@@ -346,6 +408,50 @@ fn parse_with_trace_lr(table: &LRTable, tokens: Vec<String>) -> Vec<Value> {
         }));
     }
     trace
+}
+
+// ─── LR(0) DOT generation ────────────────────────────────────────────────────
+
+fn lr0_to_dot(automaton: &LR0Automaton) -> String {
+    let mut dot = String::new();
+    dot.push_str("digraph LR0 {\n");
+    dot.push_str("  rankdir=LR;\n");
+    dot.push_str("  bgcolor=\"#0d0613\";\n");
+    dot.push_str("  node [shape=box fontname=\"Courier\" fontsize=9 color=\"#c026d3\" fontcolor=\"#e8d6f0\" style=filled fillcolor=\"#100817\"];\n");
+    dot.push_str("  edge [fontname=\"Courier\" fontsize=9 color=\"#c026d3\" fontcolor=\"#f9a8d4\" arrowsize=0.7];\n");
+
+    let mut sorted_states: Vec<_> = automaton.states.iter().collect();
+    sorted_states.sort_by_key(|s| s.id);
+
+    for state in sorted_states {
+        let mut items: Vec<String> = state.items.iter().map(|it| format_lr0_item(it)).collect();
+        items.sort();
+        let label_body = items.join("\\l");
+        let label = format!("I{}\\l{}\\l", state.id, label_body).replace('"', "\\\"");
+
+        if state.id == 0 {
+            dot.push_str(&format!(
+                "  {} [label=\"{}\" color=\"#22d3ee\" fillcolor=\"#0a2530\"];\n",
+                state.id, label
+            ));
+        } else {
+            dot.push_str(&format!("  {} [label=\"{}\"];\n", state.id, label));
+        }
+    }
+
+    let mut transitions: Vec<_> = automaton.transitions.iter().collect();
+    transitions.sort_by(|a, b| {
+        let (af, _) = a.0; let (bf, _) = b.0;
+        af.cmp(bf).then(a.1.cmp(b.1))
+    });
+
+    for ((from, sym), to) in transitions {
+        let sym_label = sym_name(sym).replace('"', "\\\"");
+        dot.push_str(&format!("  {} -> {} [label=\"{}\"];\n", from, to, sym_label));
+    }
+
+    dot.push_str("}\n");
+    dot
 }
 
 // ─── State formatting ─────────────────────────────────────────────────────────
@@ -479,10 +585,25 @@ async fn main() {
         .allow_methods(Any)
         .allow_headers(Any);
 
+    // Inicializar workspace con archivos por defecto
+    let ws = workspace_dir();
+    fs::create_dir_all(&ws).ok();
+    let defaults: &[(&str, &str)] = &[
+        ("lexer.yal",   "let digit = ['0'-'9']\nlet letter = ['a'-'z' 'A'-'Z']\nlet id = letter (letter|digit)*\nrule tokens =\n  | id         { return ID }\n  | digit+     { return NUM }\n  | '+'        { return PLUS }\n  | '*'        { return STAR }\n  | ' '        { skip }"),
+        ("parser.yalp", "%token c d\n%%\nS : C C ;\nC : c C\n  | d\n;"),
+        ("input.txt",   "c c d c d\nc d d\nd c d"),
+    ];
+    for (name, content) in defaults {
+        let path = ws.join(name);
+        if !path.exists() { fs::write(&path, content).ok(); }
+    }
+
     let app = Router::new()
-        .route("/health",             get(health))
-        .route("/api/parser/compile", post(compile_parser))
-        .route("/api/parser/parse",   post(parse_tokens))
+        .route("/health",              get(health))
+        .route("/api/parser/compile",  post(compile_parser))
+        .route("/api/parser/parse",    post(parse_tokens))
+        .route("/api/workspace",       get(workspace_list))
+        .route("/api/workspace/:name", get(workspace_read).put(workspace_write))
         .layer(cors);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();

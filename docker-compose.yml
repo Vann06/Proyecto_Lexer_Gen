@@ -7,6 +7,8 @@ services:
       dockerfile: Dockerfile.api
     ports:
       - "8080:8080"
+    volumes:
+      - ./workspace:/app/workspace
     restart: unless-stopped
 
   # UI estática — sirve el IDE React en :3000
