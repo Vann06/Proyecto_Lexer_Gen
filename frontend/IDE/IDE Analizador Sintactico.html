@@ -174,6 +174,29 @@
     border-color:var(--cyan); color:var(--cyan); background:rgba(34,211,238,.06);
   }
   .stepbtn .play{ border-left-color: var(--cyan);}
+  /* ---------- mode selector ---------- */
+  .modegrp{
+    display:flex; align-items:center; gap:0;
+    margin-right:4px;
+  }
+  .modebtn{
+    display:inline-flex; align-items:center;
+    padding:5px 9px;
+    border:2px solid var(--cyan-d);
+    color:var(--tx-mute);
+    background:rgba(34,211,238,.04);
+    font-family:"Press Start 2P","VT323"; font-size:9px; letter-spacing:1px;
+    cursor:pointer; margin-left:-2px;
+  }
+  .modebtn:first-child{ margin-left:0; }
+  .modebtn:hover{ border-color:var(--cyan); color:var(--cyan); z-index:1; position:relative; }
+  .modebtn.active{
+    border-color:var(--cyan); color:var(--cyan);
+    background:rgba(34,211,238,.14);
+    box-shadow:0 0 10px rgba(34,211,238,.30);
+    z-index:2; position:relative;
+  }
+
   .winbtns{ display:flex; gap:8px; align-items:center;}
   .wb{ width:18px; height:18px; image-rendering:pixelated; }
   .wb-min{ background: var(--yellow); box-shadow: 0 0 8px rgba(251,191,36,.5);}

@@ -448,7 +448,7 @@ function StackView({ step }){
   );
 }
 
-function ParseConsole({ stepIdx, setStep, onParse }){
+function ParseConsole({ stepIdx, setStep, onParse, mode }){
   const [input, setInput] = useState("c c d c d");
   const cur = D.TRACE[stepIdx] || D.TRACE[0];
   const isAccepted = cur && cur.action === "acc";
@@ -457,7 +457,7 @@ function ParseConsole({ stepIdx, setStep, onParse }){
     <div className="panel">
       <div className="panel-title" style={{position:"absolute", top:-14, left:14}}>
         <span className="swatch"/>PARSE CONSOLE
-        <span style={{color:"var(--tx-mute)", marginLeft:10}}>LR(1) · step {stepIdx+1}/{D.TRACE.length}</span>
+        <span style={{color:"var(--tx-mute)", marginLeft:10}}>{MODE_LABELS[mode]} · step {stepIdx+1}/{D.TRACE.length}</span>
       </div>
       <div className="console-top" style={{marginTop:14}}>
         <div className="input-frame">
@@ -556,7 +556,9 @@ function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActive
 
 /* ============================== Header ============================== */
 
-function Header({ activeFile, setFile, onRun, loading }){
+const MODE_LABELS = { lalr:"LALR(1)", slr:"SLR(1)", ll1:"LL(1)" };
+
+function Header({ activeFile, setFile, onRun, loading, mode, setMode }){
   const tabs = [
     { id:"yal",  label:"lexer.yal",   dirty:true },
     { id:"yalp", label:"parser.yalp", dirty:false },
@@ -583,6 +585,15 @@ function Header({ activeFile, setFile, onRun, loading }){
         )}
       </div>
       <div className="actions">
+        <div className="modegrp">
+          {Object.entries(MODE_LABELS).map(([key, label])=>
+            <button key={key}
+                    className={"modebtn " + (mode===key?"active":"")}
+                    onClick={()=>setMode(key)}>
+              {label}
+            </button>
+          )}
+        </div>
         <button className="runbtn" onClick={onRun} disabled={loading} style={{opacity:loading?.5:1}}>
           {loading ? "..." : <><span className="play"/>RUN</>}
         </button>
@@ -599,7 +610,7 @@ function Header({ activeFile, setFile, onRun, loading }){
 
 /* ============================== Status bar ============================== */
 
-function StatusBar({ activeFile, stepIdx }){
+function StatusBar({ activeFile, stepIdx, mode }){
   const f = D.FILES[activeFile];
   return (
     <div id="status">
@@ -608,7 +619,7 @@ function StatusBar({ activeFile, stepIdx }){
       <div className="sg"><span className="sw" style={{background:"var(--coral)"}}/>1</div>
       <div className="sg dim">main ●</div>
       <div className="sg dim">build · ok</div>
-      <div className="sg"><span className="grm">LR(1)</span> · sin conflictos</div>
+      <div className="sg"><span className="grm">{MODE_LABELS[mode]}</span> · sin conflictos</div>
       <div className="right">
         <div className="sg">LN {f.current+1}</div>
         <div className="sg">COL 14</div>
@@ -628,6 +639,7 @@ function App(){
   const [activeState, setState] = useState(3);
   const [stepIdx,    setStep]   = useState(3);
   const [loading,    setLoading]= useState(false);
+  const [mode,       setMode]   = useState("lalr");
   const [,           bump]      = useState(0); // fuerza re-render cuando D muta
 
   const rerender = () => bump(n => n + 1);
@@ -647,7 +659,7 @@ function App(){
       const res = await fetch(`${API}/api/parser/compile`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ content: D.FILES.yalp.rawContent }),
+        body:    JSON.stringify({ content: D.FILES.yalp.rawContent, mode }),
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
@@ -684,7 +696,7 @@ function App(){
       const res = await fetch(`${API}/api/parser/parse`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ content: D.FILES.yalp.rawContent, tokens }),
+        body:    JSON.stringify({ content: D.FILES.yalp.rawContent, tokens, mode }),
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
@@ -698,7 +710,7 @@ function App(){
 
   return (
     <div id="app">
-      <Header activeFile={activeFile} setFile={setFile} onRun={handleRun} loading={loading}/>
+      <Header activeFile={activeFile} setFile={setFile} onRun={handleRun} loading={loading} mode={mode} setMode={setMode}/>
 
       <div id="files" className="panel" data-screen-label="files">
         <div className="panel-title">
@@ -721,10 +733,10 @@ function App(){
       </div>
 
       <div id="console-area" data-screen-label="console">
-        <ParseConsole stepIdx={stepIdx} setStep={setStep} onParse={handleParse}/>
+        <ParseConsole stepIdx={stepIdx} setStep={setStep} onParse={handleParse} mode={mode}/>
       </div>
 
-      <StatusBar activeFile={activeFile} stepIdx={stepIdx}/>
+      <StatusBar activeFile={activeFile} stepIdx={stepIdx} mode={mode}/>
     </div>
   );
 }

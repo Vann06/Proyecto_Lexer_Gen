@@ -85,6 +85,16 @@ impl Grammar {
         Ok(grammar)
     }
 
+    /// Parsea desde un string en memoria y aplica las transformaciones LL(1)
+    /// (eliminación de recursión izquierda + factorización). Para la API HTTP.
+    pub fn parse_for_ll1_from_str(raw_content: &str) -> Result<Self, String> {
+        let mut grammar = Self::parse_raw_from_str(raw_content)?;
+        grammar.eliminate_ambiguity();
+        grammar.detect_left_recursion()?;
+        grammar.validate()?;
+        Ok(grammar)
+    }
+
     /// Versión interna que acepta contenido ya leído como string.
     fn parse_raw_from_str(raw_content: &str) -> Result<Self, String> {
         let content = Self::remove_comments(raw_content);
