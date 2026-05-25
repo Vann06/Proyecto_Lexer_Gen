@@ -549,17 +549,34 @@ function StackView({ step }){
   );
 }
 
-function ParseConsole({ stepIdx, setStep, onParse, mode }){
+function ParseConsole({
+  stepIdx, setStep, onParse, mode, testCases,
+  testCasesPanelWidth, setTestCasesPanelWidth,
+  isDraggingResize, setIsDraggingResize,
+  selectedTestCaseIdx, setSelectedTestCaseIdx
+}){
   const [input, setInput] = useState("c c d c d");
   const cur = D.TRACE[stepIdx] || D.TRACE[0];
   const isAccepted = cur && cur.action === "acc";
+  const hasTestCases = testCases && testCases.length > 0;
+
+  const handleTestCaseClick = (testCase, idx) => {
+    setInput(testCase);
+    setSelectedTestCaseIdx(idx);
+    onParse(testCase);
+  };
+
+  const traceAreaWidth = hasTestCases ? (1 - testCasesPanelWidth) : 1;
+  const resizeHandleLeft = `${testCasesPanelWidth * 100}%`;
 
   return (
-    <div className="panel">
+    <div className="panel" style={{ display: 'flex', flexDirection: 'column' }}>
       <div className="panel-title" style={{position:"absolute", top:-14, left:14}}>
         <span className="swatch"/>PARSE CONSOLE
         <span style={{color:"var(--tx-mute)", marginLeft:10}}>{MODE_LABELS[mode]} · step {stepIdx+1}/{D.TRACE.length}</span>
       </div>
+
+      {/* Input bar */}
       <div className="console-top" style={{marginTop:14}}>
         <div className="input-frame">
           <span className="prompt">›</span>
@@ -573,36 +590,92 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
         <button className="cbtn icon cyan" onClick={()=>setStep(Math.min(D.TRACE.length-1,stepIdx+1))}>PASO ▶</button>
         <button className="cbtn icon" onClick={()=>setStep(D.TRACE.length-1)}>⏭</button>
       </div>
-      <div className="trace-wrap">
-        <div className="trace-col left">
-          <h4>▍ TRAZA DE EJECUCIÓN</h4>
-          {D.TRACE.map((s,i)=>{
-            const a = s.action;
-            const cls = a==="acc"?"a-ac":a.startsWith("s")?"a-sh":a.startsWith("r")?"a-re":"a-er";
-            return (
-              <div key={i} className={"step " + (i===stepIdx?"cur":"")} onClick={()=>setStep(i)}>
-                <div className="n">{String(i+1).padStart(2,"0")}</div>
-                <div>
-                  <span className="dim">I{s.stack[s.stack.length-1]}</span>{' '}
-                  <span className="dim">·</span>{' '}
-                  <span style={{color:"var(--coral)"}}>'{s.remaining[0]}'</span>{' '}
-                  <span className="dim">→</span>{' '}
-                  <span className={cls}>{a}</span>{' '}
-                  <span className="dim">· {s.desc.split(" → ").slice(-1)[0]}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        <div className="trace-col">
-          <h4>▍ ESTADO ACTUAL · paso {stepIdx+1}</h4>
-          <StackView step={cur}/>
-          {isAccepted &&
-            <div className="accept-banner">
-              <span>✓</span><span>CADENA ACEPTADA</span>
-              <span className="dim" style={{fontFamily:"VT323", fontSize:14}}>· {D.TRACE.length} pasos · 0 errores</span>
+
+      {/* Content area - 2 columnas si hay test cases */}
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', gap: 0 }}>
+
+        {/* Columna izquierda: Test Cases */}
+        {hasTestCases && (
+          <div style={{ width: `${testCasesPanelWidth * 100}%`, borderRight: '1px solid var(--line)', overflow: 'auto', padding: '12px' }}>
+            <div style={{ fontSize: 11, color: 'var(--mute)', marginBottom: 12, fontWeight: 500 }}>
+              TEST CASES ({testCases.length})
             </div>
-          }
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {testCases.map((testCase, idx) => (
+                <div
+                  key={idx}
+                  onClick={() => handleTestCaseClick(testCase, idx)}
+                  style={{
+                    padding: '8px 10px',
+                    backgroundColor: selectedTestCaseIdx === idx ? 'var(--bg-3)' : 'var(--bg-soft)',
+                    border: selectedTestCaseIdx === idx ? '1px solid var(--cyan)' : '1px solid var(--line-soft)',
+                    cursor: 'pointer',
+                    fontSize: 12,
+                    borderRadius: 2,
+                    transition: 'all 0.2s',
+                    color: 'var(--cyan)',
+                    fontWeight: selectedTestCaseIdx === idx ? 'bold' : 'normal'
+                  }}
+                  onMouseEnter={(e) => { if (selectedTestCaseIdx !== idx) e.target.style.backgroundColor = 'var(--bg-3)'; }}
+                  onMouseLeave={(e) => { if (selectedTestCaseIdx !== idx) e.target.style.backgroundColor = 'var(--bg-soft)'; }}
+                >
+                  <span style={{ color: 'var(--mute)' }}>#{idx + 1}</span> {testCase}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Resize handle */}
+        {hasTestCases && (
+          <div
+            style={{
+              width: '4px',
+              backgroundColor: isDraggingResize ? 'var(--cyan)' : 'var(--line)',
+              cursor: 'ew-resize',
+              userSelect: 'none',
+              transition: 'background-color 0.1s'
+            }}
+            onMouseDown={() => setIsDraggingResize(true)}
+            onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--cyan)'}
+            onMouseLeave={(e) => { if (!isDraggingResize) e.target.style.backgroundColor = 'var(--line)'; }}
+          />
+        )}
+
+        {/* Columna derecha: Trace */}
+        <div style={{ width: hasTestCases ? `${traceAreaWidth * 100}%` : '100%', overflow: 'auto' }}>
+          <div className="trace-wrap" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <div className="trace-col left" style={{ flex: 1, overflowY: 'auto' }}>
+              <h4>▍ TRAZA DE EJECUCIÓN</h4>
+              {D.TRACE.map((s,i)=>{
+                const a = s.action;
+                const cls = a==="acc"?"a-ac":a.startsWith("s")?"a-sh":a.startsWith("r")?"a-re":"a-er";
+                return (
+                  <div key={i} className={"step " + (i===stepIdx?"cur":"")} onClick={()=>setStep(i)}>
+                    <div className="n">{String(i+1).padStart(2,"0")}</div>
+                    <div>
+                      <span className="dim">I{s.stack[s.stack.length-1]}</span>{' '}
+                      <span className="dim">·</span>{' '}
+                      <span style={{color:"var(--coral)"}}>'{s.remaining[0]}'</span>{' '}
+                      <span className="dim">→</span>{' '}
+                      <span className={cls}>{a}</span>{' '}
+                      <span className="dim">· {s.desc.split(" → ").slice(-1)[0]}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="trace-col" style={{ flex: 1, overflowY: 'auto', borderTop: '1px solid var(--line)' }}>
+              <h4>▍ ESTADO ACTUAL · paso {stepIdx+1}</h4>
+              <StackView step={cur}/>
+              {isAccepted &&
+                <div className="accept-banner">
+                  <span>✓</span><span>CADENA ACEPTADA</span>
+                  <span className="dim" style={{fontFamily:"VT323", fontSize:14}}>· {D.TRACE.length} pasos · 0 errores</span>
+                </div>
+              }
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -741,6 +814,87 @@ function App(){
 
   const rerender = () => bump(n => n + 1);
 
+  // ── TEST CASES desde archivo .txt ─────────────────────────────────────────
+  const [testCasesPanelWidth, setTestCasesPanelWidth] = useState(() => {
+    const saved = localStorage.getItem('syntra-testCasesPanelWidth');
+    return saved ? parseFloat(saved) : 0.35;
+  });
+  const [isDraggingResize, setIsDraggingResize] = useState(false);
+  const [selectedTestCaseIdx, setSelectedTestCaseIdx] = useState(() => {
+    const saved = localStorage.getItem('syntra-selectedTestCaseIdx');
+    return saved ? parseInt(saved) : 0;
+  });
+
+  // ── CONSOLE RESIZE (vertical entre RESULTS y CONSOLE) ─────────────────────
+  const [consoleHeight, setConsoleHeight] = useState(0.50); // NO se guarda
+  const [isDraggingConsoleResize, setIsDraggingConsoleResize] = useState(false);
+
+  const testCases = React.useMemo(() => {
+    if (!D.FILES.test || !D.FILES.test.rawContent) return [];
+    return D.FILES.test.rawContent
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0);
+  }, [contentVersion]);
+
+  // Guardar testCasesPanelWidth en localStorage
+  React.useEffect(() => {
+    localStorage.setItem('syntra-testCasesPanelWidth', testCasesPanelWidth.toString());
+  }, [testCasesPanelWidth]);
+
+  // Guardar selectedTestCaseIdx en localStorage
+  React.useEffect(() => {
+    localStorage.setItem('syntra-selectedTestCaseIdx', selectedTestCaseIdx.toString());
+  }, [selectedTestCaseIdx]);
+
+  // Resize listener (horizontal - test cases panel)
+  React.useEffect(() => {
+    if (!isDraggingResize) return;
+
+    const handleMouseMove = (e) => {
+      setTestCasesPanelWidth(prev => {
+        const newWidth = prev + (e.movementX / window.innerWidth);
+        return Math.max(0.15, Math.min(0.6, newWidth)); // Min 15%, Max 60%
+      });
+    };
+
+    const handleMouseUp = () => {
+      setIsDraggingResize(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDraggingResize]);
+
+  // Resize listener (vertical - console panel)
+  React.useEffect(() => {
+    if (!isDraggingConsoleResize) return;
+
+    const handleMouseMove = (e) => {
+      setConsoleHeight(prev => {
+        const newHeight = prev - (e.movementY / window.innerHeight);
+        return Math.max(0.15, Math.min(0.6, newHeight)); // Min 15%, Max 60%
+      });
+    };
+
+    const handleMouseUp = () => {
+      setIsDraggingConsoleResize(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDraggingConsoleResize]);
+
   // ── WORKSPACE: carga archivos del servidor al arrancar ──────────────────────
   const fetchWorkspace = async () => {
     try {
@@ -846,6 +1000,36 @@ function App(){
       });
       setStep(0);
       rerender();
+
+      // Si hay archivo .txt cargado, auto-ejecutar el primer test case
+      if (D.FILES.test && D.FILES.test.rawContent && D.FILES.test.rawContent.trim()) {
+        const firstLine = D.FILES.test.rawContent
+          .split('\n')
+          .map(l => l.trim())
+          .find(l => l.length > 0);
+        if (firstLine) {
+          setTimeout(() => {
+            const tokens = firstLine.trim().split(/\s+/).filter(Boolean);
+            if (tokens.length > 0) {
+              (async () => {
+                try {
+                  const parseRes = await fetch(`${API}/api/parser/parse`, {
+                    method:  "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body:    JSON.stringify({ content: D.FILES.yalp.rawContent, tokens, mode }),
+                  });
+                  if (parseRes.ok) {
+                    const parseData = await parseRes.json();
+                    D.TRACE = parseData.trace;
+                    setStep(0);
+                    rerender();
+                  }
+                } catch(e) { console.error("Auto-parse failed:", e); }
+              })();
+            }
+          }, 100);
+        }
+      }
     } catch(e) {
       console.error("API /compile:", e);
       D.PROBLEMS = [{ level:"err", code:"E000", msg: String(e), loc:"api" }];
@@ -891,7 +1075,7 @@ function App(){
         <Editor file={activeFile} onEdit={handleEdit} contentVersion={contentVersion}/>
       </div>
 
-      <div id="results" data-screen-label="results">
+      <div id="results" data-screen-label="results" style={{ height: `${(1 - consoleHeight) * 100}%`, overflow: 'auto' }}>
         <ResultsPanel
           stepIdx={stepIdx}
           activeTab={activeTab}
@@ -902,8 +1086,34 @@ function App(){
           renderKey={renderKey}/>
       </div>
 
-      <div id="console-area" data-screen-label="console">
-        <ParseConsole stepIdx={stepIdx} setStep={setStep} onParse={handleParse} mode={mode}/>
+      {/* Resize handle vertical */}
+      <div
+        style={{
+          height: '4px',
+          backgroundColor: isDraggingConsoleResize ? 'var(--cyan)' : 'var(--line)',
+          cursor: 'ns-resize',
+          userSelect: 'none',
+          transition: 'background-color 0.1s'
+        }}
+        onMouseDown={() => setIsDraggingConsoleResize(true)}
+        onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--cyan)'}
+        onMouseLeave={(e) => { if (!isDraggingConsoleResize) e.target.style.backgroundColor = 'var(--line)'; }}
+      />
+
+      <div id="console-area" data-screen-label="console" style={{ height: `${consoleHeight * 100}%`, overflow: 'hidden' }}>
+        <ParseConsole
+          stepIdx={stepIdx}
+          setStep={setStep}
+          onParse={handleParse}
+          mode={mode}
+          testCases={testCases}
+          testCasesPanelWidth={testCasesPanelWidth}
+          setTestCasesPanelWidth={setTestCasesPanelWidth}
+          isDraggingResize={isDraggingResize}
+          setIsDraggingResize={setIsDraggingResize}
+          selectedTestCaseIdx={selectedTestCaseIdx}
+          setSelectedTestCaseIdx={setSelectedTestCaseIdx}
+        />
       </div>
 
       <StatusBar activeFile={activeFile} stepIdx={stepIdx} mode={mode}/>
