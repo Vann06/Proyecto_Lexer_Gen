@@ -106,30 +106,7 @@
     background:var(--bg-panel);
     box-shadow: 0 0 0 1px #000 inset, 0 0 18px rgba(192,38,211,.22);
   }
-  .brand{
-    display:flex; align-items:center; gap:10px;
-    padding:0 18px;
-    border-right:2px solid var(--magenta);
-  }
-  .brand .logo{
-    width:22px; height:22px; position:relative;
-    background:
-      linear-gradient(var(--coral),var(--coral)) 6px 0 / 10px 22px no-repeat,
-      linear-gradient(var(--coral),var(--coral)) 0 6px / 22px 10px no-repeat,
-      var(--magenta);
-    box-shadow: 0 0 12px var(--magenta);
-  }
-  .brand .name{
-    font-family:"Press Start 2P","VT323"; font-size:14px; color:var(--pink); letter-spacing:2px;
-  }
-  .menu{
-    display:flex; align-items:center; gap:24px;
-    padding:0 18px;
-    font-family:"Press Start 2P","VT323"; font-size:10px; color:var(--tx-dim); letter-spacing:2px;
-  }
-  .menu span{ cursor:pointer; }
-  .menu span:hover{ color:var(--pink); text-shadow:0 0 8px var(--pink); }
-  .menu span.active{ color:var(--pink); }
+
   .filetabs{
     display:flex; align-items:flex-end; gap:6px;
     padding: 0 12px;
@@ -146,7 +123,7 @@
     position:relative; bottom:-2px;
   }
   .ftab .dot{ width:10px; height:10px; background:var(--tx-mute);}
-  .ftab .x{ color:var(--tx-mute); margin-left:2px; opacity:.6;}
+
   .ftab.active{
     border-color:var(--pink); color:var(--pink);
     background:var(--bg-panel);
@@ -513,7 +490,7 @@
   #status .sg.r{ border-right:none; border-left:1px solid var(--line);}
   #status .sg .sw{ width:10px; height:10px; display:inline-block;}
   #status .right{ margin-left:auto; display:flex; height:100%; }
-  #status .pink{ color: var(--pink); }
+
   #status .grm{ color: var(--cyan); }
 
   /* small util */
@@ -550,7 +527,7 @@
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@viz-js/viz@3.2.4/lib/viz-standalone.js"></script>
 
-<script type="text/babel" src="./data.jsx?v=5"></script>
-<script type="text/babel" src="./app.jsx?v=5"></script>
+<script type="text/babel" src="./data.jsx?v=6"></script>
+<script type="text/babel" src="./app.jsx?v=6"></script>
 </body>
 </html>

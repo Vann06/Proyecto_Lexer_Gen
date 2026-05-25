@@ -49,11 +49,7 @@ function FileTree({ active, onPick, onLoadFile }){
         </div>
       ))}
 
-      <div className="h" style={{marginTop:24}}>▍ ANALYSIS</div>
-      <div className="tree-row file">
-        <span className="icn" style={{background:"var(--coral)"}}/>LR(0)
-        <span className="badge">{D.STATES.length || "?"} I</span>
-      </div>
+
     </div>
   );
 }
@@ -259,10 +255,21 @@ function StatesView({ active, onPick }){
           <div className="head">
             <span style={{color:"var(--coral)"}}>■</span>
             <span>I{s.id}</span>
-            <span className="mute" style={{marginLeft:"auto", fontSize:15}}>{s.items.length} ítems</span>
+            <span className="mute" style={{marginLeft:"auto", fontSize:15}}>{s.items.length} items, {Object.keys(D.GOTO[String(s.id)] || {}).length} transiciones</span>
           </div>
           <div className="items">
             {s.items.map((it,i)=> <div key={i}>{it.replace("·",  /·/.test(it)?"·":"·")}</div> )}
+
+            {Object.keys(D.GOTO[String(s.id)] || {}).length > 0 && (
+              <div style={{borderTop: '1px solid var(--gray)', margin: '8px 0'}}></div>
+            )}
+
+            {Object.entries(D.GOTO[String(s.id)] || {}).map(([symbol, nextState]) => (
+              <div key={`trans-${symbol}`} style={{display: 'flex', justifyContent: 'space-between', fontSize: '0.9em', color: 'var(--mute)'}}>
+                <span style={{fontWeight: 500}}>{symbol}</span>
+                <span>→ I{nextState}</span>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -656,13 +663,7 @@ function Header({ activeFile, setFile, onRun, onSave, loading, mode, setMode }){
   const tabs = ["yal","yalp","test"];
   return (
     <header data-screen-label="IDE">
-      <div className="brand">
-        <div className="logo"/>
-        <div className="name">SYNTRA</div>
-      </div>
-      <div className="menu">
-        <span>FILE</span><span>EDIT</span><span>VIEW</span><span className="active">BUILD</span><span>RUN</span><span>?</span>
-      </div>
+
       <div className="filetabs">
         {tabs.map(id=>{
           const f = D.FILES[id];
@@ -672,7 +673,7 @@ function Header({ activeFile, setFile, onRun, onSave, loading, mode, setMode }){
                  onClick={()=>setFile(id)}>
               <span className="dot"/>
               <span>{f.name}</span>
-              <span className="x">×</span>
+
             </div>
           );
         })}
@@ -709,7 +710,7 @@ function StatusBar({ activeFile, stepIdx, mode }){
   const f = D.FILES[activeFile];
   return (
     <div id="status">
-      <div className="sg"><span className="sw" style={{background:"var(--pink)"}}/><span className="pink">SYNTRA</span></div>
+
       <div className="sg"><span className="sw" style={{background:"var(--yellow)"}}/>3</div>
       <div className="sg"><span className="sw" style={{background:"var(--coral)"}}/>1</div>
       <div className="sg dim">main ●</div>

@@ -17,13 +17,9 @@ docker compose down
 
 | Servicio | URL |
 |----------|-----|
+| **IDE (frontend)** | [http://localhost:4000](http://localhost:4000) |
 | API Rust | [http://localhost:8080](http://localhost:8080) |
 | Health check | [http://localhost:8080/health](http://localhost:8080/health) |
-
-Abrir el IDE en el navegador:
-```
-frontend/IDE/IDE Analizador Sintactico.html
-```
 
 ---
 
@@ -33,9 +29,11 @@ frontend/IDE/IDE Analizador Sintactico.html
 # Terminal 1 — servidor Rust
 cargo run --bin api
 
-# Terminal 2 — abrir el IDE
-open frontend/IDE/"IDE Analizador Sintactico.html"
+# Terminal 2 — servidor frontend en http://localhost:5500
+python3 -m http.server 5500 --directory frontend/IDE
 ```
+
+Luego abrir [http://localhost:5500](http://localhost:5500) en el navegador.
 
 ---
 
