@@ -1,0 +1,17 @@
+%token id num plus minus star slash lparen rparen
+
+%%
+
+E : E plus T
+  | T
+  ;
+
+T : T star F
+  | F
+  ;
+
+F : lparen E rparen
+  | id
+  | num
+  ;
+
