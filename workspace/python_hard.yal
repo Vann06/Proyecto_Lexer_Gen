@@ -1,0 +1,125 @@
+(* ============================================================ *)
+(*  python_hard.yal                                             *)
+(*  Lexer duro para subconjunto de Python                       *)
+(*  Prueba: funciones, clases, if/elif/else, while, for, listas, *)
+(*  diccionarios, llamadas, operadores compuestos y comentarios. *)
+(* ============================================================ *)
+
+let digit   = ['0'-'9']
+let lower   = ['a'-'z']
+let upper   = ['A'-'Z']
+let letter  = lower | upper
+let alnum   = letter | digit
+
+let ws_char = [' ''\t']
+let ws      = ws_char+
+let newline = '\n' | '\r''\n' | '\r'
+
+let id = (letter | '_')(alnum | '_')*
+
+let integer  = digit+
+let float_n  = digit+'.'digit+
+let exp_part = ('e' | 'E')('+' | '-')?digit+
+let sci_num  = (float_n | integer) exp_part
+
+let str_punct = ['.''!''?'',''_'':''/'';''@''#''$''%''+''<''>''|''^''~''`''-']
+let str_char  = alnum | ws_char | str_punct
+let string_dq = '"' str_char* '"'
+
+let doc_body  = (alnum | ws_char | newline | str_punct)*
+let docstring = '"''"''"' doc_body '"''"''"'
+
+let line_comment = '#' (alnum | ws_char | str_punct)*
+
+let eq        = '=''='
+let neq       = '!''='
+let lte       = '<''='
+let gte       = '>''='
+let plus_eq   = '+''='
+let minus_eq  = '-''='
+let power_op  = '*''*'
+
+let kw_def      = def
+let kw_if       = if
+let kw_else     = else
+let kw_elif     = elif
+let kw_while    = while
+let kw_for      = for
+let kw_in       = in
+let kw_return   = return
+let kw_print    = print
+let kw_true     = True
+let kw_false    = False
+let kw_none     = None
+let kw_and      = and
+let kw_or       = or
+let kw_not      = not
+let kw_class    = class
+let kw_import   = import
+let kw_from     = from
+let kw_pass     = pass
+let kw_break    = break
+let kw_continue = continue
+
+rule tokens =
+    kw_def      { "DEF" }
+  | kw_if       { "IF" }
+  | kw_else     { "ELSE" }
+  | kw_elif     { "ELIF" }
+  | kw_while    { "WHILE" }
+  | kw_for      { "FOR" }
+  | kw_in       { "IN" }
+  | kw_return   { "RETURN" }
+  | kw_print    { "PRINT" }
+  | kw_true     { "TRUE" }
+  | kw_false    { "FALSE" }
+  | kw_none     { "NONE" }
+  | kw_and      { "AND" }
+  | kw_or       { "OR" }
+  | kw_not      { "NOT" }
+  | kw_class    { "CLASS" }
+  | kw_import   { "IMPORT" }
+  | kw_from     { "FROM" }
+  | kw_pass     { "PASS" }
+  | kw_break    { "BREAK" }
+  | kw_continue { "CONTINUE" }
+
+  | id          { "ID" }
+
+  | sci_num     { "FLOAT" }
+  | float_n     { "FLOAT" }
+  | integer     { "INTEGER" }
+
+  | docstring   { "DOCSTRING" }
+  | string_dq   { "STRING" }
+  | line_comment { "COMMENT" }
+
+  | eq          { "EQ" }
+  | neq         { "NEQ" }
+  | lte         { "LTE" }
+  | gte         { "GTE" }
+  | plus_eq     { "PLUS_ASSIGN" }
+  | minus_eq    { "MINUS_ASSIGN" }
+  | power_op    { "POW" }
+
+  | '='         { "ASSIGN" }
+  | '+'         { "PLUS" }
+  | '-'         { "MINUS" }
+  | '*'         { "STAR" }
+  | '/'         { "SLASH" }
+  | '%'         { "MOD" }
+  | '<'         { "LT" }
+  | '>'         { "GT" }
+
+  | '('         { "LPAREN" }
+  | ')'         { "RPAREN" }
+  | '['         { "LBRACKET" }
+  | ']'         { "RBRACKET" }
+  | '{'         { "LBRACE" }
+  | '}'         { "RBRACE" }
+  | ':'         { "COLON" }
+  | ','         { "COMMA" }
+  | '.'         { "DOT" }
+
+  | newline     { "NEWLINE" }
+  | ws          {}

@@ -1,0 +1,30 @@
+import math
+from tools.parser import helper
+
+class Processor(Base):
+    def init(self, data):
+        self.data = data
+        pass
+
+    def total(self, limit=10):
+        total = 0
+        values = [1, 2, 3, limit]
+        meta = {"ok": True, "empty": None}
+
+        for item in values:
+            if item >= 2 and not False:
+                total += item
+            elif item == 0:
+                continue
+            else:
+                total -= 1
+
+        while total > 0:
+            print("total", total)
+            total = total - 1
+            break
+
+        return total
+
+x = Processor([1, 2, 3])
+print(x.total(5))

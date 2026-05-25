@@ -1,0 +1,31 @@
+use std::collections::HashMap;
+
+#[derive(Debug, Clone)]
+struct User<'a> {
+    id: i32,
+    name: &'a str,
+}
+
+impl<'a> User<'a> {
+    fn new(id: i32, name: &'a str) -> Self {
+        Self { id, name }
+    }
+}
+
+fn main() {
+    let mut users: Vec<User> = Vec::new();
+
+    users.push(User::new(1, "Ana"));
+    users.push(User::new(2, "Luis"));
+
+    match users.get(0) {
+        Some(user) => println!("{} {}", user.id, user.name),
+        None => panic!("empty"),
+    }
+
+    for u in &users {
+        if u.id >= 1 && u.name != "" {
+            println!("{:?}", u);
+        }
+    }
+}
