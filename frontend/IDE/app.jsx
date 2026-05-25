@@ -249,31 +249,44 @@ function StatesView({ active, onPick }){
   return (
     <div>
       <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>▍ COLECCIÓN CANÓNICA · LR(1) — {D.STATES.length} estados</div>
-      {D.STATES.map(s=>
+      {D.STATES.map(s=>{
+        const gotos = Object.entries(D.GOTO[String(s.id)] || {});
+        return (
         <div key={s.id}
              className={"state " + (active===s.id?"active":"")}
              onClick={()=> onPick(s.id)}>
           <div className="head">
             <span style={{color:"var(--coral)"}}>■</span>
             <span>I{s.id}</span>
-            <span className="mute" style={{marginLeft:"auto", fontSize:15}}>{s.items.length} items, {Object.keys(D.GOTO[String(s.id)] || {}).length} transiciones</span>
+            <span className="mute" style={{marginLeft:"auto", fontSize:15}}>{s.items.length} items · {gotos.length} transiciones</span>
           </div>
+
           <div className="items">
-            {s.items.map((it,i)=> <div key={i}>{it.replace("·",  /·/.test(it)?"·":"·")}</div> )}
+            <div style={{marginBottom: 12}}>
+              <div style={{fontSize: 11, color: 'var(--tx-mute)', fontWeight: 500, marginBottom: 6, textTransform: 'uppercase'}}>Producciones</div>
+              {s.items.map((it,i)=> (
+                <div key={i} style={{fontSize: 12, color: 'var(--tx-soft)', marginBottom: 4, fontFamily: 'monospace'}}>
+                  {it.replace("·",  /·/.test(it)?"·":"·")}
+                </div>
+              ))}
+            </div>
 
-            {Object.keys(D.GOTO[String(s.id)] || {}).length > 0 && (
-              <div style={{borderTop: '1px solid var(--gray)', margin: '8px 0'}}></div>
-            )}
-
-            {Object.entries(D.GOTO[String(s.id)] || {}).map(([symbol, nextState]) => (
-              <div key={`trans-${symbol}`} style={{display: 'flex', justifyContent: 'space-between', fontSize: '0.9em', color: 'var(--mute)'}}>
-                <span style={{fontWeight: 500}}>{symbol}</span>
-                <span>→ I{nextState}</span>
+            {gotos.length > 0 && (
+              <div style={{borderTop: '1px solid var(--line)', paddingTop: 12}}>
+                <div style={{fontSize: 11, color: 'var(--tx-mute)', fontWeight: 500, marginBottom: 8, textTransform: 'uppercase'}}>GOTO (transiciones)</div>
+                {gotos.map(([symbol, nextState]) => (
+                  <div key={`trans-${symbol}`} style={{display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginBottom: 6, padding: '6px 8px', backgroundColor: 'var(--bg-soft)', borderRadius: 3, border: '1px solid var(--line-soft)'}}>
+                    <span style={{color: 'var(--coral)', fontWeight: 600, minWidth: 30}}>{symbol}</span>
+                    <span style={{color: 'var(--tx-mute)'}}>→</span>
+                    <span style={{color: 'var(--cyan)', fontWeight: 600}}>I{nextState}</span>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
         </div>
-      )}
+        );
+      })}
     </div>
   );
 }
@@ -719,14 +732,11 @@ function StackView({ step }){
 }
 
 function ParseConsole({ stepIdx, setStep, onParse, mode }){
-<<<<<<< HEAD
-=======
   const [input, setInput] = useState("c c d c d");
   const [selectedTestIdx, setSelectedTestIdx] = useState(0);
   const [testCasesPanelWidth, setTestCasesPanelWidth] = useState(0.35);
   const [isDraggingResize, setIsDraggingResize] = useState(false);
 
->>>>>>> b36864c413dfaaed69e138627e80f03383e2cd9d
   const cur = D.TRACE[stepIdx] || D.TRACE[0];
   const isAccepted = cur && cur.action === "acc";
   const rawContent = D.FILES.test.rawContent || "";
@@ -790,32 +800,7 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
         <button className="cbtn icon cyan" onClick={()=>setStep(Math.min(D.TRACE.length-1,stepIdx+1))}>PASO ▶</button>
         <button className="cbtn icon" onClick={()=>setStep(D.TRACE.length-1)}>⏭</button>
       </div>
-<<<<<<< HEAD
-      <div className="trace-wrap">
-        <div className="trace-col left">
-          <h4>▍ TRAZA DE EJECUCIÓN</h4>
-          {D.TRACE.map((s,i)=>{
-            const a = s.action;
-            const cls = a==="acc"?"a-ac":
-                        (a==="match"||a.startsWith("s"))?"a-sh":
-                        (a==="predict"||a.startsWith("r"))?"a-re":"a-er";
-            const top = s.stack[s.stack.length-1];
-            const topLabel = typeof top === "number" ? `I${top}` : String(top);
-            return (
-              <div key={i} className={"step " + (i===stepIdx?"cur":"")} onClick={()=>setStep(i)}>
-                <div className="n">{String(i+1).padStart(2,"0")}</div>
-                <div>
-                  <span className="dim">{topLabel}</span>{' '}
-                  <span className="dim">·</span>{' '}
-                  <span style={{color:"var(--coral)"}}>'{s.remaining[0]}'</span>{' '}
-                  <span className="dim">→</span>{' '}
-                  <span className={cls}>{a}</span>{' '}
-                  <span className="dim">· {s.desc.split(" → ").slice(-1)[0]}</span>
-=======
-
-      {/* Layout 2 columnas solo si hay test cases */}
-      {testCases.length > 0 ? (
-        <div style={{display:'flex', gap:0, height:'100%', minHeight:0}}>
+      <div style={{display:'flex', gap:0, height:'100%', minHeight:0}}>
           {/* Columna izquierda: Test Cases */}
           <div style={{width: `${testCasesPanelWidth*100}%`, minWidth:'150px', maxWidth:'80%', borderRight:'1px solid var(--line)', overflowY:'auto', padding:'8px', display:'flex', flexDirection:'column'}}>
             <h4 style={{margin:'0 0 8px 0', fontSize:11, color:'var(--tx-mute)', fontWeight:500}}>TEST CASES</h4>
@@ -841,7 +826,6 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
                   }}
                 >
                   <span style={{color:'var(--tx-mute)', marginRight:4}}>#{idx+1}</span>{testCase}
->>>>>>> b36864c413dfaaed69e138627e80f03383e2cd9d
                 </div>
               ))}
             </div>
