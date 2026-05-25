@@ -1,0 +1,8 @@
+%token item comma
+
+%%
+
+L : item
+  | L comma item
+  ;
+

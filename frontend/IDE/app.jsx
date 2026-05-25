@@ -719,10 +719,55 @@ function StackView({ step }){
 }
 
 function ParseConsole({ stepIdx, setStep, onParse, mode }){
+<<<<<<< HEAD
+=======
+  const [input, setInput] = useState("c c d c d");
+  const [selectedTestIdx, setSelectedTestIdx] = useState(0);
+  const [testCasesPanelWidth, setTestCasesPanelWidth] = useState(0.35);
+  const [isDraggingResize, setIsDraggingResize] = useState(false);
+
+>>>>>>> b36864c413dfaaed69e138627e80f03383e2cd9d
   const cur = D.TRACE[stepIdx] || D.TRACE[0];
   const isAccepted = cur && cur.action === "acc";
   const rawContent = D.FILES.test.rawContent || "";
   const tokenCount = rawContent.trim().split(/\s+/).filter(Boolean).length;
+
+  // Calcular test cases desde el .txt
+  const testCases = (() => {
+    if (!D.FILES.test || !D.FILES.test.rawContent) return [];
+    return D.FILES.test.rawContent
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0);
+  })();
+
+  // Handler para resize
+  useEffect(() => {
+    if (!isDraggingResize) return;
+
+    const handleMouseMove = (e) => {
+      const traceWrap = document.querySelector('.trace-wrap');
+      if (!traceWrap) return;
+      const rect = traceWrap.getBoundingClientRect();
+      const newWidth = (e.clientX - rect.left) / rect.width;
+      // Min 20%, Max 70%
+      if (newWidth > 0.2 && newWidth < 0.7) {
+        setTestCasesPanelWidth(newWidth);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsDraggingResize(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDraggingResize]);
 
   return (
     <div className="panel">
@@ -745,6 +790,7 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
         <button className="cbtn icon cyan" onClick={()=>setStep(Math.min(D.TRACE.length-1,stepIdx+1))}>PASO ▶</button>
         <button className="cbtn icon" onClick={()=>setStep(D.TRACE.length-1)}>⏭</button>
       </div>
+<<<<<<< HEAD
       <div className="trace-wrap">
         <div className="trace-col left">
           <h4>▍ TRAZA DE EJECUCIÓN</h4>
@@ -765,22 +811,128 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
                   <span className="dim">→</span>{' '}
                   <span className={cls}>{a}</span>{' '}
                   <span className="dim">· {s.desc.split(" → ").slice(-1)[0]}</span>
+=======
+
+      {/* Layout 2 columnas solo si hay test cases */}
+      {testCases.length > 0 ? (
+        <div style={{display:'flex', gap:0, height:'100%', minHeight:0}}>
+          {/* Columna izquierda: Test Cases */}
+          <div style={{width: `${testCasesPanelWidth*100}%`, minWidth:'150px', maxWidth:'80%', borderRight:'1px solid var(--line)', overflowY:'auto', padding:'8px', display:'flex', flexDirection:'column'}}>
+            <h4 style={{margin:'0 0 8px 0', fontSize:11, color:'var(--tx-mute)', fontWeight:500}}>TEST CASES</h4>
+            <div style={{flex:1, overflowY:'auto'}}>
+              {testCases.map((testCase, idx) => (
+                <div
+                  key={idx}
+                  onClick={() => {
+                    setSelectedTestIdx(idx);
+                    setInput(testCase);
+                    onParse(testCase);
+                  }}
+                  style={{
+                    padding: '6px 8px',
+                    marginBottom: 4,
+                    backgroundColor: idx === selectedTestIdx ? 'var(--bg-3)' : 'var(--bg-soft)',
+                    border: `1px solid ${idx === selectedTestIdx ? 'var(--cyan)' : 'var(--line-soft)'}`,
+                    cursor: 'pointer',
+                    fontSize: 12,
+                    borderRadius: 2,
+                    transition: 'all 0.2s',
+                    color: 'var(--cyan)'
+                  }}
+                >
+                  <span style={{color:'var(--tx-mute)', marginRight:4}}>#{idx+1}</span>{testCase}
+>>>>>>> b36864c413dfaaed69e138627e80f03383e2cd9d
                 </div>
-              </div>
-            );
-          })}
-        </div>
-        <div className="trace-col">
-          <h4>▍ ESTADO ACTUAL · paso {stepIdx+1}</h4>
-          <StackView step={cur}/>
-          {isAccepted &&
-            <div className="accept-banner">
-              <span>✓</span><span>CADENA ACEPTADA</span>
-              <span className="dim" style={{fontFamily:"VT323", fontSize:14}}>· {D.TRACE.length} pasos · 0 errores</span>
+              ))}
             </div>
-          }
+          </div>
+
+          {/* Resize Handle */}
+          <div
+            onMouseDown={() => setIsDraggingResize(true)}
+            style={{
+              width: '4px',
+              backgroundColor: 'var(--line)',
+              cursor: isDraggingResize ? 'col-resize' : 'ew-resize',
+              userSelect: 'none',
+              flex:'0 0 4px'
+            }}
+          />
+
+          {/* Columna derecha: dividida en Traza (arriba) y Estado Actual (abajo) */}
+          <div style={{flex:1, minWidth:0, display:'flex', flexDirection:'column', overflow:'hidden'}}>
+            {/* Sección de Traza */}
+            <div style={{flex:1, minHeight:0, overflowY:'auto', borderBottom:'1px solid var(--line)', padding:'8px'}}>
+              <h4 style={{margin:'0 0 8px 0'}}>▍ TRAZA DE EJECUCIÓN</h4>
+              <div style={{display:'flex', flexDirection:'column', gap:0}}>
+                {D.TRACE.map((s,i)=>{
+                  const a = s.action;
+                  const cls = a==="acc"?"a-ac":a.startsWith("s")?"a-sh":a.startsWith("r")?"a-re":"a-er";
+                  return (
+                    <div key={i} className={"step " + (i===stepIdx?"cur":"")} onClick={()=>setStep(i)} style={{cursor:'pointer', padding:'4px 0'}}>
+                      <div className="n" style={{display:'inline-block', minWidth:'30px'}}>{String(i+1).padStart(2,"0")}</div>
+                      <div style={{display:'inline'}}>
+                        <span className="dim">I{s.stack[s.stack.length-1]}</span>{' '}
+                        <span className="dim">·</span>{' '}
+                        <span style={{color:"var(--coral)"}}>'{s.remaining[0]}'</span>{' '}
+                        <span className="dim">→</span>{' '}
+                        <span className={cls}>{a}</span>{' '}
+                        <span className="dim">· {s.desc.split(" → ").slice(-1)[0]}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Sección de Estado Actual */}
+            <div style={{flex:1, minHeight:0, overflowY:'auto', padding:'8px'}}>
+              <h4 style={{margin:'0 0 8px 0'}}>▍ ESTADO ACTUAL · paso {stepIdx+1}</h4>
+              <StackView step={cur}/>
+              {isAccepted &&
+                <div className="accept-banner">
+                  <span>✓</span><span>CADENA ACEPTADA</span>
+                  <span className="dim" style={{fontFamily:"VT323", fontSize:14}}>· {D.TRACE.length} pasos · 0 errores</span>
+                </div>
+              }
+            </div>
+          </div>
         </div>
-      </div>
+      ) : (
+        /* Layout original cuando no hay test cases */
+        <div className="trace-wrap">
+          <div className="trace-col left">
+            <h4>▍ TRAZA DE EJECUCIÓN</h4>
+            {D.TRACE.map((s,i)=>{
+              const a = s.action;
+              const cls = a==="acc"?"a-ac":a.startsWith("s")?"a-sh":a.startsWith("r")?"a-re":"a-er";
+              return (
+                <div key={i} className={"step " + (i===stepIdx?"cur":"")} onClick={()=>setStep(i)}>
+                  <div className="n">{String(i+1).padStart(2,"0")}</div>
+                  <div>
+                    <span className="dim">I{s.stack[s.stack.length-1]}</span>{' '}
+                    <span className="dim">·</span>{' '}
+                    <span style={{color:"var(--coral)"}}>'{s.remaining[0]}'</span>{' '}
+                    <span className="dim">→</span>{' '}
+                    <span className={cls}>{a}</span>{' '}
+                    <span className="dim">· {s.desc.split(" → ").slice(-1)[0]}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="trace-col">
+            <h4>▍ ESTADO ACTUAL · paso {stepIdx+1}</h4>
+            <StackView step={cur}/>
+            {isAccepted &&
+              <div className="accept-banner">
+                <span>✓</span><span>CADENA ACEPTADA</span>
+                <span className="dim" style={{fontFamily:"VT323", fontSize:14}}>· {D.TRACE.length} pasos · 0 errores</span>
+              </div>
+            }
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1036,6 +1188,17 @@ function App(){
       });
       setStep(0);
       rerender();
+
+      // Si hay archivo .txt cargado, auto-ejecutar primer test case
+      if (D.FILES.test && D.FILES.test.rawContent) {
+        const firstLine = D.FILES.test.rawContent
+          .split('\n')
+          .map(l => l.trim())
+          .find(l => l.length > 0);
+        if (firstLine) {
+          setTimeout(() => handleParse(firstLine), 100);
+        }
+      }
     } catch(e) {
       console.error("API /compile:", e);
       let msg = String(e);

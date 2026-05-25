@@ -1,0 +1,5 @@
+id = num ;
+if num lbrace id = num ; rbrace
+if id lbrace id = num ; rbrace else lbrace id = num ; rbrace
+while num lbrace id = num ; rbrace
+if num lbrace if num lbrace id = num ; rbrace rbrace

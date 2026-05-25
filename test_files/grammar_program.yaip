@@ -1,0 +1,18 @@
+%token if else while lbrace rbrace semi id assign num
+
+%%
+
+P : S
+  | P S
+  ;
+
+S : id assign E semi
+  | if E lbrace P rbrace
+  | if E lbrace P rbrace else lbrace P rbrace
+  | while E lbrace P rbrace
+  ;
+
+E : num
+  | id
+  ;
+
