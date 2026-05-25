@@ -265,6 +265,99 @@ struct NodeRaw {
     children: Vec<usize>,
 }
 
+pub struct LL1TraceStep {
+    pub stack:     Vec<String>,
+    pub remaining: Vec<String>,
+    pub action:    String,
+    pub desc:      String,
+}
+
+impl LL1Parser {
+    pub fn parse_with_trace(&self, tokens: Vec<String>) -> Vec<LL1TraceStep> {
+        let mut stack: Vec<String> = vec![EOF.to_string(), self.start_symbol.clone()];
+        let mut input = tokens;
+        input.push(EOF.to_string());
+        let mut ip    = 0usize;
+        let mut trace: Vec<LL1TraceStep> = Vec::new();
+
+        loop {
+            let stack_snap  = stack.clone();
+            let remaining: Vec<String> = input[ip..].to_vec();
+
+            let top = match stack.last() {
+                Some(s) => s.clone(),
+                None    => break,
+            };
+            let current = input[ip].clone();
+
+            if top == EOF && current == EOF {
+                trace.push(LL1TraceStep {
+                    stack: stack_snap, remaining,
+                    action: "acc".to_string(),
+                    desc:   "Cadena aceptada".to_string(),
+                });
+                break;
+            }
+
+            if self.table.contains_key(&top) {
+                if let Some(row) = self.table.get(&top) {
+                    if let Some(prod) = row.get(&current) {
+                        let body = &prod.bodies[0];
+                        let body_strs: Vec<String> = if body.is_empty() {
+                            vec!["ε".to_string()]
+                        } else {
+                            body.iter().map(|s| match s {
+                                Symbol::Terminal(t) | Symbol::NonTerminal(t) => t.clone(),
+                            }).collect()
+                        };
+                        let desc = format!("Predicción: {} → {}", top, body_strs.join(" "));
+                        stack.pop();
+                        if !body.is_empty() {
+                            for sym in body.iter().rev() {
+                                let name = match sym {
+                                    Symbol::Terminal(t) | Symbol::NonTerminal(t) => t.clone(),
+                                };
+                                stack.push(name);
+                            }
+                        }
+                        trace.push(LL1TraceStep {
+                            stack: stack_snap, remaining,
+                            action: "predict".to_string(),
+                            desc,
+                        });
+                    } else {
+                        trace.push(LL1TraceStep {
+                            stack: stack_snap, remaining,
+                            action: "error".to_string(),
+                            desc: format!("Error: no hay regla para [{}, {}]", top, current),
+                        });
+                        break;
+                    }
+                } else { break; }
+            } else {
+                if top == current {
+                    let desc = format!("Coincidencia: '{}'", top);
+                    stack.pop();
+                    ip += 1;
+                    trace.push(LL1TraceStep {
+                        stack: stack_snap, remaining,
+                        action: "match".to_string(),
+                        desc,
+                    });
+                } else {
+                    trace.push(LL1TraceStep {
+                        stack: stack_snap, remaining,
+                        action: "error".to_string(),
+                        desc: format!("Error: se esperaba '{}', se encontró '{}'", top, current),
+                    });
+                    break;
+                }
+            }
+        }
+        trace
+    }
+}
+
 fn arena_to_tree(arena: &[NodeRaw], idx: usize) -> ParseNode {
     let n = &arena[idx];
     let children: Vec<ParseNode> = n.children.iter()

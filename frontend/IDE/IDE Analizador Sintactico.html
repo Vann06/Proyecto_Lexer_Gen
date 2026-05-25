@@ -89,13 +89,14 @@
   /* ---------- layout ---------- */
   #app{
     display:grid; gap:10px; padding:10px; height:100vh;
-    grid-template-rows: 64px 1fr 200px 28px;
+    grid-template-rows: 64px 1fr 240px 28px;
     grid-template-columns: 240px 1fr 380px;
     grid-template-areas:
       "header header header"
       "files  editor results"
       "console console console"
       "status status status";
+    transition: grid-template-columns 0.22s ease;
   }
 
   /* ---------- header ---------- */
@@ -279,8 +280,33 @@
   }
 
   /* ---------- results ---------- */
-  #results{ grid-area:results; display:flex; flex-direction:column; min-width:0; overflow:hidden;}
-  #results .panel{ flex:1; min-height:0; display:flex; flex-direction:column;}
+  #results{ grid-area:results; display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden;}
+  #results .panel{ flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden;}
+
+  /* toggle button que aparece en el panel-title de results */
+  .results-toggle{
+    margin-left:auto; cursor:pointer;
+    background:none; border:1px solid var(--magenta-d); color:var(--pink);
+    font-family:"Press Start 2P","VT323"; font-size:10px;
+    padding:2px 8px; line-height:1;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .results-toggle:hover{ border-color:var(--pink); color:#fff; }
+
+  /* strip vertical cuando está oculto */
+  #results.r-hidden .panel,
+  #results.r-hidden .panel-title > *:not(.results-toggle-strip) { display:none; }
+  #results.r-hidden{ justify-content:flex-start; align-items:center; gap:0; }
+  .results-toggle-strip{
+    display:none; writing-mode:vertical-rl; transform:rotate(180deg);
+    cursor:pointer; color:var(--pink); font-family:"Press Start 2P","VT323"; font-size:9px;
+    padding:12px 6px; letter-spacing:2px;
+    border:2px solid var(--magenta); background:var(--bg-panel);
+    width:28px; flex:1;
+    align-items:center; justify-content:center;
+    text-align:center;
+  }
+  #results.r-hidden .results-toggle-strip{ display:flex; }
   .rtabs{
     display:flex; flex-wrap:wrap; gap:0;
     border-bottom:2px solid var(--magenta);
@@ -297,7 +323,7 @@
   .rtab.active{ color:var(--pink); background:var(--bg-panel); box-shadow: inset 0 -2px 0 var(--pink); }
   .rtab .count{ color:var(--tx-mute); margin-left:6px;}
   .rtab.active .count{ color:var(--pink); }
-  .rbody{ flex:1; overflow:auto; padding: 12px; min-width:0;}
+  .rbody{ flex:1; overflow:auto; padding: 12px; min-width:0; min-height:0;}
 
   /* tables */
   table.t{ border-collapse: collapse; width:100%; font-size:18px;}
@@ -350,8 +376,8 @@
   .dfa-legend{ display:flex; gap:14px; margin-bottom:8px; font-size:16px; color:var(--tx-dim);}
   .dfa-legend i{ width:10px;height:10px; display:inline-block; vertical-align:middle; margin-right:4px;}
   .dfa svg{ width:100%; height:auto; display:block; }
-  .dfa-container{ overflow:auto; flex:1; border:1px solid var(--line); }
-  .dfa-container svg{ max-width:100%; height:auto; }
+  .dfa-container{ overflow:auto; flex:1; min-height:0; border:1px solid var(--line); }
+  .dfa-container svg{ max-width:none; height:auto; }
 
   /* editor overlay container */
   .editor-body{
@@ -431,8 +457,8 @@
   .cbtn.green:hover{ box-shadow: 0 0 10px rgba(74,222,128,.45);}
   .cbtn.cyan{ border-color: var(--cyan); color:var(--cyan);}
 
-  .trace-wrap{ flex:1; overflow:auto; display:grid; grid-template-columns: 1.1fr 1fr; gap:0; background: var(--bg-panel);}
-  .trace-col{ overflow:auto; padding:8px 12px; }
+  .trace-wrap{ flex:1; min-height:0; overflow:hidden; display:grid; grid-template-columns: 1.1fr 1fr; gap:0; background: var(--bg-panel);}
+  .trace-col{ overflow-y:auto; overflow-x:hidden; padding:8px 12px; }
   .trace-col.left{ border-right:2px solid var(--line);}
   .trace-col h4{ font-family:"Press Start 2P","VT323"; font-size:9px; color:var(--pink); margin:4px 0 8px; letter-spacing:1px;}
   .step{
@@ -516,7 +542,8 @@
   .prob.warn .tag{ background:rgba(251,191,36,.10); color:var(--yellow); border:1px solid var(--yellow);}
   .prob.info .tag{ background:rgba(96,165,250,.10); color:var(--blue); border:1px solid var(--blue);}
   .prob .msg{ color: var(--tx); }
-  .prob .loc{ color: var(--tx-mute); font-size:15px;}
+  .prob .loc{ color: var(--tx-mute); font-size:15px; }
+  .prob-pos{ background: rgba(34,211,238,.08); border:1px solid var(--cyan-d); color: var(--cyan); border-radius:3px; padding:1px 6px; font-size:14px; }
 </style>
 </head>
 <body>
@@ -527,7 +554,7 @@
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@viz-js/viz@3.2.4/lib/viz-standalone.js"></script>
 
-<script type="text/babel" src="./data.jsx?v=6"></script>
-<script type="text/babel" src="./app.jsx?v=6"></script>
+<script type="text/babel" src="./data.jsx?v=9"></script>
+<script type="text/babel" src="./app.jsx?v=14"></script>
 </body>
 </html>

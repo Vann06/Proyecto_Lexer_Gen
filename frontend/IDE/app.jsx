@@ -69,11 +69,11 @@ const HL_RULES = {
     { re: /[|*+?()\-={}]/y, cls: "op" },
   ],
   yalp: [
-    { re: /\(\*[\s\S]*?\*\)/y, cls: "com" },
+    { re: /\/\*[\s\S]*?\*\//y, cls: "com" },
     { re: /%%/y, cls: "kw" },
-    { re: /%(token|start|left|right|nonassoc)\b/y, cls: "kw" },
-    { re: /[A-Z][A-Z0-9_]*/y, cls: "nonterm" },
-    { re: /[a-z_][a-z0-9_]*/y, cls: "term" },
+    { re: /%(token|start|left|right|nonassoc|ignore)\b/y, cls: "kw" },
+    { re: /[A-Z][A-Z0-9_]*/y, cls: "term" },
+    { re: /[a-z_][a-z0-9_]*/y, cls: "nonterm" },
     { re: /[|:;]/y, cls: "op" },
   ],
   txt: [],
@@ -189,6 +189,7 @@ function Editor({ file, onEdit, contentVersion }){
 /* ============================== Result panes ============================== */
 
 function GrammarView(){
+  const termSet = new Set(D.TERMINALS);
   return (
     <div>
       <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>▍ PRODUCCIONES</div>
@@ -202,7 +203,7 @@ function GrammarView(){
               <td className="dim">→</td>
               <td style={{textAlign:"left", paddingLeft:14}}>
                 {p.rhs.map((s,i)=>
-                  <span key={i} className={/[A-Z]/.test(s)?"nonterm":"term"} style={{marginRight:6}}>{s}</span>
+                  <span key={i} className={s==="ε"?"dim":termSet.has(s)?"term":"nonterm"} style={{marginRight:6}}>{s}</span>
                 )}
               </td>
             </tr>
@@ -327,6 +328,7 @@ function ActionGotoTable({ stepIdx, mode }){
   if (mode === "ll1") return <LL1TableView/>;
 
   const cur = D.TRACE[stepIdx] || D.TRACE[0];
+  if (!cur) return <div className="dim" style={{padding:16}}>Sin traza — presiona ▶ PARSEAR primero.</div>;
   const curState = cur.stack[cur.stack.length-1];
   const curTok   = cur.remaining[0];
   return (
@@ -494,15 +496,182 @@ function ProblemsList(){
         <span className="warn"> {counts.warn} warn</span> ·
         <span className="info"> {counts.info} info</span>
       </div>
-      {D.PROBLEMS.map((p,i)=>
-        <div key={i} className={"prob "+p.level}>
-          <div className="tag">{p.level==="err"?"ERR":p.level==="warn"?"WRN":"INF"}</div>
-          <div>
-            <div className="msg">{p.msg}</div>
-            <div className="loc">{p.code} · {p.loc}</div>
+      {D.PROBLEMS.map((p,i)=>{
+        const hasPos = p.line != null && p.col != null;
+        const locLabel = hasPos
+          ? `línea ${p.line}, col ${p.col}`
+          : (p.loc || "");
+        return (
+          <div key={i} className={"prob "+p.level}>
+            <div className="tag">{p.level==="err"?"ERR":p.level==="warn"?"WRN":"INF"}</div>
+            <div style={{flex:1}}>
+              <div className="msg">{p.msg}</div>
+              <div className="loc" style={{display:"flex", gap:8, flexWrap:"wrap", alignItems:"center"}}>
+                {p.code && <span>{p.code}</span>}
+                {hasPos && (
+                  <span className="prob-pos">
+                    <span style={{color:"var(--cyan)"}}>↗</span>
+                    {" "}{locLabel}
+                  </span>
+                )}
+                {!hasPos && locLabel && <span>{locLabel}</span>}
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })}
+    </div>
+  );
+}
+
+/* ============================== Parse Tree ============================== */
+
+function _buildTreeLR(trace) {
+  const treeStack = [];
+  for (const step of trace) {
+    const a = step.action;
+    if (a === "acc") break;
+    if (a.startsWith("s")) {
+      const tok = step.remaining[0];
+      treeStack.push({ symbol: tok, lexeme: tok, children: [] });
+    } else if (a === "r" || a.startsWith("r")) {
+      const m = step.desc.match(/^(\S+)\s*→\s*(.+)$/);
+      if (!m) continue;
+      const head = m[1].trim();
+      const rhs  = m[2].trim();
+      const bodySyms = rhs === "ε" ? [] : rhs.split(/\s+/);
+      const children = treeStack.splice(treeStack.length - bodySyms.length);
+      treeStack.push({
+        symbol: head, lexeme: null,
+        children: children.length ? children : [{ symbol: "ε", lexeme: "ε", children: [] }],
+      });
+    }
+  }
+  return treeStack[0] || null;
+}
+
+function _buildTreeLL1(trace) {
+  const firstPred = trace.find(s => s.action === "predict");
+  if (!firstPred) return null;
+  const startMatch = firstPred.desc.match(/Predicción:\s+(\S+)/);
+  const startSym   = startMatch ? startMatch[1] : "S";
+
+  const root      = { symbol: startSym, lexeme: null, children: [] };
+  const nodeQueue = [root];
+
+  for (const step of trace) {
+    if (step.action === "acc") break;
+    if (step.action === "predict") {
+      const node = nodeQueue.shift();
+      if (!node) continue;
+      const rhsMatch = step.desc.match(/→\s*(.+)$/);
+      const rhsStr   = rhsMatch ? rhsMatch[1].trim() : "ε";
+      const rhs      = rhsStr === "ε" ? [] : rhsStr.split(/\s+/);
+      const children = rhs.length > 0
+        ? rhs.map(s => ({ symbol: s, lexeme: null, children: [] }))
+        : [{ symbol: "ε", lexeme: "ε", children: [] }];
+      node.children = children;
+      if (rhs.length > 0) nodeQueue.unshift(...children);
+    } else if (step.action === "match") {
+      const node = nodeQueue.shift();
+      if (node) node.lexeme = step.remaining[0];
+    }
+  }
+  return root;
+}
+
+function buildParseTree(trace, mode) {
+  if (!trace || !trace.length) return null;
+  if (mode === "ll1") return _buildTreeLL1(trace);
+  return _buildTreeLR(trace);
+}
+
+function buildTreeDot(root) {
+  if (!root) return "";
+  let counter = 0;
+  const lines = [
+    "digraph ParseTree {",
+    "  rankdir=TB;",
+    '  bgcolor="#0d0613";',
+    '  node [fontname="Courier" fontsize=10 style=filled shape=rect];',
+    '  edge [color="#c026d3" arrowsize=0.6];',
+  ];
+  function visit(node, parentId) {
+    const id = `n${counter++}`;
+    const isLeaf = node.children.length === 0;
+    const rawLabel = node.lexeme && node.lexeme !== node.symbol
+      ? `${node.symbol}\\n"${node.lexeme}"`
+      : node.symbol;
+    const label     = rawLabel.replace(/"/g, '\\"');
+    const nodeColor = isLeaf ? '"#22d3ee"' : '"#c026d3"';
+    const fillColor = isLeaf ? '"#0a2530"' : '"#1a0f24"';
+    lines.push(`  ${id} [label="${label}" color=${nodeColor} fillcolor=${fillColor} fontcolor="#e8d6f0"];`);
+    if (parentId) lines.push(`  ${parentId} -> ${id};`);
+    for (const child of node.children) visit(child, id);
+  }
+  visit(root, null);
+  lines.push("}");
+  return lines.join("\n");
+}
+
+function ParseTreeView({ renderKey }) {
+  const containerRef = useRef();
+
+  useEffect(() => {
+    const dot = D.PARSE_TREE_DOT;
+    if (!dot) {
+      if (containerRef.current)
+        containerRef.current.innerHTML = '<div class="dim" style="padding:12px;font-size:17px">Presiona ▶ PARSEAR para ver el árbol de derivación</div>';
+      return;
+    }
+    if (!window.Viz) {
+      containerRef.current.innerHTML = '<div style="color:var(--yellow);padding:12px">Cargando viz.js…</div>';
+      return;
+    }
+    window.Viz.instance().then(viz => {
+      if (!containerRef.current) return;
+      try {
+        const svg = viz.renderSVGElement(dot);
+        svg.style.maxWidth = "none";
+        svg.style.height   = "auto";
+        containerRef.current.innerHTML = "";
+        containerRef.current.appendChild(svg);
+      } catch(err) {
+        containerRef.current.innerHTML = `<div style="color:var(--red);padding:12px">Error al renderizar: ${err}</div>`;
+      }
+    }).catch(err => {
+      if (containerRef.current)
+        containerRef.current.innerHTML = `<div style="color:var(--red);padding:12px">${err}</div>`;
+    });
+  }, [renderKey]);
+
+  const downloadPng = () => {
+    const svg = containerRef.current?.querySelector("svg");
+    if (!svg) return;
+    const data = new XMLSerializer().serializeToString(svg);
+    const canvas = document.createElement("canvas");
+    const bb = svg.getBoundingClientRect();
+    canvas.width = bb.width || 800; canvas.height = bb.height || 600;
+    const img = new Image();
+    img.onload = () => {
+      canvas.getContext("2d").drawImage(img, 0, 0);
+      const a = document.createElement("a");
+      a.href = canvas.toDataURL("image/png");
+      a.download = "parse_tree.png";
+      a.click();
+    };
+    img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(data)));
+  };
+
+  return (
+    <div className="dfa-wrap">
+      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8, display:"flex", alignItems:"center", gap:10}}>
+        ▍ ÁRBOL DE DERIVACIÓN
+        {D.PARSE_TREE_DOT && (
+          <button className="cbtn icon cyan" style={{fontSize:12, padding:"2px 8px"}} onClick={downloadPng}>↓ PNG</button>
+        )}
+      </div>
+      <div ref={containerRef} className="dfa-container"/>
     </div>
   );
 }
@@ -535,8 +704,8 @@ function StackView({ step }){
         <div className="cells">
           <div className="cell" style={{
             color: step.action==="acc"?"var(--pink)":
-                   step.action.startsWith("s")?"var(--green)":
-                   step.action.startsWith("r")?"var(--cyan)":"var(--tx)",
+                   (step.action==="match"||step.action.startsWith("s"))?"var(--green)":
+                   (step.action==="predict"||step.action.startsWith("r"))?"var(--cyan)":"var(--red)",
             borderColor:"currentColor",
             padding:"2px 14px"
           }}>{step.action}</div>
@@ -550,9 +719,10 @@ function StackView({ step }){
 }
 
 function ParseConsole({ stepIdx, setStep, onParse, mode }){
-  const [input, setInput] = useState("c c d c d");
   const cur = D.TRACE[stepIdx] || D.TRACE[0];
   const isAccepted = cur && cur.action === "acc";
+  const rawContent = D.FILES.test.rawContent || "";
+  const tokenCount = rawContent.trim().split(/\s+/).filter(Boolean).length;
 
   return (
     <div className="panel">
@@ -563,11 +733,13 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
       <div className="console-top" style={{marginTop:14}}>
         <div className="input-frame">
           <span className="prompt">›</span>
-          <input value={input} onChange={e=>setInput(e.target.value)}
-                 onKeyDown={e=>e.key==="Enter" && onParse(input)}/>
-          <span className="dim" style={{fontSize:15}}>$</span>
+          <span style={{color:"var(--cyan)", fontWeight:600, marginRight:8}}>{D.FILES.test.name}</span>
+          <span className="dim" style={{flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", fontSize:13}}>
+            {rawContent.trim().replace(/\s+/g," ").slice(0,80)}{rawContent.trim().length > 80 ? "…" : ""}
+          </span>
+          <span className="dim" style={{marginLeft:8, whiteSpace:"nowrap", fontSize:12}}>{tokenCount} tokens</span>
         </div>
-        <button className="cbtn green" onClick={()=>onParse(input)}>▶ PARSEAR</button>
+        <button className="cbtn green" onClick={()=>onParse(rawContent)}>▶ PARSEAR</button>
         <button className="cbtn icon cyan" onClick={()=>setStep(0)}>⏮</button>
         <button className="cbtn icon cyan" onClick={()=>setStep(Math.max(0,stepIdx-1))}>◀ PASO</button>
         <button className="cbtn icon cyan" onClick={()=>setStep(Math.min(D.TRACE.length-1,stepIdx+1))}>PASO ▶</button>
@@ -578,12 +750,16 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
           <h4>▍ TRAZA DE EJECUCIÓN</h4>
           {D.TRACE.map((s,i)=>{
             const a = s.action;
-            const cls = a==="acc"?"a-ac":a.startsWith("s")?"a-sh":a.startsWith("r")?"a-re":"a-er";
+            const cls = a==="acc"?"a-ac":
+                        (a==="match"||a.startsWith("s"))?"a-sh":
+                        (a==="predict"||a.startsWith("r"))?"a-re":"a-er";
+            const top = s.stack[s.stack.length-1];
+            const topLabel = typeof top === "number" ? `I${top}` : String(top);
             return (
               <div key={i} className={"step " + (i===stepIdx?"cur":"")} onClick={()=>setStep(i)}>
                 <div className="n">{String(i+1).padStart(2,"0")}</div>
                 <div>
-                  <span className="dim">I{s.stack[s.stack.length-1]}</span>{' '}
+                  <span className="dim">{topLabel}</span>{' '}
                   <span className="dim">·</span>{' '}
                   <span style={{color:"var(--coral)"}}>'{s.remaining[0]}'</span>{' '}
                   <span className="dim">→</span>{' '}
@@ -611,7 +787,7 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
 
 /* ============================== Right results panel ============================== */
 
-function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActiveState, mode, renderKey }){
+function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActiveState, mode, renderKey, onToggleSize, resultsSize }){
   const TABS = [
     {id:"grammar",   label:"GRAMÁTICA"},
     {id:"first",     label:"FIRST"},
@@ -620,6 +796,7 @@ function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActive
     {id:"action",    label:"ACTION/GOTO"},
     {id:"tokens",    label:"TOKENS", badge: D.TOKENS.length},
     {id:"dfa",       label:"LR(0)"},
+    {id:"tree",      label:"ÁRBOL"},
     {id:"gen",       label:"CÓD.GEN"},
     {id:"problems",  label:"PROBLEMAS", badge: D.PROBLEMS.length},
   ];
@@ -628,6 +805,9 @@ function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActive
     <>
       <div className="panel-title">
         <span className="swatch"/>RESULTS · ANALYZER
+        <button className="results-toggle" onClick={onToggleSize} title="Cambiar tamaño del panel">
+          {resultsSize==="normal"?"⟩⟩ AMPLIAR": resultsSize==="wide"?"◁ OCULTAR":"⟨⟨ NORMAL"}
+        </button>
       </div>
       <div className="panel">
         <div className="rtabs">
@@ -647,6 +827,7 @@ function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActive
           {activeTab==="action"   && <ActionGotoTable stepIdx={stepIdx} mode={mode}/>}
           {activeTab==="tokens"   && <TokensView/>}
           {activeTab==="dfa"      && <LR0Graph renderKey={renderKey}/>}
+          {activeTab==="tree"     && <ParseTreeView renderKey={renderKey}/>}
           {activeTab==="gen"      && <GeneratedCode/>}
           {activeTab==="problems" && <ProblemsList/>}
         </div>
@@ -738,8 +919,15 @@ function App(){
   const [mode,           setMode]          = useState("lalr");
   const [renderKey,      bump]             = useState(0); // re-render global
   const [contentVersion, setContentVersion] = useState(0); // señal de carga externa
+  const [resultsSize,    setResultsSize]   = useState("normal"); // "normal"|"wide"|"hidden"
 
   const rerender = () => bump(n => n + 1);
+
+  // ── sincroniza D.TOKENS desde el contenido del archivo .txt ────────────────
+  const syncTokens = (content) => {
+    const toks = content.trim().split(/\s+/).filter(Boolean);
+    D.TOKENS = toks.map((t, i) => ({ i: i+1, k: t, lx: t, l: 0, c: 0 }));
+  };
 
   // ── WORKSPACE: carga archivos del servidor al arrancar ──────────────────────
   const fetchWorkspace = async () => {
@@ -753,6 +941,7 @@ function App(){
         D.FILES[slot].rawContent = content;
         D.FILES[slot].name  = name;
         D.FILES[slot].dirty = false;
+        if (slot === "test") syncTokens(content);
       }
       setContentVersion(v => v + 1);
       rerender();
@@ -782,6 +971,7 @@ function App(){
       D.FILES[fileId].rawContent = content;
       D.FILES[fileId].name  = file.name;
       D.FILES[fileId].dirty = false;
+      if (fileId === "test") syncTokens(content);
       try {
         await fetch(`${API}/api/workspace/${encodeURIComponent(file.name)}`, {
           method: "PUT",
@@ -848,35 +1038,95 @@ function App(){
       rerender();
     } catch(e) {
       console.error("API /compile:", e);
-      D.PROBLEMS = [{ level:"err", code:"E000", msg: String(e), loc:"api" }];
+      let msg = String(e);
+      try { const j = JSON.parse(msg.replace(/^Error:\s*/,"")); if (j.error) msg = j.error; } catch(_){}
+      D.PROBLEMS = [{ level:"err", code:"E001", msg, loc:`modo ${mode.toUpperCase()}` }];
+      setTab("problems");
       rerender();
     } finally {
       setLoading(false);
     }
   };
 
+  // ── Auto-recompilar cuando el modo cambia (si hay gramática cargada) ─────────
+  const prevModeRef = useRef(mode);
+  useEffect(() => {
+    if (prevModeRef.current === mode) return;
+    prevModeRef.current = mode;
+    if (D.FILES.yalp.rawContent && D.FILES.yalp.rawContent.trim()) {
+      handleRun();
+    }
+  }, [mode]);
+
   // ── PARSEAR: obtiene la traza para los tokens ingresados ────────────────────
   const handleParse = async (inputStr) => {
-    const tokens = inputStr.trim().split(/\s+/).filter(Boolean);
-    if (!tokens.length) return;
+    if (!inputStr.trim()) return;
     try {
-      const res = await fetch(`${API}/api/parser/parse`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ content: D.FILES.yalp.rawContent, tokens, mode }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
+      let data;
+      const hasYal = D.FILES.yal.rawContent && D.FILES.yal.rawContent.trim();
+      if (hasYal) {
+        // Pipeline completo: .yal lexea la fuente → tokens → parser
+        const res = await fetch(`${API}/api/pipeline`, {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({
+            yal_content:  D.FILES.yal.rawContent,
+            yalp_content: D.FILES.yalp.rawContent,
+            source:       inputStr,
+            mode,
+          }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        data = await res.json();
+        // Sincronizar TOKENS con posiciones reales desde token_map
+        if (data.token_map && data.token_map.length) {
+          D.TOKENS = data.token_map.map((t, i) => ({ i: i+1, k: t.kind, lx: t.lexeme, l: t.line, c: t.col }));
+        } else if (data.trace && data.trace.length) {
+          const toks = (data.trace[0].remaining || []).filter(t => t !== "$");
+          D.TOKENS = toks.map((t, i) => ({ i: i+1, k: t, lx: t, l: 0, c: 0 }));
+        }
+      } else {
+        // Modo legado: input.txt ya contiene tokens separados por espacios
+        const tokens = inputStr.trim().split(/\s+/).filter(Boolean);
+        if (!tokens.length) return;
+        const res = await fetch(`${API}/api/parser/parse`, {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({ content: D.FILES.yalp.rawContent, tokens, mode }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        data = await res.json();
+        syncTokens(inputStr);
+      }
       D.TRACE = data.trace;
+      const treeRoot = buildParseTree(D.TRACE, mode);
+      D.PARSE_TREE_DOT = treeRoot ? buildTreeDot(treeRoot) : "";
+      // Mostrar problemas léxicos/sintácticos con posición si los hay
+      if (data.problems && data.problems.length) {
+        D.PROBLEMS = data.problems;
+      }
       setStep(0);
+      if (data.problems && data.problems.some(p => p.level === "err")) {
+        setTab("problems");
+      } else {
+        setTab("tree");
+      }
       rerender();
     } catch(e) {
       console.error("API /parse:", e);
+      let msg = String(e);
+      try { const j = JSON.parse(msg.replace(/^Error:\s*/,"")); if (j.error) msg = j.error; } catch(_){}
+      D.PROBLEMS = [{ level:"err", code:"E002", msg, loc:`pipeline ${mode.toUpperCase()}` }];
+      setTab("problems");
+      rerender();
     }
   };
 
+  const RESULTS_COLS = { normal:"240px 1fr 380px", wide:"240px 1fr 660px", hidden:"240px 1fr 30px" };
+  const cycleResults = () => setResultsSize(s => s==="normal"?"wide": s==="wide"?"hidden":"normal");
+
   return (
-    <div id="app">
+    <div id="app" style={{gridTemplateColumns: RESULTS_COLS[resultsSize]}}>
       <Header activeFile={activeFile} setFile={setFile} onRun={handleRun} onSave={handleSave}
               loading={loading} mode={mode} setMode={setMode}/>
 
@@ -891,7 +1141,9 @@ function App(){
         <Editor file={activeFile} onEdit={handleEdit} contentVersion={contentVersion}/>
       </div>
 
-      <div id="results" data-screen-label="results">
+      <div id={"results"} className={resultsSize==="hidden"?"r-hidden":""} data-screen-label="results">
+        {/* Strip vertical visible cuando está oculto */}
+        <div className="results-toggle-strip" onClick={cycleResults}>▶ RESULTS</div>
         <ResultsPanel
           stepIdx={stepIdx}
           activeTab={activeTab}
@@ -899,7 +1151,9 @@ function App(){
           activeState={activeState}
           setActiveState={setState}
           mode={mode}
-          renderKey={renderKey}/>
+          renderKey={renderKey}
+          onToggleSize={cycleResults}
+          resultsSize={resultsSize}/>
       </div>
 
       <div id="console-area" data-screen-label="console">

@@ -1,0 +1,160 @@
+(* ============================================================ *)
+(*  hardtest.yal  -  Especificacion lexica completa para        *)
+(*  el subconjunto de Python que aparece en hardtest.py         *)
+(*                                                              *)
+(*  Cubre todos los tokens del archivo hardtest.py y ademas     *)
+(*  agrega soporte para: elif, class, import, from, pass,       *)
+(*  break, continue, True, False, None, floats, **,  +=, -=,   *)
+(*  listas, diccionarios y notacion cientifica.                 *)
+(* ============================================================ *)
+
+(* --- Caracteres base --- *)
+let digit   = ['0'-'9']
+let lower   = ['a'-'z']
+let upper   = ['A'-'Z']
+let letter  = lower | upper
+let alnum   = letter | digit
+
+(* --- Blancos: inline vs newline (separados para INDENT/DEDENT) --- *)
+let ws_char = [' ''\t']
+let ws      = ws_char+
+let newline = '\n' | '\r''\n' | '\r'
+
+(* --- Identificadores y palabras reservadas --- *)
+let id = (letter | '_')(alnum | '_')*
+
+(* --- Numeros --- *)
+let integer  = digit+
+let float_n  = digit+'.'digit+
+let exp_part = ('e' | 'E')('+' | '-')?digit+
+let sci_num  = (float_n | integer) exp_part
+
+(* --- Strings de una linea (comillas dobles) --- *)
+(* Solo usamos alnum + blancos inline + signos de puntuacion seguros *)
+let str_punct  = ['.''!''?'',''_'':''/'';''@''#''$''%''+''<''>''|''^''~''`''-']
+let str_char   = alnum | ws_char | str_punct
+let string_dq  = '"' str_char* '"'
+
+(* --- Docstrings / comentarios multilínea (triple comilla) --- *)
+(* El cuerpo acepta los mismos caracteres que str_char mas newline,  *)
+(* que es lo que puede aparecer en un docstring de Python.           *)
+let doc_body  = (alnum | ws_char | newline | str_punct)*
+let docstring = '"''"''"' doc_body '"''"''"'
+
+(* --- Comentario de una linea --- *)
+let line_comment = '#' (alnum | ws_char | str_punct)*
+
+(* --- Operadores compuestos --- *)
+let eq        = '=''='
+let neq       = '!''='
+let lte       = '<''='
+let gte       = '>''='
+let plus_eq   = '+''='
+let minus_eq  = '-''='
+let power_op  = '*''*'
+
+(* --- Palabras reservadas (definidas como literales exactas) --- *)
+let kw_def      = def
+let kw_if       = if
+let kw_else     = else
+let kw_elif     = elif
+let kw_while    = while
+let kw_for      = for
+let kw_in       = in
+let kw_return   = return
+let kw_print    = print
+let kw_true     = True
+let kw_false    = False
+let kw_none     = None
+let kw_and      = and
+let kw_or       = or
+let kw_not      = not
+let kw_class    = class
+let kw_import   = import
+let kw_from     = from
+let kw_pass     = pass
+let kw_break    = break
+let kw_continue = continue
+
+(* ============================================================ *)
+(*  REGLAS LEXICAS                                              *)
+(*  Orden de prioridad: keywords > id > numeros > operadores   *)
+(*  Nota: INDENT y DEDENT son generados por post-procesamiento *)
+(*  del lexer basado en cambios de nivel de indentacion.       *)
+(* ============================================================ *)
+rule tokens =
+    (* 1. Palabras reservadas - deben ir ANTES que id *)
+    kw_def      { "DEF" }
+  | kw_if       { "IF" }
+  | kw_else     { "ELSE" }
+  | kw_elif     { "ELIF" }
+  | kw_while    { "WHILE" }
+  | kw_for      { "FOR" }
+  | kw_in       { "IN" }
+  | kw_return   { "RETURN" }
+  | kw_print    { "PRINT" }
+  | kw_true     { "TRUE" }
+  | kw_false    { "FALSE" }
+  | kw_none     { "NONE" }
+  | kw_and      { "AND" }
+  | kw_or       { "OR" }
+  | kw_not      { "NOT" }
+  | kw_class    { "CLASS" }
+  | kw_import   { "IMPORT" }
+  | kw_from     { "FROM" }
+  | kw_pass     { "PASS" }
+  | kw_break    { "BREAK" }
+  | kw_continue { "CONTINUE" }
+
+    (* 2. Identificador - despues de keywords para que no compitan *)
+  | id          { "ID" }
+
+    (* 3. Numeros: notacion cientifica > float > integer *)
+  | sci_num     { "FLOAT" }
+  | float_n     { "FLOAT" }
+  | integer     { "INTEGER" }
+
+    (* 4. Literales de cadena *)
+  | docstring        { "DOCSTRING" }
+  | string_dq        { "STRING" }
+
+    (* 5. Comentarios de linea - ignorados por el parser *)
+  | line_comment     { "COMMENT" }
+
+    (* 6. Operadores compuestos - DEBEN ir antes que los simples *)
+  | eq          { "EQ" }
+  | neq         { "NEQ" }
+  | lte         { "LTE" }
+  | gte         { "GTE" }
+  | plus_eq     { "PLUS_ASSIGN" }
+  | minus_eq    { "MINUS_ASSIGN" }
+  | power_op    { "POW" }
+
+    (* 7. Operadores simples *)
+  | '='         { "ASSIGN" }
+  | '+'         { "PLUS" }
+  | '-'         { "MINUS" }
+  | '*'         { "STAR" }
+  | '/'         { "SLASH" }
+  | '%'         { "MOD" }
+  | '<'         { "LT" }
+  | '>'         { "GT" }
+
+    (* 8. Delimitadores *)
+  | '('         { "LPAREN" }
+  | ')'         { "RPAREN" }
+  | '['         { "LBRACKET" }
+  | ']'         { "RBRACKET" }
+  | '{'         { "LBRACE" }
+  | '}'         { "RBRACE" }
+  | ':'         { "COLON" }
+  | ','         { "COMMA" }
+  | '.'         { "DOT" }
+
+    (* 9. Control de linea *)
+    (*    NEWLINE es significativo en Python: marca fin de sentencia *)
+    (*    e inicia revision de indentacion para INDENT/DEDENT        *)
+  | newline     { "NEWLINE" }
+
+    (* 10. Blancos inline - ignorados silenciosamente *)
+  | ws          {}

@@ -1,6 +1,18 @@
 // src/bin/api.rs — Servidor HTTP (Axum) que expone el pipeline al frontend
 #[path = "../analizador_sintactico/mod.rs"]
 mod analizador_sintactico;
+#[path = "../spec/mod.rs"]
+mod spec;
+#[path = "../regex/mod.rs"]
+mod regex;
+#[path = "../automata/mod.rs"]
+mod automata;
+#[path = "../table/mod.rs"]
+mod table;
+#[path = "../runtime/mod.rs"]
+mod runtime;
+#[path = "../error.rs"]
+mod error;
 
 use analizador_sintactico::first::calculate_first;
 use analizador_sintactico::follow::calculate_follow;
@@ -25,6 +37,12 @@ use std::fs;
 use std::path::PathBuf;
 use tower_http::cors::{Any, CorsLayer};
 
+use spec::parser::parse_yalex;
+use spec::expand::expand_definitions;
+use regex::parser::parse_regex;
+use runtime::simulator::{Simulator, LexResult};
+use table::transition_table::TransitionTable;
+
 // ─── Request types ────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -42,6 +60,15 @@ struct ParseRequest {
     mode: String,
 }
 
+#[derive(Deserialize)]
+struct PipelineRequest {
+    yal_content:  String,
+    yalp_content: String,
+    source:       String,
+    #[serde(default = "default_mode")]
+    mode: String,
+}
+
 fn default_mode() -> String { "lalr".to_string() }
 
 // ─── Response types ───────────────────────────────────────────────────────────
@@ -54,6 +81,15 @@ struct ProdData { n: usize, lhs: String, rhs: Vec<String> }
 
 #[derive(Serialize)]
 struct ProblemData { level: String, code: String, msg: String, loc: String }
+
+#[derive(Serialize, Default)]
+struct ParseResponse {
+    trace:     Vec<Value>,
+    accepted:  bool,
+    error:     Option<String>,
+    problems:  Vec<Value>,   // errores léxicos/sintácticos con línea:col
+    token_map: Vec<Value>,   // [{kind, lexeme, line, col}] para cada token
+}
 
 #[derive(Serialize)]
 struct CompileResponse {
@@ -69,9 +105,6 @@ struct CompileResponse {
     start_symbol:  String,
     lr0_dot:       String,
 }
-
-#[derive(Serialize)]
-struct ParseResponse { trace: Vec<Value>, accepted: bool, error: Option<String> }
 
 #[derive(Serialize)]
 struct WsFile { name: String, kind: String }
@@ -141,6 +174,14 @@ async fn parse_tokens(
     Json(req): Json<ParseRequest>,
 ) -> Result<Json<ParseResponse>, (StatusCode, Json<Value>)> {
     build_parse_response(&req.content, req.tokens, &req.mode)
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))
+}
+
+async fn run_pipeline(
+    Json(req): Json<PipelineRequest>,
+) -> Result<Json<ParseResponse>, (StatusCode, Json<Value>)> {
+    build_pipeline_response(&req.yal_content, &req.yalp_content, &req.source, &req.mode)
         .map(Json)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))
 }
@@ -291,28 +332,16 @@ fn build_parse_response(content: &str, tokens: Vec<String>, mode: &str) -> Resul
         let follow_sets = calculate_follow(&grammar, &first_sets);
         let parser      = LL1Parser::build(&grammar, &first_sets, &follow_sets)?;
 
-        return match parser.parse(tokens.clone()) {
-            Ok(()) => Ok(ParseResponse {
-                trace: vec![json!({
-                    "stack":     [0],
-                    "remaining": ["$"],
-                    "action":    "acc",
-                    "desc":      "Cadena aceptada (LL(1))",
-                })],
-                accepted: true,
-                error: None,
-            }),
-            Err(e) => Ok(ParseResponse {
-                trace: vec![json!({
-                    "stack":     [0],
-                    "remaining": tokens,
-                    "action":    "error",
-                    "desc":      e.clone(),
-                })],
-                accepted: false,
-                error: Some(e),
-            }),
-        };
+        let steps    = parser.parse_with_trace(tokens);
+        let accepted = steps.last().map(|s| s.action == "acc").unwrap_or(false);
+        let error    = if !accepted { steps.last().map(|s| s.desc.clone()) } else { None };
+        let trace: Vec<Value> = steps.into_iter().map(|s| json!({
+            "stack":     s.stack,
+            "remaining": s.remaining,
+            "action":    s.action,
+            "desc":      s.desc,
+        })).collect();
+        return Ok(ParseResponse { trace, accepted, error, ..Default::default() });
     }
 
     let grammar     = Grammar::parse_for_lr_from_str(content)?;
@@ -339,7 +368,104 @@ fn build_parse_response(content: &str, tokens: Vec<String>, mode: &str) -> Resul
         None
     };
 
-    Ok(ParseResponse { trace, accepted, error })
+    Ok(ParseResponse { trace, accepted, error, ..Default::default() })
+}
+
+// ─── Pipeline: lex → parse ───────────────────────────────────────────────────
+
+fn build_pipeline_response(yal: &str, yalp: &str, source: &str, mode: &str) -> Result<ParseResponse, String> {
+    let lexer_table = build_lexer_table_from_str(yal)?;
+
+    // Lex the source
+    let grammar_for_filter = Grammar::parse_for_lr_from_str(yalp)?;
+    let mut sim = Simulator::new(&lexer_table, source);
+    let mut token_kinds: Vec<String> = Vec::new();
+    let mut token_map: Vec<(String, String, usize, usize)> = Vec::new(); // (kind, lexeme, line, col)
+    let mut lex_problems: Vec<Value> = Vec::new();
+
+    loop {
+        match sim.next_token() {
+            LexResult::Token(t) => {
+                let k = lex_normalize_kind(&t.kind);
+                if !lex_is_ignored(&k, &grammar_for_filter) {
+                    token_map.push((k.clone(), t.lexeme.clone(), t.line, t.col));
+                    token_kinds.push(k);
+                }
+            }
+            LexResult::Error { lexeme, line, col } => {
+                lex_problems.push(json!({
+                    "level": "err",
+                    "code":  "L001",
+                    "msg":   format!("Carácter no reconocido: '{}'", lexeme),
+                    "loc":   format!("línea {} · col {}", line, col),
+                    "line":  line,
+                    "col":   col
+                }));
+            }
+            LexResult::EOF => break,
+        }
+    }
+
+    let mut response = build_parse_response(yalp, token_kinds, mode)?;
+
+    // Localizar el token que causó el error sintáctico
+    if !response.accepted {
+        let consumed = response.trace.iter()
+            .filter(|s| {
+                let a = s.get("action").and_then(|v| v.as_str()).unwrap_or("");
+                a == "match" || a.starts_with('s')
+            })
+            .count();
+        let loc_entry = token_map.get(consumed)
+            .or_else(|| token_map.last());
+        if let Some((kind, lexeme, line, col)) = loc_entry {
+            lex_problems.push(json!({
+                "level": "err",
+                "code":  "P001",
+                "msg":   format!("Error sintáctico · token '{}' (\"{}\")", kind, lexeme),
+                "loc":   format!("línea {} · col {}", line, col),
+                "line":  line,
+                "col":   col
+            }));
+        }
+    }
+
+    let token_map_json: Vec<Value> = token_map.iter()
+        .map(|(k, lx, l, c)| json!({"kind": k, "lexeme": lx, "line": l, "col": c}))
+        .collect();
+
+    response.problems  = lex_problems;
+    response.token_map = token_map_json;
+    Ok(response)
+}
+
+fn build_lexer_table_from_str(yal_src: &str) -> Result<TransitionTable, String> {
+    let spec     = parse_yalex(yal_src).map_err(|e| format!("Error al parsear .yal: {}", e))?;
+    let expanded = expand_definitions(&spec);
+
+    let mut id_counter = 0usize;
+    let mut nfas = Vec::new();
+    for rule in &expanded {
+        let ast = parse_regex(&rule.pattern_expanded)
+            .map_err(|e| format!("Error en regex '{}': {}", rule.pattern_expanded, e))?;
+        let mut nfa = automata::nfa::build_nfa_from_ast(&ast, &mut id_counter);
+        if let Some(fs) = nfa.states.get_mut(&nfa.end_state) {
+            fs.accept_action = Some((rule.priority, rule.action_code.clone()));
+        }
+        nfas.push(nfa);
+    }
+    let master  = automata::nfa::combine_nfas(nfas, &mut id_counter);
+    let dfa     = automata::subset::build_dfa_from_nfa(&master);
+    let min_dfa = automata::minimize::minimize_dfa(&dfa);
+    Ok(table::transition_table::build(&min_dfa))
+}
+
+fn lex_normalize_kind(kind: &str) -> String { kind.to_uppercase() }
+
+fn lex_is_ignored(kind: &str, grammar: &Grammar) -> bool {
+    let lower = kind.to_lowercase();
+    lower.contains("whitespace") || lower.contains("comment") || lower == "ignored"
+        || grammar.ignores.contains(kind)
 }
 
 // ─── LR parse trace ───────────────────────────────────────────────────────────
@@ -602,6 +728,7 @@ async fn main() {
         .route("/health",              get(health))
         .route("/api/parser/compile",  post(compile_parser))
         .route("/api/parser/parse",    post(parse_tokens))
+        .route("/api/pipeline",        post(run_pipeline))
         .route("/api/workspace",       get(workspace_list))
         .route("/api/workspace/:name", get(workspace_read).put(workspace_write))
         .layer(cors);
