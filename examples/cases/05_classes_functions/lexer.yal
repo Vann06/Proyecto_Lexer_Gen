@@ -1,0 +1,35 @@
+(* Lexer para Grammar 5 *)
+let delim   = [' ''\t''\n''\r']
+let ws      = delim+
+let letter  = ['a'-'z''A'-'Z''_']
+let digit   = ['0'-'9']
+let id      = letter(letter|digit)*
+let number  = digit+('.'digit+)?
+let strchar = [^'"']
+let str     = '"'strchar*'"'
+rule tokens =
+    ws        { return WHITESPACE }
+  | "class"   { return CLASS }
+  | "def"     { return DEF }
+  | "return"  { return RETURN }
+  | id        { return ID }
+  | number    { return NUMBER }
+  | str       { return STRING }
+  | '+'       { return PLUS }
+  | '-'       { return MINUS }
+  | '*'       { return TIMES }
+  | '/'       { return DIV }
+  | "=="      { return EQ }
+  | "!="      { return NEQ }
+  | '<'       { return LT }
+  | '>'       { return GT }
+  | '='       { return ASSIGN }
+  | '('       { return LPAREN }
+  | ')'       { return RPAREN }
+  | '{'       { return LBRACE }
+  | '}'       { return RBRACE }
+  | '['       { return LBRACKET }
+  | ']'       { return RBRACKET }
+  | ','       { return COMMA }
+  | ';'       { return SEMICOLON }
+  | ':'       { return COLON }

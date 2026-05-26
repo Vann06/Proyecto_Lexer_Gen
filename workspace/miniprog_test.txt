@@ -11,7 +11,7 @@ fun gcd(int a, int b) : int {
         b = a % b;
         a = temp;
     }
-    return a;
+    reutrn a;
 }
 
 # Minimo Comun Multiplo derivado del GCD

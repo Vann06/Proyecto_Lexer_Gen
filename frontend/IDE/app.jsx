@@ -118,12 +118,29 @@ function Editor({ file, onEdit, contentVersion }){
     setHighlighted(tokenize(f.rawContent, lang));
   }, [file, contentVersion]);
 
-  const errs  = new Set(D.PROBLEMS
-    .filter(p => p.level==="err"  && p.loc && p.loc.includes(f.name))
-    .map(p => parseInt(p.loc.split(":")[1])).filter(n => !isNaN(n)));
-  const warns = new Set(D.PROBLEMS
-    .filter(p => p.level==="warn" && p.loc && p.loc.includes(f.name))
-    .map(p => parseInt(p.loc.split(":")[1])).filter(n => !isNaN(n)));
+  const lineFromLoc = (loc) => {
+    if (!loc) return null;
+    const parts = loc.split(":");
+    if (parts.length < 2) return null;
+    const n = parseInt(parts[1], 10);
+    return Number.isFinite(n) ? n : null;
+  };
+  const collectLines = (level) => {
+    const lines = new Set();
+    for (const p of D.PROBLEMS) {
+      if (p.level !== level) continue;
+      let n = null;
+      if (p.loc && p.loc.includes(f.name)) {
+        n = lineFromLoc(p.loc);
+      } else if (file === "test" && p.line != null) {
+        n = p.line;
+      }
+      if (n != null && !Number.isNaN(n)) lines.add(n);
+    }
+    return lines;
+  };
+  const errs  = collectLines("err");
+  const warns = collectLines("warn");
 
   const handleChange = e => {
     const content = e.target.value;
@@ -246,11 +263,28 @@ function FirstFollow({ which }){
 }
 
 function StatesView({ active, onPick }){
+  const inboundGotos = (stateId) => {
+    const inbound = [];
+    for (const [from, row] of Object.entries(D.GOTO || {})) {
+      for (const [sym, to] of Object.entries(row || {})) {
+        if (Number(to) === stateId) inbound.push({ from: Number(from), sym });
+      }
+    }
+    inbound.sort((a,b)=> a.from - b.from || a.sym.localeCompare(b.sym));
+    return inbound;
+  };
   return (
     <div>
       <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>▍ COLECCIÓN CANÓNICA · LR(1) — {D.STATES.length} estados</div>
       {D.STATES.map(s=>{
         const gotos = Object.entries(D.GOTO[String(s.id)] || {});
+        const inbound = inboundGotos(s.id);
+        const inboundLabel = inbound.length
+          ? `GOTO(I${inbound[0].from}, ${inbound[0].sym}) → I${s.id}${inbound.length > 1 ? ` · +${inbound.length - 1}` : ""}`
+          : "Estado inicial";
+        const inboundTitle = inbound.length
+          ? inbound.map(g => `GOTO(I${g.from}, ${g.sym}) -> I${s.id}`).join("\n")
+          : "Estado inicial";
         return (
         <div key={s.id}
              className={"state " + (active===s.id?"active":"")}
@@ -258,7 +292,9 @@ function StatesView({ active, onPick }){
           <div className="head">
             <span style={{color:"var(--coral)"}}>■</span>
             <span>I{s.id}</span>
-            <span className="mute" style={{marginLeft:"auto", fontSize:15}}>{s.items.length} items · {gotos.length} transiciones</span>
+            <span className="mute" style={{marginLeft:"auto", fontSize:13}} title={inboundTitle}>
+              {inboundLabel}
+            </span>
           </div>
 
           <div className="items">
@@ -942,7 +978,7 @@ function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActive
       <div className="panel-title">
         <span className="swatch"/>RESULTS · ANALYZER
         <button className="results-toggle" onClick={onToggleSize} title="Cambiar tamaño del panel">
-          {resultsSize==="normal"?"⟩⟩ AMPLIAR": resultsSize==="wide"?"◁ OCULTAR":"⟨⟨ NORMAL"}
+          {resultsSize==="normal"?"⟩⟩ AMPLIAR": resultsSize==="wide"?"◁ OCULTAR": resultsSize==="hidden"?"⟨⟨ NORMAL":"⟨⟨ NORMAL"}
         </button>
       </div>
       <div className="panel">
@@ -1055,7 +1091,10 @@ function App(){
   const [mode,           setMode]          = useState("lalr");
   const [renderKey,      bump]             = useState(0); // re-render global
   const [contentVersion, setContentVersion] = useState(0); // señal de carga externa
-  const [resultsSize,    setResultsSize]   = useState("normal"); // "normal"|"wide"|"hidden"
+  const [resultsSize,    setResultsSize]   = useState("normal"); // "normal"|"wide"|"hidden"|"custom"
+  const [layout,         setLayout]        = useState({ left: 240, right: 380, console: 240 });
+  const [drag,           setDrag]          = useState(null);
+  const appRef = useRef(null);
 
   const rerender = () => bump(n => n + 1);
 
@@ -1269,11 +1308,61 @@ function App(){
     }
   };
 
-  const RESULTS_COLS = { normal:"240px 1fr 380px", wide:"240px 1fr 660px", hidden:"240px 1fr 30px" };
-  const cycleResults = () => setResultsSize(s => s==="normal"?"wide": s==="wide"?"hidden":"normal");
+  const RESULTS_WIDTHS = { normal: 380, wide: 660, hidden: 32 };
+  const cycleResults = () => setResultsSize(s => s==="normal"?"wide": s==="wide"?"hidden": s==="hidden"?"normal":"normal");
+
+  useEffect(() => {
+    if (resultsSize === "custom") return;
+    setLayout(l => ({ ...l, right: RESULTS_WIDTHS[resultsSize] }));
+  }, [resultsSize]);
+
+  useEffect(() => {
+    if (!drag) return;
+    const handleMove = (e) => {
+      const el = appRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const clamp = (val, min, max) => Math.min(max, Math.max(min, val));
+      const minLeft = 160;
+      const maxLeft = Math.max(minLeft, rect.width - 360);
+      const minRight = 220;
+      const maxRight = Math.max(minRight, rect.width - 320);
+      const minConsole = 160;
+      const maxConsole = Math.max(minConsole, rect.height - 64 - 6 - 28 - 120);
+
+      if (drag.kind === "left") {
+        const next = clamp(e.clientX - rect.left, minLeft, maxLeft);
+        setLayout(l => ({ ...l, left: next }));
+      }
+      if (drag.kind === "right") {
+        const next = clamp(rect.right - e.clientX, minRight, maxRight);
+        setResultsSize("custom");
+        setLayout(l => ({ ...l, right: next }));
+      }
+      if (drag.kind === "console") {
+        const next = clamp(rect.bottom - 28 - e.clientY, minConsole, maxConsole);
+        setLayout(l => ({ ...l, console: next }));
+      }
+    };
+    const handleUp = () => setDrag(null);
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+  }, [drag]);
 
   return (
-    <div id="app" style={{gridTemplateColumns: RESULTS_COLS[resultsSize]}}>
+    <div
+      id="app"
+      ref={appRef}
+      style={{
+        "--col-left": `${layout.left}px`,
+        "--col-right": `${layout.right}px`,
+        "--row-console": `${layout.console}px`,
+      }}
+    >
       <Header activeFile={activeFile} setFile={setFile} onRun={handleRun} onSave={handleSave}
               loading={loading} mode={mode} setMode={setMode}/>
 
@@ -1284,9 +1373,13 @@ function App(){
         <FileTree active={activeFile} onPick={setFile} onLoadFile={handleLoadFile}/>
       </div>
 
+      <div className="grid-handle v left" onMouseDown={() => setDrag({ kind: "left" })} />
+
       <div id="editor-wrap" data-screen-label="editor">
         <Editor file={activeFile} onEdit={handleEdit} contentVersion={contentVersion}/>
       </div>
+
+      <div className="grid-handle v right" onMouseDown={() => setDrag({ kind: "right" })} />
 
       <div id={"results"} className={resultsSize==="hidden"?"r-hidden":""} data-screen-label="results">
         {/* Strip vertical visible cuando está oculto */}
@@ -1302,6 +1395,8 @@ function App(){
           onToggleSize={cycleResults}
           resultsSize={resultsSize}/>
       </div>
+
+      <div className="grid-handle h" onMouseDown={() => setDrag({ kind: "console" })} />
 
       <div id="console-area" data-screen-label="console">
         <ParseConsole stepIdx={stepIdx} setStep={setStep} onParse={handleParse} mode={mode}/>

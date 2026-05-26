@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_assignments)]
 // Pipeline end-to-end: archivo fuente → lexer → parser → árbol de derivación.
 //
 // Uso:

@@ -45,6 +45,47 @@ impl<'a> Simulator<'a> {
             return LexResult::EOF;
         }
 
+        // Skip isolated whitespace-like characters that the DFA doesn't accept
+        // (helps with inputs that have CR/LF or stray spaces as delimiters).
+        loop {
+            if self.pos >= self.input.len() {
+                return LexResult::EOF;
+            }
+            let c0 = self.input[self.pos];
+            // Handle non-ascii whitespace (e.g., NBSP) by skipping it if it's whitespace
+            if !c0.is_ascii() && c0.is_whitespace() {
+                if c0 == '\n' {
+                    self.line += 1;
+                    self.col = 1;
+                } else {
+                    self.col += 1;
+                }
+                self.pos += 1;
+                continue;
+            }
+
+            // If ASCII whitespace and DFA has no transition from start state on it,
+            // skip it as a delimiter. If DFA accepts it, let the normal algorithm
+            // consume it so actions like returning WHITESPACE still work.
+            if c0.is_whitespace() {
+                let start_state = self.table.start as usize;
+                let nxt = self.table.next(start_state, c0);
+                if nxt == DEAD {
+                    if c0 == '\n' {
+                        self.pos += 1;
+                        self.line += 1;
+                        self.col = 1;
+                    } else {
+                        self.pos += 1;
+                        self.col += 1;
+                    }
+                    continue;
+                }
+            }
+
+            break;
+        }
+
         let mut state = self.table.start as i32;
         let start_pos = self.pos;
         let start_line = self.line;
@@ -81,27 +122,48 @@ impl<'a> Simulator<'a> {
             self.pos = accept_pos;
             let lexeme: String = self.input[start_pos..accept_pos].iter().collect();
             let act = last_accept_token.unwrap_or_default();
-            let mut kind_name = "Unknown".to_string();
-            
             let clean_act = act.trim();
-            if clean_act.is_empty() {
+            let kind_name = if clean_act.is_empty() {
                 // Reglas con acciones vacías normalmente ignoran el token (ej. ws {})
-                kind_name = "Ignored".to_string();
+                "Ignored".to_string()
+            } else if clean_act.starts_with("return") {
+                // Manejar acciones del estilo `return NUM` o `return Token::NUM`
+                let tail = clean_act.trim_start_matches("return").trim();
+                if let Some(idx) = tail.find("Token::") {
+                    let tail = &tail[idx + 7..];
+                    let end = tail
+                        .find(|c: char| !c.is_alphanumeric() && c != '_')
+                        .unwrap_or(tail.len());
+                    tail[..end].to_string()
+                } else if tail.starts_with('"') {
+                    if let Some(second_quote) = tail[1..].find('"') {
+                        tail[1..1 + second_quote].to_string()
+                    } else {
+                        tail.to_string()
+                    }
+                } else {
+                    let end = tail
+                        .find(|c: char| !c.is_alphanumeric() && c != '_')
+                        .unwrap_or(tail.len());
+                    tail[..end].to_string()
+                }
             } else if let Some(idx) = act.find("Token::") {
                 let tail = &act[idx + 7..];
-                let end = tail.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(tail.len());
-                kind_name = tail[..end].to_string();
+                let end = tail
+                    .find(|c: char| !c.is_alphanumeric() && c != '_')
+                    .unwrap_or(tail.len());
+                tail[..end].to_string()
             } else if act.contains("None") {
-                kind_name = "Ignored".to_string();
+                "Ignored".to_string()
             } else if let Some(first_quote) = act.find('"') {
                 if let Some(second_quote) = act[first_quote + 1..].find('"') {
-                    kind_name = act[first_quote + 1 .. first_quote + 1 + second_quote].to_string();
+                    act[first_quote + 1..first_quote + 1 + second_quote].to_string()
                 } else {
-                    kind_name = clean_act.to_string();
+                    clean_act.to_string()
                 }
             } else {
-                kind_name = clean_act.to_string();
-            }
+                clean_act.to_string()
+            };
 
             LexResult::Token(Token {
                 kind: kind_name,

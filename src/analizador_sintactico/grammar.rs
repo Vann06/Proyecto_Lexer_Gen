@@ -104,6 +104,15 @@ impl Grammar {
             return Err("El archivo debe contener el separador '%%'".to_string());
         }
 
+        let mut separator_line = None;
+        for (idx, line) in content.lines().enumerate() {
+            if line.contains("%%") {
+                separator_line = Some(idx + 1);
+                break;
+            }
+        }
+        let prod_start_line = separator_line.map(|n| n + 1).unwrap_or(1);
+
         let mut grammar = Grammar {
             tokens: HashSet::new(),
             ignores: HashSet::new(),
@@ -114,7 +123,7 @@ impl Grammar {
         };
 
         grammar.parse_tokens_section(sections[0]);
-        grammar.parse_productions_section(sections[1]);
+        grammar.parse_productions_section(sections[1], prod_start_line)?;
 
         Ok(grammar)
     }
@@ -639,38 +648,76 @@ impl Grammar {
         }
     }
 
-    fn parse_productions_section(&mut self, section: &str) {
-        let prod_blocks = section.split(';');
+    fn parse_productions_section(&mut self, section: &str, start_line: usize) -> Result<(), String> {
+        let mut buf = String::new();
+        let mut line = start_line;
+        let mut block_start_line = start_line;
 
-        for block in prod_blocks {
-            let block = block.trim();
-            if block.is_empty() { continue; }
-
-            let parts: Vec<&str> = block.split(':').collect();
-            if parts.len() != 2 { continue; }
-
-            let head = parts[0].trim().to_string();
-            
-            if self.start_symbol.is_empty() {
-                self.start_symbol = head.clone();
+        for ch in section.chars() {
+            if buf.trim().is_empty() && !ch.is_whitespace() {
+                block_start_line = line;
             }
-
-            let mut bodies = Vec::new();
-            let rules = parts[1].split('|');
-
-            for rule in rules {
-                let mut symbol_list = Vec::new();
-                for sym_str in rule.split_whitespace() {
-                    if self.tokens.contains(sym_str) {
-                        symbol_list.push(Symbol::Terminal(sym_str.to_string()));
-                    } else {
-                        symbol_list.push(Symbol::NonTerminal(sym_str.to_string()));
-                    }
+            if ch == '\n' {
+                line += 1;
+            }
+            if ch == ';' {
+                let block = buf.trim();
+                if !block.is_empty() {
+                    self.parse_production_block(block, block_start_line)?;
                 }
-                bodies.push(symbol_list);
+                buf.clear();
+            } else {
+                buf.push(ch);
             }
-
-            self.productions.push(Production { head, bodies });
         }
+
+        if !buf.trim().is_empty() {
+            return Err(format!(
+                "Error en línea {}: falta ';' al final de producción.",
+                block_start_line
+            ));
+        }
+        Ok(())
+    }
+
+    fn parse_production_block(&mut self, block: &str, line: usize) -> Result<(), String> {
+        let parts: Vec<&str> = block.split(':').collect();
+        if parts.len() != 2 {
+            return Err(format!(
+                "Error en línea {}: producción inválida, falta ':'.",
+                line
+            ));
+        }
+
+        let head = parts[0].trim();
+        if head.is_empty() {
+            return Err(format!(
+                "Error en línea {}: cabeza de producción vacía.",
+                line
+            ));
+        }
+        let head = head.to_string();
+
+        if self.start_symbol.is_empty() {
+            self.start_symbol = head.clone();
+        }
+
+        let mut bodies = Vec::new();
+        let rules = parts[1].split('|');
+
+        for rule in rules {
+            let mut symbol_list = Vec::new();
+            for sym_str in rule.split_whitespace() {
+                if self.tokens.contains(sym_str) {
+                    symbol_list.push(Symbol::Terminal(sym_str.to_string()));
+                } else {
+                    symbol_list.push(Symbol::NonTerminal(sym_str.to_string()));
+                }
+            }
+            bodies.push(symbol_list);
+        }
+
+        self.productions.push(Production { head, bodies });
+        Ok(())
     }
 }

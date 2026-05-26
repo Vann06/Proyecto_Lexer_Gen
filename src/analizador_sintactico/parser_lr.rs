@@ -16,6 +16,13 @@ pub enum ParseStep {
     Accept,
 }
 
+#[derive(Debug, Clone)]
+pub struct ParseErrorDetail {
+    pub pos: usize,
+    pub token: String,
+    pub msg: String,
+}
+
 pub struct LRParser<'a> {
     pub table: &'a LRTable,
 }
@@ -162,9 +169,18 @@ impl<'a> LRParser<'a> {
         tokens: Vec<ParseToken>,
         sync: &[&str],
     ) -> (Option<ParseNode>, Vec<String>) {
-        let mut errors: Vec<String> = Vec::new();
+        let (tree, errors) = self.parse_recovering_with_pos(tokens, sync);
+        (tree, errors.into_iter().map(|e| e.msg).collect())
+    }
+
+    pub fn parse_recovering_with_pos(
+        &self,
+        tokens: Vec<ParseToken>,
+        sync: &[&str],
+    ) -> (Option<ParseNode>, Vec<ParseErrorDetail>) {
+        let mut errors: Vec<ParseErrorDetail> = Vec::new();
         let mut state_stack: Vec<usize> = vec![self.table.start_state];
-        let mut node_stack:  Vec<ParseNode> = Vec::new();
+        let mut node_stack: Vec<ParseNode> = Vec::new();
 
         let mut input = tokens;
         input.push(ParseToken { kind: "$".to_string(), lexeme: String::new() });
@@ -191,9 +207,13 @@ impl<'a> LRParser<'a> {
                     let next_state = match self.table.goto.get(&(top, head.clone())).copied() {
                         Some(ns) => ns,
                         None => {
-                            errors.push(format!(
-                                "Error interno: GOTO[I{}, {}] no definido.", top, head
-                            ));
+                            errors.push(ParseErrorDetail {
+                                pos: ip,
+                                token: a.clone(),
+                                msg: format!(
+                                    "Error interno: GOTO[I{}, {}] no definido.", top, head
+                                ),
+                            });
                             return (None, errors);
                         }
                     };
@@ -208,7 +228,11 @@ impl<'a> LRParser<'a> {
                 }
                 None => {
                     // ── Modo pánico ──────────────────────────────────────────
-                    errors.push(format_error(s, &a, &self.table));
+                    errors.push(ParseErrorDetail {
+                        pos: ip,
+                        token: a.clone(),
+                        msg: format_error(s, &a, &self.table),
+                    });
 
                     // 1. Avanzar el input hasta encontrar un símbolo de sincronización
                     while ip < input.len()

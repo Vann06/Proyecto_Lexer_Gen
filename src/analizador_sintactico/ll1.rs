@@ -270,6 +270,7 @@ pub struct LL1TraceStep {
     pub remaining: Vec<String>,
     pub action:    String,
     pub desc:      String,
+    pub pos:       usize,
 }
 
 impl LL1Parser {
@@ -295,6 +296,7 @@ impl LL1Parser {
                     stack: stack_snap, remaining,
                     action: "acc".to_string(),
                     desc:   "Cadena aceptada".to_string(),
+                    pos:    ip,
                 });
                 break;
             }
@@ -324,12 +326,14 @@ impl LL1Parser {
                             stack: stack_snap, remaining,
                             action: "predict".to_string(),
                             desc,
+                            pos: ip,
                         });
                     } else {
                         trace.push(LL1TraceStep {
                             stack: stack_snap, remaining,
                             action: "error".to_string(),
                             desc: format!("Error: no hay regla para [{}, {}]", top, current),
+                            pos: ip,
                         });
                         break;
                     }
@@ -343,12 +347,14 @@ impl LL1Parser {
                         stack: stack_snap, remaining,
                         action: "match".to_string(),
                         desc,
+                        pos: ip - 1,
                     });
                 } else {
                     trace.push(LL1TraceStep {
                         stack: stack_snap, remaining,
                         action: "error".to_string(),
                         desc: format!("Error: se esperaba '{}', se encontró '{}'", top, current),
+                        pos: ip,
                     });
                     break;
                 }

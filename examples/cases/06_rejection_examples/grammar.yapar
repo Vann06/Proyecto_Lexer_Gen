@@ -1,0 +1,8 @@
+/* Grammar — Arithmetic with IDs (same as case 01) */
+%token ID PLUS TIMES LPAREN RPAREN WHITESPACE
+%start E
+%%
+E : E PLUS T | T ;
+T : T TIMES F | F ;
+F : LPAREN E RPAREN | ID ;
+%%

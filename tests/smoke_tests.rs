@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_assignments)]
 // Integración LALR(1) — usa #[path] ya que no hay lib.rs
 #[path = "../src/analizador_sintactico/mod.rs"]
 mod analizador_sintactico;

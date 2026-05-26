@@ -89,13 +89,14 @@
   /* ---------- layout ---------- */
   #app{
     display:grid; gap:10px; padding:10px; height:100vh;
-    grid-template-rows: 64px 1fr 240px 28px;
-    grid-template-columns: 240px 1fr 380px;
+    grid-template-rows: 64px 1fr var(--row-handle, 6px) var(--row-console, 240px) 28px;
+    grid-template-columns: var(--col-left, 240px) var(--col-handle, 6px) 1fr var(--col-handle, 6px) var(--col-right, 380px);
     grid-template-areas:
-      "header header header"
-      "files  editor results"
-      "console console console"
-      "status status status";
+      "header header header header header"
+      "files  vhandle-left editor vhandle-right results"
+      "hhandle hhandle hhandle hhandle hhandle"
+      "console console console console console"
+      "status status status status status";
     transition: grid-template-columns 0.22s ease;
   }
 
@@ -192,6 +193,8 @@
 
   /* ---------- files sidebar ---------- */
   #files{ grid-area:files; overflow:auto;}
+  #editor-wrap{ grid-area: editor; min-width:0; min-height:0; }
+  #console-area{ grid-area: console; display:flex; flex-direction:column; min-height:0;}
   .filetree{ padding: 12px 12px 18px; }
   .filetree .h{ font-family:"Press Start 2P","VT323"; font-size:10px; color:var(--pink); margin: 8px 4px 12px; letter-spacing:1px;}
   .tree-row{
@@ -425,7 +428,6 @@
   .gen .kw{ color:var(--kw);} .gen .str{color:var(--str);} .gen .com{color:var(--com);} .gen .fn{color:var(--fn);}
 
   /* ---------- parse console ---------- */
-  #console-area{ grid-area: console; display:flex; flex-direction:column; min-height:0;}
   #console-area .panel{ flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden;}
   .console-top{
     display:flex; align-items:center; gap:10px;
@@ -544,6 +546,15 @@
   .prob .msg{ color: var(--tx); }
   .prob .loc{ color: var(--tx-mute); font-size:15px; }
   .prob-pos{ background: rgba(34,211,238,.08); border:1px solid var(--cyan-d); color: var(--cyan); border-radius:3px; padding:1px 6px; font-size:14px; }
+
+  /* ---------- resizable handles ---------- */
+  .grid-handle{ background: var(--line); user-select:none; }
+  .grid-handle:hover{ background: var(--cyan-d); }
+  .grid-handle.v{ width: var(--col-handle, 6px); cursor: col-resize; }
+  .grid-handle.h{ height: var(--row-handle, 6px); cursor: row-resize; }
+  .grid-handle.v.left{ grid-area: vhandle-left; }
+  .grid-handle.v.right{ grid-area: vhandle-right; }
+  .grid-handle.h{ grid-area: hhandle; }
 </style>
 </head>
 <body>

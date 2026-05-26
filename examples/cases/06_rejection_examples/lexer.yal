@@ -1,6 +1,4 @@
-(* Lexer para Gramática No. 1 - Expresiones aritméticas simples para variables *)
-
-{header}
+(* Lexer for rejection test cases — same as case 01 *)
 
 let delim = [' ''\t''\n']
 let ws = delim+
@@ -10,11 +8,8 @@ let id = letter(letter|digit)*
 
 rule tokens =
     ws        { return WHITESPACE }
-  | id        { return ID }               (* Cambie por una acción válida, que devuelva el token *)
+  | id        { return ID }
   | '+'       { return PLUS }
-  | '-'       { return MINUS }
   | '*'       { return TIMES }
   | '('       { return LPAREN }
   | ')'       { return RPAREN }
-
-{trailer}

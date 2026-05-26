@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_assignments)]
 // src/bin/test_lalr.rs
 #[path = "../analizador_sintactico/mod.rs"]
 mod analizador_sintactico;

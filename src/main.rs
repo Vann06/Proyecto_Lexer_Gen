@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_assignments)]
 
 // Punto de entrada del generador de lexers.
 //

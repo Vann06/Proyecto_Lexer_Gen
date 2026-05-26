@@ -1,0 +1,18 @@
+x + y
+myVar - 3
+result * 100
+total / count
+(a + b) * (c - d)
+x + 3.5
+value - 2.0E1
+num * 1.5E+2
+res / 4.0E-3
+alpha + beta - gamma
+x * (y + z) - w
+(myVar + 3.14) * (result - 2.0E2)
+a + b - c * d / e
+(x1 + x2) * (y1 - y2)
+n + 100.5E+1
+var1 / (var2 + var3)
+(a - b) / (c + d)
+x + y - z * w / v
