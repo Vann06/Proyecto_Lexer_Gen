@@ -1,12 +1,4 @@
 // Árbol de derivación compartido entre LL(1) y LR (LALR / SLR / LR(0) / LR(1)).
-//
-// El mismo tipo `ParseNode` lo construyen ambos algoritmos:
-//   - LL(1) lo construye top-down conforme expande producciones.
-//   - LR(k) lo construye bottom-up: shift = hoja; reduce = nodo interno con los
-//     últimos |body| nodos como hijos.
-//
-// `ParseToken` es la entrada universal para los parsers (kind = lo que decide la
-// tabla; lexeme = el texto real que aparece en la hoja del árbol).
 
 use std::fmt::Write;
 

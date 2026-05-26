@@ -378,8 +378,8 @@ function ActionGotoTable({ stepIdx, mode }){
 
   const cur = D.TRACE[stepIdx] || D.TRACE[0];
   if (!cur) return <div className="dim" style={{padding:16}}>Sin traza — presiona ▶ PARSEAR primero.</div>;
-  const curState = cur.stack[cur.stack.length-1];
-  const curTok   = cur.remaining[0];
+  const curState = (cur && Array.isArray(cur.stack) && cur.stack.length) ? cur.stack[cur.stack.length-1] : "";
+  const curTok   = (cur && Array.isArray(cur.remaining) && cur.remaining.length) ? cur.remaining[0] : "";
   return (
     <div>
       <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
@@ -728,7 +728,11 @@ function ParseTreeView({ renderKey }) {
 /* ============================== Console / Trace ============================== */
 
 function StackView({ step }){
-  const stack = step.stack;
+  const stack = (step && Array.isArray(step.stack)) ? step.stack : [];
+  const remaining = (step && Array.isArray(step.remaining)) ? step.remaining : [];
+  const action = (step && typeof step.action === "string") ? step.action : "";
+  const desc = (step && typeof step.desc === "string") ? step.desc : "";
+
   return (
     <div className="sv">
       <div className="row">
@@ -743,7 +747,7 @@ function StackView({ step }){
       <div className="row">
         <div className="lbl">INPUT</div>
         <div className="cells">
-          {step.remaining.map((s,i)=>
+          {remaining.map((s,i)=>
             <div key={i} className={"cell " + (i===0?"next":"")}>{s}</div>
           )}
         </div>
@@ -752,14 +756,14 @@ function StackView({ step }){
         <div className="lbl">ACTION</div>
         <div className="cells">
           <div className="cell" style={{
-            color: step.action==="acc"?"var(--pink)":
-                   (step.action==="match"||step.action.startsWith("s"))?"var(--green)":
-                   (step.action==="predict"||step.action.startsWith("r"))?"var(--cyan)":"var(--red)",
+            color: action==="acc"?"var(--pink)":
+                   (action==="match"||action.startsWith("s"))?"var(--green)":
+                   (action==="predict"||action.startsWith("r"))?"var(--cyan)":"var(--red)",
             borderColor:"currentColor",
             padding:"2px 14px"
-          }}>{step.action}</div>
+          }}>{action}</div>
           <div className="cell" style={{flex:1, color:"var(--tx-dim)", textAlign:"left", borderColor:"var(--line-soft)"}}>
-            {step.desc}
+            {desc}
           </div>
         </div>
       </div>
@@ -886,18 +890,18 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
               <h4 style={{margin:'0 0 8px 0'}}>▍ TRAZA DE EJECUCIÓN</h4>
               <div style={{display:'flex', flexDirection:'column', gap:0}}>
                 {D.TRACE.map((s,i)=>{
-                  const a = s.action;
+                  const a = (s && typeof s.action === "string") ? s.action : "";
                   const cls = a==="acc"?"a-ac":a.startsWith("s")?"a-sh":a.startsWith("r")?"a-re":"a-er";
                   return (
                     <div key={i} className={"step " + (i===stepIdx?"cur":"")} onClick={()=>setStep(i)} style={{cursor:'pointer', padding:'4px 0'}}>
                       <div className="n" style={{display:'inline-block', minWidth:'30px'}}>{String(i+1).padStart(2,"0")}</div>
                       <div style={{display:'inline'}}>
-                        <span className="dim">I{s.stack[s.stack.length-1]}</span>{' '}
+                        <span className="dim">I{(s && s.stack && s.stack.length) ? s.stack[s.stack.length-1] : ""}</span>{' '}
                         <span className="dim">·</span>{' '}
-                        <span style={{color:"var(--coral)"}}>'{s.remaining[0]}'</span>{' '}
+                        <span style={{color:"var(--coral)"}}>'{(s && s.remaining && s.remaining[0]) ? s.remaining[0] : ""}'</span>{' '}
                         <span className="dim">→</span>{' '}
                         <span className={cls}>{a}</span>{' '}
-                        <span className="dim">· {s.desc.split(" → ").slice(-1)[0]}</span>
+                        <span className="dim">· {(s && s.desc) ? s.desc.split(" → ").slice(-1)[0] : ""}</span>
                       </div>
                     </div>
                   );
@@ -924,18 +928,18 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
           <div className="trace-col left">
             <h4>▍ TRAZA DE EJECUCIÓN</h4>
             {D.TRACE.map((s,i)=>{
-              const a = s.action;
+              const a = (s && typeof s.action === "string") ? s.action : "";
               const cls = a==="acc"?"a-ac":a.startsWith("s")?"a-sh":a.startsWith("r")?"a-re":"a-er";
               return (
                 <div key={i} className={"step " + (i===stepIdx?"cur":"")} onClick={()=>setStep(i)}>
                   <div className="n">{String(i+1).padStart(2,"0")}</div>
                   <div>
-                    <span className="dim">I{s.stack[s.stack.length-1]}</span>{' '}
+                    <span className="dim">I{(s && s.stack && s.stack.length) ? s.stack[s.stack.length-1] : ""}</span>{' '}
                     <span className="dim">·</span>{' '}
-                    <span style={{color:"var(--coral)"}}>'{s.remaining[0]}'</span>{' '}
+                    <span style={{color:"var(--coral)"}}>'{(s && s.remaining && s.remaining[0]) ? s.remaining[0] : ""}'</span>{' '}
                     <span className="dim">→</span>{' '}
                     <span className={cls}>{a}</span>{' '}
-                    <span className="dim">· {s.desc.split(" → ").slice(-1)[0]}</span>
+                    <span className="dim">· {(s && s.desc) ? s.desc.split(" → ").slice(-1)[0] : ""}</span>
                   </div>
                 </div>
               );
@@ -1129,7 +1133,7 @@ function App(){
   useEffect(()=>{
     const cur = D.TRACE[stepIdx];
     if (!cur) return;
-    const top = cur.stack[cur.stack.length - 1];
+    const top = (cur && Array.isArray(cur.stack) && cur.stack.length) ? cur.stack[cur.stack.length - 1] : null;
     if (typeof top === "number") setState(top);
   }, [stepIdx]);
 
@@ -1284,7 +1288,7 @@ function App(){
         data = await res.json();
         syncTokens(inputStr);
       }
-      D.TRACE = data.trace;
+      D.TRACE = Array.isArray(data.trace) ? data.trace : [];
       const treeRoot = buildParseTree(D.TRACE, mode);
       D.PARSE_TREE_DOT = treeRoot ? buildTreeDot(treeRoot) : "";
       // Mostrar problemas léxicos/sintácticos con posición si los hay

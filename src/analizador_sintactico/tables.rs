@@ -75,13 +75,8 @@ pub struct LRTable {
 
 impl LRTable {
     /// Construye la tabla ACTION/GOTO a partir del autómata LALR.
-    /// Los conflictos se acumulan en `self.conflicts` sin abortar:
     ///   - Shift-Reduce: gana Shift (estilo yacc) o se resuelve por precedencia.
     ///   - Reduce-Reduce: gana la producción de menor índice en la gramática.
-    ///
-    /// FUTURO: añadir `build_from_slr(lr0, grammar, follow_sets)` que use FOLLOW(A)
-    /// para los items completos en lugar de los lookaheads LALR. La tabla resultante
-    /// y el driver `LRParser` son los mismos.
     pub fn build_from_lalr(automaton: &LALRAutomaton, grammar: &Grammar) -> Self {
         let mut action: HashMap<(usize, String), Action> = HashMap::new();
         let mut goto: HashMap<(usize, String), usize> = HashMap::new();
@@ -136,10 +131,7 @@ impl LRTable {
     }
 
     /// Construye la tabla ACTION/GOTO a partir del autómata LR(0) + FOLLOW sets (SLR(1)).
-    ///
-    /// Diferencia vs LALR: los reduces usan FOLLOW(A) global en lugar de lookaheads
-    /// por ítem. Eso hace que SLR tenga más conflictos que LALR en gramáticas ambiguas
-    /// o con solapamiento entre FOLLOW sets. El driver LRParser no cambia.
+
     pub fn build_from_slr(automaton: &LR0Automaton, grammar: &Grammar, follow_sets: &FollowSets) -> Self {
         let mut action: HashMap<(usize, String), Action> = HashMap::new();
         let mut goto:   HashMap<(usize, String), usize>  = HashMap::new();

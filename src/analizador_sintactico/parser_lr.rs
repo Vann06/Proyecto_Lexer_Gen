@@ -1,10 +1,4 @@
 // Driver shift-reduce GENÉRICO para cualquier parser LR.
-//
-// Esta implementación es independiente del método de construcción de la tabla:
-// funciona idéntico para LALR(1) (actual), SLR(1), LR(0) y LR(1) canónico.
-// Lo único que cambia entre variantes es CÓMO se construye `LRTable`; el
-// algoritmo de parseo (shift / reduce / accept) es el mismo.
-
 use super::grammar::Symbol;
 use super::parse_tree::{ParseNode, ParseToken};
 use super::tables::{Action, LRTable};
@@ -152,18 +146,11 @@ impl<'a> LRParser<'a> {
         }
     }
 
-    /// Igual que parse_tree pero con recuperación de errores modo pánico.
-    ///
-    /// Cuando encuentra un token inesperado:
+  
     ///   1. Registra el error.
     ///   2. Descarta tokens del input hasta encontrar un símbolo de sincronización.
     ///   3. Desapila estados hasta encontrar uno que acepte ese símbolo.
     ///   4. Retoma el parseo desde ahí.
-    ///
-    /// `sync` — lista de token kinds que actúan como puntos de sincronización,
-    ///          típicamente delimitadores: ["SEMICOLON", "RBRACE", "RPAREN"].
-    ///
-    /// Retorna todos los errores encontrados + el árbol si logró completar el parseo.
     pub fn parse_recovering(
         &self,
         tokens: Vec<ParseToken>,
