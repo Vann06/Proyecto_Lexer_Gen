@@ -1,5 +1,6 @@
-// parseo de archivos .yalp y sus delimitadores /* %token %% // 
+// parseo de archivos .yalp y sus delimitadores /* %token %% //
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::fs;
 
 /// Asociatividad de un operador declarada con %left / %right / %nonassoc.
@@ -15,6 +16,48 @@ pub enum Associativity {
 pub enum Symbol {
     Terminal(String),    // Tokens que vienen del YALex (ej. TOKEN_1, WS)
     NonTerminal(String), // Otras producciones (ej. production1)
+}
+
+impl fmt::Display for Symbol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Symbol::Terminal(t) | Symbol::NonTerminal(t) => write!(f, "{}", t),
+        }
+    }
+}
+
+/// Convierte un cuerpo de producción (lista de símbolos) en una cadena legible,
+/// usando "ε" para el cuerpo vacío. Punto único de esta lógica — antes había una
+/// copia casi idéntica en tables.rs, api/mod.rs, y matches inline sueltos en
+/// parser_lr.rs, ll1.rs y los binarios test_lalr/test_ll1.
+pub fn body_to_string(body: &[Symbol]) -> String {
+    if body.is_empty() {
+        "ε".to_string()
+    } else {
+        body.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(" ")
+    }
+}
+
+/// Renderiza el cuerpo de un ítem LR con el punto en `dot_pos`, p. ej. "α • β".
+/// Punto único de esta lógica — antes se repetía casi idéntica en
+/// LR1Item::display (lr1.rs), format_lalr_item/format_lr0_item (api/mod.rs) y
+/// fmt_item_body (src/bin/test_lalr.rs), cada uno con su propio bucle de "•".
+pub fn dotted_body_to_string(body: &[Symbol], dot_pos: usize) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for (i, sym) in body.iter().enumerate() {
+        if i == dot_pos {
+            parts.push("•".to_string());
+        }
+        parts.push(sym.to_string());
+    }
+    if dot_pos == body.len() {
+        parts.push("•".to_string());
+    }
+    if parts.is_empty() {
+        "•".to_string()
+    } else {
+        parts.join(" ")
+    }
 }
 
 /// Representa una producción completa.
@@ -255,24 +298,6 @@ impl Grammar {
         }
     }
 
-    /// Convierte un símbolo en una cadena de texto.
-    fn symbol_to_string(symbol: &Symbol) -> String {
-        match symbol {
-            Symbol::Terminal(t) => t.clone(),
-            Symbol::NonTerminal(nt) => nt.clone(),
-        }
-    }
-    /// Convierte un cuerpo de producción (lista de símbolos) en una cadena legible.
-    fn body_to_string(body: &[Symbol]) -> String {
-        if body.is_empty() {
-            "ε".to_string()
-        } else {
-            body.iter()
-                .map(Self::symbol_to_string)
-                .collect::<Vec<_>>()
-                .join(" ")
-        }
-    }
     /// ## 1. Eliminación de recursión por la izquierda — DIRECTA e INDIRECTA
     /// ## 2. Factorización por la izquierda (Left Factoring)
     pub fn eliminate_ambiguity(&mut self) -> Result<(), String> {
@@ -565,7 +590,7 @@ impl Grammar {
                 transformation_log.push(format!(
                     "Factorización por la izquierda en '{}'. Prefijo común '{}' movido a auxiliar '{}'.",
                     prod.head,
-                    Self::body_to_string(&prefix),
+                    body_to_string(&prefix),
                     aux_head
                 ));
 

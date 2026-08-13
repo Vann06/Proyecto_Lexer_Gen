@@ -2,14 +2,14 @@
 
 use crate::analizador_sintactico::first::calculate_first;
 use crate::analizador_sintactico::follow::calculate_follow;
-use crate::analizador_sintactico::grammar::{Grammar, Symbol};
+use crate::analizador_sintactico::grammar::{body_to_string, Grammar};
 use crate::analizador_sintactico::lalr::{merge_by_core, LALRItem};
 use crate::analizador_sintactico::ll1::LL1Parser;
 use crate::analizador_sintactico::lr0::{LR0Automaton, LR0Item};
 use crate::analizador_sintactico::lr1::LR1Automaton;
 use crate::analizador_sintactico::parse_tree::ParseToken;
 use crate::analizador_sintactico::parser_lr::LRParser;
-use crate::analizador_sintactico::tables::{Action, Conflict, LRTable};
+use crate::analizador_sintactico::tables::{format_expected_tokens, Action, Conflict, LRTable};
 use crate::regex::parser::parse_regex;
 use crate::runtime::simulator::{LexResult, Simulator};
 use crate::spec::expand::expand_definitions;
@@ -352,7 +352,7 @@ fn build_compile_ll1(content: &str) -> Result<CompileResponse, String> {
                             if b.is_empty() {
                                 vec!["ε".to_string()]
                             } else {
-                                b.iter().map(|s| sym_name(s).to_string()).collect()
+                                b.iter().map(|s| s.to_string()).collect()
                             }
                         })
                         .collect();
@@ -377,7 +377,7 @@ fn build_compile_ll1(content: &str) -> Result<CompileResponse, String> {
                         if b.is_empty() {
                             vec!["ε".to_string()]
                         } else {
-                            b.iter().map(|s| sym_name(s).to_string()).collect()
+                            b.iter().map(|s| s.to_string()).collect()
                         }
                     })
                     .collect();
@@ -610,7 +610,7 @@ fn parse_with_trace_lr(table: &LRTable, tokens: Vec<String>) -> Vec<Value> {
                 (format!("s{}", t), format!("Shift '{}' → I{}", a, t))
             }
             Some(Action::Reduce { head, body }) => {
-                let body_str = sym_list_to_str(&body);
+                let body_str = body_to_string(&body);
                 for _ in 0..body.len() {
                     state_stack.pop();
                     symbol_stack.pop();
@@ -639,8 +639,7 @@ fn parse_with_trace_lr(table: &LRTable, tokens: Vec<String>) -> Vec<Value> {
             }
             None => {
                 done = true;
-                let expected = expected_tokens_for_state(table, s);
-                let expected_str = format_expected_tokens(&expected);
+                let expected_str = format_expected_tokens(&table.expected_tokens(s));
                 (
                     "error".to_string(),
                     format!(
@@ -659,29 +658,6 @@ fn parse_with_trace_lr(table: &LRTable, tokens: Vec<String>) -> Vec<Value> {
         }));
     }
     trace
-}
-
-fn expected_tokens_for_state(table: &LRTable, state: usize) -> Vec<String> {
-    let mut tokens: Vec<String> = table
-        .action
-        .keys()
-        .filter(|(st, _)| *st == state)
-        .map(|(_, t)| t.clone())
-        .collect();
-    tokens.sort();
-    tokens
-}
-
-fn format_expected_tokens(tokens: &[String]) -> String {
-    if tokens.is_empty() {
-        "ninguno (estado de error)".to_string()
-    } else {
-        tokens
-            .iter()
-            .map(|t| format!("'{}'", t))
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
 }
 
 fn lr0_to_dot(automaton: &LR0Automaton) -> String {
@@ -719,7 +695,7 @@ fn lr0_to_dot(automaton: &LR0Automaton) -> String {
     });
 
     for ((from, sym), to) in transitions {
-        let sym_label = sym_name(sym).replace('"', "\\\"");
+        let sym_label = sym.to_string().replace('"', "\\\"");
         dot.push_str(&format!("  {} -> {} [label=\"{}\"];\n", from, to, sym_label));
     }
 
@@ -760,7 +736,7 @@ fn format_lalr_item(it: &LALRItem) -> String {
         if i == it.dot_pos {
             parts.push("•".to_string());
         }
-        parts.push(sym_name(sym).to_string());
+        parts.push(sym.to_string());
     }
     if it.dot_pos == it.body.len() {
         parts.push("•".to_string());
@@ -776,7 +752,7 @@ fn format_lr0_item(it: &LR0Item) -> String {
         if i == it.dot_pos {
             parts.push("•".to_string());
         }
-        parts.push(sym_name(sym).to_string());
+        parts.push(sym.to_string());
     }
     if it.dot_pos == it.body.len() {
         parts.push("•".to_string());
@@ -789,7 +765,7 @@ fn action_table_to_map(table: &LRTable, _grammar: &Grammar) -> HashMap<String, H
     for ((state, terminal), action) in &table.action {
         let s = match action {
             Action::Shift(n) => format!("s{}", n),
-            Action::Reduce { head, body } => format!("r({} → {})", head, sym_list_to_str(body)),
+            Action::Reduce { head, body } => format!("r({} → {})", head, body_to_string(body)),
             Action::Accept => "acc".to_string(),
         };
         map.entry(state.to_string())
@@ -805,20 +781,6 @@ fn goto_table_to_map(table: &LRTable) -> HashMap<String, HashMap<String, usize>>
         map.entry(state.to_string()).or_default().insert(nt.clone(), *dest);
     }
     map
-}
-
-fn sym_name(s: &Symbol) -> &str {
-    match s {
-        Symbol::Terminal(t) | Symbol::NonTerminal(t) => t.as_str(),
-    }
-}
-
-fn sym_list_to_str(body: &[Symbol]) -> String {
-    if body.is_empty() {
-        "ε".to_string()
-    } else {
-        body.iter().map(sym_name).collect::<Vec<_>>().join(" ")
-    }
 }
 
 fn sets_to_sorted_vecs(
@@ -846,7 +808,7 @@ fn grammar_to_prods(grammar: &Grammar) -> Vec<ProdData> {
             let rhs = if body.is_empty() {
                 vec!["ε".to_string()]
             } else {
-                body.iter().map(|s| sym_name(s).to_string()).collect()
+                body.iter().map(|s| s.to_string()).collect()
             };
             prods.push(ProdData {
                 n,

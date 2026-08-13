@@ -1,7 +1,7 @@
 // src/bin/test_lalr.rs
 use lexer_generator::analizador_sintactico;
 
-use analizador_sintactico::grammar::{Grammar, Symbol};
+use analizador_sintactico::grammar::{body_to_string, Grammar, Symbol};
 use analizador_sintactico::first::calculate_first;
 use analizador_sintactico::lr1::LR1Automaton;
 use analizador_sintactico::lalr::merge_by_core;
@@ -28,14 +28,7 @@ fn main() {
     println!("\n--- PRODUCCIONES ---");
     for prod in &grammar.productions {
         for body in &prod.bodies {
-            let body_str: String = if body.is_empty() {
-                "ε".to_string()
-            } else {
-                body.iter().map(|s| match s {
-                    Symbol::Terminal(t) | Symbol::NonTerminal(t) => t.as_str(),
-                }).collect::<Vec<_>>().join(" ")
-            };
-            println!("  {} → {}", prod.head, body_str);
+            println!("  {} → {}", prod.head, body_to_string(body));
         }
     }
 
@@ -143,8 +136,7 @@ fn main() {
 
 fn print_lr1_state(state: &analizador_sintactico::lr1::LR1State, start_head: &str) {
     if let Some((from, sym)) = &state.origin {
-        let sym_str = match sym { Symbol::Terminal(t) | Symbol::NonTerminal(t) => t };
-        println!("Estado I{}: Goto(I{}, {})", state.id, from, sym_str);
+        println!("Estado I{}: Goto(I{}, {})", state.id, from, sym);
     } else {
         println!("Estado I0: (inicial)");
     }
@@ -157,15 +149,14 @@ fn print_lr1_state(state: &analizador_sintactico::lr1::LR1State, start_head: &st
     });
 
     for item in sorted {
-        println!("    [{}, {}]", fmt_item_body(&item.head, &item.body, item.dot_pos), item.lookahead);
+        println!("    {}", item.display());
     }
     println!();
 }
 
 fn print_lalr_state(state: &analizador_sintactico::lalr::LALRState, start_head: &str) {
     if let Some((from, sym)) = &state.origin {
-        let sym_str = match sym { Symbol::Terminal(t) | Symbol::NonTerminal(t) => t };
-        println!("Estado I{}: Goto(I{}, {})", state.id, from, sym_str);
+        println!("Estado I{}: Goto(I{}, {})", state.id, from, sym);
     } else {
         println!("Estado I0: (inicial)");
     }
@@ -190,9 +181,7 @@ fn fmt_item_body(head: &str, body: &[Symbol], dot_pos: usize) -> String {
     let mut s = format!("{} →", head);
     for (i, sym) in body.iter().enumerate() {
         if i == dot_pos { s.push_str(" ."); }
-        match sym {
-            Symbol::Terminal(t) | Symbol::NonTerminal(t) => s.push_str(&format!(" {}", t)),
-        }
+        s.push_str(&format!(" {}", sym));
     }
     if dot_pos == body.len() { s.push_str(" ."); }
     s

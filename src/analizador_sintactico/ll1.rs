@@ -5,7 +5,7 @@
 // 1 ->
 use std::collections::HashMap;
 
-use super::grammar::{Grammar, Symbol, Production};
+use super::grammar::{body_to_string, Grammar, Symbol, Production};
 use super::first::{FirstSets, first_of_sequence, EPSILON};
 use super::follow::{FollowSets, EOF};
 use super::parse_tree::{ParseNode, ParseToken};
@@ -125,7 +125,6 @@ impl LL1Parser {
             };
 
             if top == EOF && *current_token == EOF {
-                println!("¡Parseo exitoso!");
                 return Ok(());
             }
 
@@ -253,11 +252,8 @@ impl LL1Parser {
 
                     // Push en orden inverso para que el primero del cuerpo quede arriba
                     for sym in body.iter().rev() {
-                        let name = match sym {
-                            Symbol::Terminal(t) | Symbol::NonTerminal(t) => t.clone(),
-                        };
                         let idx = child_indices.pop().unwrap();
-                        stack.push((name, idx));
+                        stack.push((sym.to_string(), idx));
                     }
                 }
             }
@@ -316,21 +312,11 @@ impl LL1Parser {
                 if let Some(row) = self.table.get(&top) {
                     if let Some(prod) = row.get(&current) {
                         let body = &prod.bodies[0];
-                        let body_strs: Vec<String> = if body.is_empty() {
-                            vec!["ε".to_string()]
-                        } else {
-                            body.iter().map(|s| match s {
-                                Symbol::Terminal(t) | Symbol::NonTerminal(t) => t.clone(),
-                            }).collect()
-                        };
-                        let desc = format!("Predicción: {} → {}", top, body_strs.join(" "));
+                        let desc = format!("Predicción: {} → {}", top, body_to_string(body));
                         stack.pop();
                         if !body.is_empty() {
                             for sym in body.iter().rev() {
-                                let name = match sym {
-                                    Symbol::Terminal(t) | Symbol::NonTerminal(t) => t.clone(),
-                                };
-                                stack.push(name);
+                                stack.push(sym.to_string());
                             }
                         }
                         trace.push(LL1TraceStep {

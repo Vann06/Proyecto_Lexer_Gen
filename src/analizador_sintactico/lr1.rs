@@ -28,25 +28,12 @@ impl LR1Item {
 
     /// Devuelve una cadena legible: [A -> α • β, a]
     pub fn display(&self) -> String {
-        let mut parts: Vec<String> = Vec::new();
-        for (i, sym) in self.body.iter().enumerate() {
-            if i == self.dot_pos {
-                parts.push("•".to_string());
-            }
-            parts.push(match sym {
-                Symbol::Terminal(t) => t.clone(),
-                Symbol::NonTerminal(nt) => nt.clone(),
-            });
-        }
-        if self.dot_pos == self.body.len() {
-            parts.push("•".to_string());
-        }
-        let body_str = if parts.is_empty() {
-            "•".to_string()
-        } else {
-            parts.join(" ")
-        };
-        format!("[{} -> {}, {}]", self.head, body_str, self.lookahead)
+        format!(
+            "[{} -> {}, {}]",
+            self.head,
+            super::grammar::dotted_body_to_string(&self.body, self.dot_pos),
+            self.lookahead
+        )
     }
 }
 

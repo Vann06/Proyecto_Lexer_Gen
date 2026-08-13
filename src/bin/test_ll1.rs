@@ -1,6 +1,6 @@
 use lexer_generator::analizador_sintactico;
 
-use analizador_sintactico::grammar::{Grammar, Symbol};
+use analizador_sintactico::grammar::{body_to_string, Grammar};
 use analizador_sintactico::first::calculate_first;
 use analizador_sintactico::follow::calculate_follow;
 use analizador_sintactico::ll1::LL1Parser;
@@ -33,17 +33,7 @@ fn main() {
             println!("\n--- GRAMÁTICA DESPUÉS DE LIMPIEZA LL(1) ---");
 
             for prod in &grammar.productions {
-                let bodies: Vec<String> = prod.bodies.iter().map(|body| {
-                    if body.is_empty() {
-                        return "ε".to_string();
-                    }
-
-                    body.iter().map(|sym| match sym {
-                        Symbol::Terminal(t) => t.clone(),
-                        Symbol::NonTerminal(nt) => nt.clone(),
-                    }).collect::<Vec<_>>().join(" ")
-                }).collect();
-
+                let bodies: Vec<String> = prod.bodies.iter().map(|body| body_to_string(body)).collect();
                 println!("{} -> {}", prod.head, bodies.join(" | "));
             }
 
@@ -110,19 +100,8 @@ fn main() {
                         let row = &parser.table[head];
                         for col in &cols {
                             if let Some(prod) = row.get(col) {
-                                let body = &prod.bodies[0];
-                                let mut body_str = String::new();
-                                if body.is_empty() {
-                                    body_str = "ε".to_string();
-                                } else {
-                                    for sym in body {
-                                        match sym {
-                                            Symbol::Terminal(t) => body_str.push_str(&format!("{} ", t)),
-                                            Symbol::NonTerminal(nt) => body_str.push_str(&format!("{} ", nt)),
-                                        }
-                                    }
-                                }
-                                print!(" {:<15} |", body_str.trim());
+                                let body_str = body_to_string(&prod.bodies[0]);
+                                print!(" {:<15} |", body_str);
                             } else {
                                 print!(" {:<15} |", "");
                             }

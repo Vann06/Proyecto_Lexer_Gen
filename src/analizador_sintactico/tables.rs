@@ -5,7 +5,7 @@
 // indistintamente.
 
 use std::collections::{HashMap, HashSet};
-use super::grammar::{Associativity, Grammar, Symbol};
+use super::grammar::{body_to_string, Associativity, Grammar, Symbol};
 use super::lalr::{LALRAutomaton, LALRItem};
 use super::lr0::LR0Automaton;
 use super::follow::FollowSets;
@@ -37,7 +37,7 @@ impl Conflict {
     pub fn describe(&self) -> String {
         match self {
             Conflict::ShiftReduce { state, terminal, shift_to, reduce_with: (head, body) } => {
-                let body_str = body_to_str(body);
+                let body_str = body_to_string(body);
                 format!(
                     "SHIFT-REDUCE en estado I{} con '{}': shift→I{} vs reduce ({} → {}). Se conserva SHIFT.",
                     state, terminal, shift_to, head, body_str
@@ -46,23 +46,11 @@ impl Conflict {
             Conflict::ReduceReduce { state, terminal, kept: (h1, b1), discarded: (h2, b2) } => {
                 format!(
                     "REDUCE-REDUCE en estado I{} con '{}': ({} → {}) vs ({} → {}). Se conserva la primera.",
-                    state, terminal, h1, body_to_str(b1), h2, body_to_str(b2)
+                    state, terminal, h1, body_to_string(b1), h2, body_to_string(b2)
                 )
             }
         }
     }
-}
-
-fn body_to_str(body: &[Symbol]) -> String {
-    if body.is_empty() {
-        return "ε".to_string();
-    }
-    body.iter()
-        .map(|s| match s {
-            Symbol::Terminal(t) | Symbol::NonTerminal(t) => t.as_str(),
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 pub struct LRTable {
@@ -200,6 +188,18 @@ impl LRTable {
         LRTable { action, goto, start_state: 0, start_head: automaton.start_head.clone(), conflicts, nonassoc_errors }
     }
 
+    /// Terminales para los que `state` tiene alguna acción, en orden alfabético.
+    /// Punto único de este cálculo — antes vivía por separado en
+    /// parser_lr.rs::format_error y api/mod.rs::expected_tokens_for_state.
+    pub fn expected_tokens(&self, state: usize) -> Vec<String> {
+        let mut tokens: Vec<String> = self.action.keys()
+            .filter(|(st, _)| *st == state)
+            .map(|(_, t)| t.clone())
+            .collect();
+        tokens.sort();
+        tokens
+    }
+
     /// Imprime la tabla en formato 2D (terminales + no-terminales como columnas).
     pub fn print_table(&self, grammar: &Grammar) {
         // Recopilar columnas
@@ -207,10 +207,16 @@ impl LRTable {
         terminals.push("$".to_string());
         terminals.sort();
 
-        let mut non_terminals: Vec<String> = grammar.productions.iter()
+        // `.dedup()` solo colapsa duplicados ADYACENTES; una cabeza que reaparece
+        // más adelante (p. ej. tras eliminate_ambiguity fusionar bloques repetidos,
+        // A9) volvía a listarse como columna aparte. Filtrar con un HashSet visto
+        // — igual que api/mod.rs::build_compile_response — la deja como una sola
+        // columna en orden de primera aparición.
+        let mut seen_heads = HashSet::new();
+        let non_terminals: Vec<String> = grammar.productions.iter()
             .map(|p| p.head.clone())
+            .filter(|h| seen_heads.insert(h.clone()))
             .collect();
-        non_terminals.dedup();
 
         let col_w = 8usize;
 
@@ -260,6 +266,16 @@ impl LRTable {
             }
             println!();
         }
+    }
+}
+
+/// Formatea una lista de tokens esperados para un mensaje de error, p. ej.
+/// "'PLUS', 'STAR'" o "ninguno (estado de error)" si está vacía.
+pub fn format_expected_tokens(tokens: &[String]) -> String {
+    if tokens.is_empty() {
+        "ninguno (estado de error)".to_string()
+    } else {
+        tokens.iter().map(|t| format!("'{}'", t)).collect::<Vec<_>>().join(", ")
     }
 }
 
@@ -406,8 +422,11 @@ fn build_production_index(grammar: &Grammar) -> HashMap<(String, Vec<Symbol>), u
 }
 
 /// Devuelve el número de producción (para imprimir "r3") dado head + body.
+/// Numera desde 1 — igual que api/mod.rs::grammar_to_prods, que es lo que ve el
+/// usuario en el IDE; antes esta y print_productions numeraban desde 0, así que
+/// la CLI y la UI etiquetaban la misma producción con números distintos (C5).
 fn production_number(grammar: &Grammar, head: &str, body: &[Symbol]) -> usize {
-    let mut n = 0usize;
+    let mut n = 1usize;
     for prod in &grammar.productions {
         for b in &prod.bodies {
             if prod.head == head && b.as_slice() == body {
@@ -422,10 +441,10 @@ fn production_number(grammar: &Grammar, head: &str, body: &[Symbol]) -> usize {
 /// Lista todas las producciones numeradas (para la leyenda de la tabla).
 pub fn print_productions(grammar: &Grammar) {
     println!("Producciones numeradas:");
-    let mut n = 0usize;
+    let mut n = 1usize;
     for prod in &grammar.productions {
         for body in &prod.bodies {
-            let body_str = body_to_str(body);
+            let body_str = body_to_string(body);
             println!("  r{}: {} → {}", n, prod.head, body_str);
             n += 1;
         }

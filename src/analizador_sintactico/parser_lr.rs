@@ -312,15 +312,7 @@ impl<'a> LRParser<'a> {
 }
 
 fn format_error(state: usize, token: &str, table: &LRTable) -> String {
-    let expected: Vec<String> = table.action.keys()
-        .filter(|(st, _)| *st == state)
-        .map(|(_, t)| format!("'{}'", t))
-        .collect();
-    let expected_str = if expected.is_empty() {
-        "ninguno (estado de error)".to_string()
-    } else {
-        expected.join(", ")
-    };
+    let expected_str = super::tables::format_expected_tokens(&table.expected_tokens(state));
     format!("Error sintáctico: estado I{}, token '{}'. Esperado: {}",
             state, token, expected_str)
 }
@@ -335,17 +327,7 @@ pub fn print_trace(trace: &[ParseStep]) {
                 println!("  push I{}  ←  shift '{}'", state, token);
             }
             ParseStep::Reduce { head, body } => {
-                let body_str = if body.is_empty() {
-                    "ε".to_string()
-                } else {
-                    body.iter()
-                        .map(|s| match s {
-                            Symbol::Terminal(t) | Symbol::NonTerminal(t) => t.as_str(),
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                };
-                println!("  reduce   :  {} → {}", head, body_str);
+                println!("  reduce   :  {} → {}", head, super::grammar::body_to_string(body));
             }
             ParseStep::Accept => {
                 println!("  accept   ");
