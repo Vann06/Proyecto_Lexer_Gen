@@ -93,6 +93,11 @@ impl<'a> Simulator<'a> {
 
         let mut last_accept_pos: Option<usize> = None;
         let mut last_accept_token: Option<String> = None;
+        // line/col AT last_accept_pos, so backtracking past a failed longer match
+        // rolls back the cursor together with pos instead of leaving it wherever the
+        // speculative scan happened to overshoot to.
+        let mut last_accept_line = self.line;
+        let mut last_accept_col = self.col;
 
         while self.pos < self.input.len() {
             let c = self.input[self.pos];
@@ -115,16 +120,24 @@ impl<'a> Simulator<'a> {
             if self.table.is_accepting(state as usize) {
                 last_accept_pos = Some(self.pos);
                 last_accept_token = self.table.token_at(state as usize).map(String::from);
+                last_accept_line = self.line;
+                last_accept_col = self.col;
             }
         }
 
         if let Some(accept_pos) = last_accept_pos {
             self.pos = accept_pos;
+            self.line = last_accept_line;
+            self.col = last_accept_col;
             let lexeme: String = self.input[start_pos..accept_pos].iter().collect();
             let act = last_accept_token.unwrap_or_default();
             let clean_act = act.trim();
-            let kind_name = if clean_act.is_empty() {
-                // Reglas con acciones vacías normalmente ignoran el token (ej. ws {})
+            let kind_name = if clean_act.is_empty()
+                || clean_act.eq_ignore_ascii_case("skip")
+                || clean_act.eq_ignore_ascii_case("ignore")
+            {
+                // Reglas con acciones vacías, `skip` o `ignore` descartan el token
+                // (ej. ws { }, ws { skip }).
                 "Ignored".to_string()
             } else if clean_act.starts_with("return") {
                 // Manejar acciones del estilo `return NUM` o `return Token::NUM`
@@ -175,6 +188,12 @@ impl<'a> Simulator<'a> {
         } else {
             let bad = self.input[start_pos];
             self.pos = start_pos + 1;
+            // No accepting state was ever reached, but the DFA may still have walked
+            // several characters (including newlines) before dying — roll line/col
+            // back to right after the single bad character, not wherever the failed
+            // speculative scan drifted to.
+            self.line = start_line;
+            self.col = start_col;
             if bad == '\n' {
                 self.line += 1;
                 self.col = 1;

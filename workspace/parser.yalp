@@ -1,6 +1,13 @@
-%token c d
+%token ID PLUS MINUS TIMES LPAREN RPAREN WHITESPACE
+%start E
 %%
-S : C C ;
-C : c C
-  | d
-;
+E : E PLUS T
+  | E MINUS T
+  | T
+  ;
+T : T TIMES F
+  | F
+  ;
+F : LPAREN E RPAREN
+  | ID
+  ;

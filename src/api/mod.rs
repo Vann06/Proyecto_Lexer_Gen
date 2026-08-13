@@ -22,7 +22,7 @@ use crate::spec::parser::parse_yalex;
 use crate::table::transition_table::TransitionTable;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet, BTreeMap};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Serialize)]
 pub struct StateData {
@@ -239,44 +239,59 @@ pub fn build_pipeline_response(
         }
     }
 
-    // Group tokens by their source line and run the parser per-line so each line is
-    // treated as an independent input (prevents multi-line concatenation errors).
-    let mut traces: Vec<Value> = Vec::new();
-    let mut all_accepted = true;
+    // Parse the whole token stream as ONE input — not grouped by physical line.
+    // A source can be a single multi-line program (a line break is not a statement
+    // boundary in general); callers that want several independent test cases already
+    // send one call per case (frontend/IDE/app.jsx's handleParse sends one line at a
+    // time, and tests/run_examples_cases.rs iterates `src.lines()` itself). Splitting
+    // internally here both mis-locates errors in genuine multi-line input and rebuilds
+    // the whole parse table once per line for no reason.
+    let token_kinds: Vec<String> = token_map.iter().map(|(k, _, _, _)| k.clone()).collect();
 
-    let mut by_line: BTreeMap<usize, Vec<(String, String, usize, usize)>> = BTreeMap::new();
-    for tk in &token_map {
-        by_line.entry(tk.2).or_default().push(tk.clone());
-    }
+    let mut response = ParseResponse::default();
+    response.accepted = true;
 
-    for (line_no, tokens_on_line) in &by_line {
-        let token_kinds_line: Vec<String> = tokens_on_line.iter().map(|(k, _, _, _)| k.clone()).collect();
-        if token_kinds_line.is_empty() { continue; }
+    if !token_kinds.is_empty() {
+        let resp = build_parse_response(yalp, token_kinds.clone(), mode)?;
+        response.accepted = resp.accepted;
 
-        let resp_line = build_parse_response(yalp, token_kinds_line.clone(), mode)?;
-        // Attach line number to each trace entry for diagnostics
-        for t in &resp_line.trace {
-            let mut entry = json!({"line": line_no});
-            if let Some(stack) = t.get("stack") { entry["stack"] = stack.clone(); }
-            if let Some(remaining) = t.get("remaining") { entry["remaining"] = remaining.clone(); }
-            if let Some(action) = t.get("action") { entry["action"] = action.clone(); }
-            if let Some(desc) = t.get("desc") { entry["desc"] = desc.clone(); }
-            traces.push(entry);
-        }
+        // Attach the source line of the token each step is about to consume, for the
+        // UI to highlight while stepping through the trace.
+        response.trace = resp
+            .trace
+            .iter()
+            .map(|t| {
+                let consumed = t
+                    .get("remaining")
+                    .and_then(|r| r.as_array())
+                    .map(|arr| token_kinds.len().saturating_sub(arr.len()))
+                    .unwrap_or(0);
+                let line = token_map
+                    .get(consumed)
+                    .or_else(|| token_map.last())
+                    .map(|tk| tk.2)
+                    .unwrap_or(1);
+                let mut entry = json!({ "line": line });
+                if let Some(stack) = t.get("stack") { entry["stack"] = stack.clone(); }
+                if let Some(remaining) = t.get("remaining") { entry["remaining"] = remaining.clone(); }
+                if let Some(action) = t.get("action") { entry["action"] = action.clone(); }
+                if let Some(desc) = t.get("desc") { entry["desc"] = desc.clone(); }
+                entry
+            })
+            .collect();
 
-        if !resp_line.accepted {
-            all_accepted = false;
+        if !resp.accepted {
+            response.error = Some("Error sintáctico".to_string());
 
             // Compute which token was consumed according to the trace's remaining length
-            let consumed = resp_line
+            let consumed = resp
                 .trace
                 .last()
                 .and_then(|last| {
-                    last.get("remaining").and_then(|r| r.as_array().map(|arr| token_kinds_line.len().saturating_sub(arr.len())))
+                    last.get("remaining").and_then(|r| r.as_array().map(|arr| token_kinds.len().saturating_sub(arr.len())))
                 })
                 .unwrap_or_else(|| {
-                    resp_line
-                        .trace
+                    resp.trace
                         .iter()
                         .filter(|s| {
                             let a = s.get("action").and_then(|v| v.as_str()).unwrap_or("");
@@ -285,16 +300,16 @@ pub fn build_pipeline_response(
                         .count()
                 });
 
-            let loc_entry = tokens_on_line.get(consumed).or_else(|| tokens_on_line.last());
+            let loc_entry = token_map.get(consumed).or_else(|| token_map.last());
             if let Some((kind, lexeme, line, col)) = loc_entry {
-                let base_msg = resp_line
+                let base_msg = resp
                     .error
                     .clone()
                     .unwrap_or_else(|| "Error sintáctico".to_string());
 
-                let suggestion = suggest_similar_token(&lexeme, &grammar_for_filter.tokens);
+                let suggestion = suggest_similar_token(lexeme, &grammar_for_filter.tokens);
                 if let Some(s) = suggestion {
-                    if is_identifier_like(&lexeme) && &s != kind {
+                    if is_identifier_like(lexeme) && &s != kind {
                         lex_problems.push(json!({
                             "level": "err",
                             "code": "L001",
@@ -329,14 +344,6 @@ pub fn build_pipeline_response(
                 }
             }
         }
-    }
-
-    // Build a consolidated ParseResponse (accepted iff all lines accepted)
-    let mut response = ParseResponse::default();
-    response.trace = traces;
-    response.accepted = all_accepted;
-    if !all_accepted {
-        response.error = Some("Error sintáctico en una o más líneas".to_string());
     }
 
     let token_map_json: Vec<Value> = token_map

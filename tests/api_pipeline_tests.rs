@@ -47,3 +47,22 @@ fn pipeline_syntax_error_includes_expected_tokens_in_message() {
     let msg = syn_err["msg"].as_str().unwrap_or("");
     assert!(msg.contains("Esperado:"), "syntax error should include expected tokens");
 }
+
+// A4 — the workspace's default lexer.yal/parser.yalp/input.txt must be mutually
+// consistent (same tokens on both sides) and `{ skip }` must be treated as a
+// discard action, exactly like the workspace files served by src/bin/api.rs.
+#[test]
+fn default_workspace_files_parse_a_default_input_line() {
+    let yal = "let digit = ['0'-'9']\nlet letter = ['a'-'z' 'A'-'Z']\nlet id = letter (letter|digit)*\nrule tokens =\n  | id         { return ID }\n  | digit+     { return NUM }\n  | '+'        { return PLUS }\n  | '*'        { return STAR }\n  | ' '        { skip }";
+    let yalp = "%token ID NUM PLUS STAR\n%start E\n%%\nE : E PLUS T\n  | T\n  ;\nT : T STAR F\n  | F\n  ;\nF : ID\n  | NUM\n  ;\n";
+
+    for line in ["a + b", "3 * x", "a + b * c"] {
+        let resp = api::build_pipeline_response(yal, yalp, line, "lalr")
+            .unwrap_or_else(|e| panic!("pipeline should build a response for '{}': {}", line, e));
+        assert!(
+            resp.problems.is_empty() && resp.accepted,
+            "default workspace files should accept '{}' with no problems, got: accepted={} problems={:?}",
+            line, resp.accepted, resp.problems
+        );
+    }
+}

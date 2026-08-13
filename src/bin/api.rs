@@ -136,8 +136,8 @@ async fn main() {
     fs::create_dir_all(&ws).ok();
     let defaults: &[(&str, &str)] = &[
         ("lexer.yal",   "let digit = ['0'-'9']\nlet letter = ['a'-'z' 'A'-'Z']\nlet id = letter (letter|digit)*\nrule tokens =\n  | id         { return ID }\n  | digit+     { return NUM }\n  | '+'        { return PLUS }\n  | '*'        { return STAR }\n  | ' '        { skip }"),
-        ("parser.yalp", "%token c d\n%%\nS : C C ;\nC : c C\n  | d\n;"),
-        ("input.txt",   "c c d c d\nc d d\nd c d"),
+        ("parser.yalp", "%token ID NUM PLUS STAR\n%start E\n%%\nE : E PLUS T\n  | T\n  ;\nT : T STAR F\n  | F\n  ;\nF : ID\n  | NUM\n  ;\n"),
+        ("input.txt",   "a + b\n3 * x\na + b * c"),
     ];
     for (name, content) in defaults {
         let path = ws.join(name);
