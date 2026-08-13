@@ -196,6 +196,29 @@ impl Parser {
                     if c == '\'' {
                         break;
                     }
+                    if c == '\\' {
+                        // Escapes DENTRO de un literal '...' (p. ej. '\n'): antes esto
+                        // no se decodificaba aquí — el bucle empujaba los DOS
+                        // caracteres literales '\' y 'n' en vez de un salto de línea
+                        // real, así que `let newline = '\n'` (la forma en que YALex
+                        // normalmente escribe un literal de salto de línea, y la que
+                        // usan los propios .yal de ejemplo del repo) nunca matcheaba
+                        // un '\n' de verdad. Misma tabla de escapes que el caso suelto
+                        // `Some('\\')` de más abajo, vía `Self::decode_escape`.
+                        self.consume(); // la barra invertida
+                        match self.peek() {
+                            Some(escaped) => {
+                                nodes.push(Self::decode_escape(escaped));
+                                self.consume();
+                            }
+                            None => {
+                                return Err(LexerGenError::InvalidSpec(
+                                    "Barra invertida al final de la regex".to_string(),
+                                ));
+                            }
+                        }
+                        continue;
+                    }
                     nodes.push(RegexAst::Literal(c));
                     self.consume();
                 }
@@ -220,23 +243,11 @@ impl Parser {
             }
 
             Some('\\') => {
-                // Nuevo: Soporte de secuencias de escape (ej. \s, \+, \n)
+                // Soporte de secuencias de escape sueltas (ej. \s, \+, \n)
                 self.consume(); // consumimos la barra invertida
                 if let Some(c) = self.peek() {
                     self.consume();
-                    let node = match c {
-                        'n' => RegexAst::Literal('\n'),
-                        't' => RegexAst::Literal('\t'),
-                        'r' => RegexAst::Literal('\r'),
-                        's' => {
-                            // Expandimos \s a espacio, \t, \n y \r
-                            let space = RegexAst::Union(Box::new(RegexAst::Literal(' ')), Box::new(RegexAst::Literal('\t')));
-                            let return_chars = RegexAst::Union(Box::new(RegexAst::Literal('\n')), Box::new(RegexAst::Literal('\r')));
-                            RegexAst::Union(Box::new(space), Box::new(return_chars))
-                        }
-                        _ => RegexAst::Literal(c),
-                    };
-                    Ok(node)
+                    Ok(Self::decode_escape(c))
                 } else {
                     Err(LexerGenError::InvalidSpec(
                         "Barra invertida al final de la regex".to_string(),
@@ -260,5 +271,25 @@ impl Parser {
 
     fn consume(&mut self) {
         self.pos += 1;
+    }
+
+    /// Decodifica una secuencia de escape `\X` (la `X` ya consumida por el
+    /// llamador) a su AST. Compartido entre el escape suelto (fuera de
+    /// comillas, p. ej. `\+`) y el escape dentro de un literal `'...'`
+    /// (p. ej. `'\n'`) — antes solo el primer caso decodificaba, así que
+    /// `let newline = '\n'` nunca matcheaba un salto de línea real.
+    fn decode_escape(c: char) -> RegexAst {
+        match c {
+            'n' => RegexAst::Literal('\n'),
+            't' => RegexAst::Literal('\t'),
+            'r' => RegexAst::Literal('\r'),
+            's' => {
+                // Expandimos \s a espacio, \t, \n y \r
+                let space = RegexAst::Union(Box::new(RegexAst::Literal(' ')), Box::new(RegexAst::Literal('\t')));
+                let return_chars = RegexAst::Union(Box::new(RegexAst::Literal('\n')), Box::new(RegexAst::Literal('\r')));
+                RegexAst::Union(Box::new(space), Box::new(return_chars))
+            }
+            _ => RegexAst::Literal(c),
+        }
     }
 }

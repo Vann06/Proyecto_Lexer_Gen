@@ -95,9 +95,27 @@ fn main() {
         std::process::exit(1);
     });
 
-    let parse_tokens: Vec<ParseToken> = raw_tokens.iter()
-        .map(|t| ParseToken { kind: normalize_kind(&t.kind), lexeme: t.lexeme.clone() })
-        .filter(|t| !is_ignored(&t.kind, &grammar))
+    let mut significant: Vec<(String, String, usize, usize)> = raw_tokens.iter()
+        .map(|t| (normalize_kind(&t.kind), t.lexeme.clone(), t.line, t.col))
+        .filter(|(k, ..)| !is_ignored(k, &grammar))
+        .collect();
+
+    // Gramáticas sensibles a indentación (Python-style) necesitan un
+    // post-procesamiento que el DFA del lexer no puede hacer por sí solo —
+    // ver src/runtime/indent.rs. Debe correr ANTES de descartar line/col
+    // (que es lo que hace la conversión a ParseToken de abajo).
+    if runtime::indent::is_indent_sensitive(&grammar.tokens) {
+        match runtime::indent::synthesize(significant) {
+            Ok(synthesized) => significant = synthesized,
+            Err(e) => {
+                eprintln!("Error de indentación: {}", e);
+                std::process::exit(2);
+            }
+        }
+    }
+
+    let parse_tokens: Vec<ParseToken> = significant.into_iter()
+        .map(|(kind, lexeme, _line, _col)| ParseToken { kind, lexeme })
         .collect();
 
     println!("✓ Tras filtrar ignorables: {} tokens al parser.", parse_tokens.len());

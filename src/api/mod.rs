@@ -11,6 +11,7 @@ use crate::analizador_sintactico::parse_tree::ParseToken;
 use crate::analizador_sintactico::parser_lr::LRParser;
 use crate::analizador_sintactico::tables::{format_expected_tokens, Action, Conflict, LRTable};
 use crate::regex::parser::parse_regex;
+use crate::runtime::indent;
 use crate::runtime::simulator::{LexResult, Simulator};
 use crate::spec::expand::expand_definitions;
 use crate::spec::parser::parse_yalex;
@@ -231,6 +232,26 @@ pub fn build_pipeline_response(
                 }));
             }
             LexResult::EOF => break,
+        }
+    }
+
+    // Gramáticas sensibles a indentación (Python-style: declaran NEWLINE +
+    // INDENT + DEDENT como %token) necesitan un post-procesamiento que el DFA
+    // del lexer no puede hacer por sí solo — ver src/runtime/indent.rs. Es
+    // opt-in por gramática, así que no afecta a ninguna otra gramática.
+    // Degrada con un diagnóstico en vez de abortar toda la respuesta: el resto
+    // del pipeline puede seguir intentando parsear con el token_map original.
+    if indent::is_indent_sensitive(&grammar_for_filter.tokens) {
+        match indent::synthesize(token_map.clone()) {
+            Ok(synthesized) => token_map = synthesized,
+            Err(msg) => {
+                lex_problems.push(json!({
+                    "level": "err",
+                    "code": "L002",
+                    "msg": msg,
+                    "loc": "input.txt",
+                }));
+            }
         }
     }
 
