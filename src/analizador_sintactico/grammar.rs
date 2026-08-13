@@ -45,7 +45,7 @@ impl Grammar {
 
         // PASO 4 — ELIMINACIÓN DE AMBIGÜEDAD 
       
-        grammar.eliminate_ambiguity();
+        grammar.eliminate_ambiguity()?;
 
         // Verificar que no quede ningún ciclo de recursión izquierda
         grammar.detect_left_recursion()?;
@@ -78,7 +78,7 @@ impl Grammar {
     /// (eliminación de recursión izquierda + factorización). Para la API HTTP.
     pub fn parse_for_ll1_from_str(raw_content: &str) -> Result<Self, String> {
         let mut grammar = Self::parse_raw_from_str(raw_content)?;
-        grammar.eliminate_ambiguity();
+        grammar.eliminate_ambiguity()?;
         grammar.detect_left_recursion()?;
         grammar.validate()?;
         Ok(grammar)
@@ -124,30 +124,48 @@ impl Grammar {
         Self::parse_raw_from_str(&raw_content)
     }
 
-    /// Función auxiliar de limpieza: Borra todo lo que esté entre /* y */
+    /// Función auxiliar de limpieza: borra los comentarios `/* ... */` y `// ...`
+    /// (el encabezado del módulo documenta ambos, pero solo el primero se
+    /// reconocía — una línea `// comentario` en la sección de producciones se
+    /// absorbía en el bloque siguiente y podía acabar siendo el `start_symbol`
+    /// reportado). Los saltos de línea dentro de un comentario `//` se conservan
+    /// para no desalinear la numeración de línea usada en los diagnósticos.
     fn remove_comments(input: &str) -> String {
         let mut result = String::new();
         let mut chars = input.chars().peekable();
-        let mut in_comment = false;
+        let mut in_block_comment = false;
+        let mut in_line_comment = false;
 
         while let Some(c) = chars.next() {
-            if in_comment {
+            if in_block_comment {
                 if c == '*' {
                     if let Some(&'/') = chars.peek() {
                         chars.next(); // Consumir la '/'
-                        in_comment = false;
+                        in_block_comment = false;
                     }
                 }
-            } else {
-                if c == '/' {
-                    if let Some(&'*') = chars.peek() {
-                        chars.next(); // Consumir el '*'
-                        in_comment = true;
-                        continue;
-                    }
-                }
-                result.push(c);
+                continue;
             }
+            if in_line_comment {
+                if c == '\n' {
+                    in_line_comment = false;
+                    result.push(c);
+                }
+                continue;
+            }
+            if c == '/' {
+                if let Some(&'*') = chars.peek() {
+                    chars.next(); // Consumir el '*'
+                    in_block_comment = true;
+                    continue;
+                }
+                if let Some(&'/') = chars.peek() {
+                    chars.next(); // Consumir la segunda '/'
+                    in_line_comment = true;
+                    continue;
+                }
+            }
+            result.push(c);
         }
         result
     }
@@ -155,7 +173,7 @@ impl Grammar {
     // Funciones auxiliares 
 
     // collect_used_names: Recolecta todos los nombres de tokens, ignores, no-terminales
-    fn collect_used_names(&self) -> HashSet<String> {
+    pub(crate) fn collect_used_names(&self) -> HashSet<String> {
         let mut used_names = HashSet::new();
 
         used_names.extend(self.tokens.iter().cloned());
@@ -178,7 +196,26 @@ impl Grammar {
         used_names
     }
 
-    // sanitize_aux_head: 
+    /// Genera el símbolo inicial aumentado (`S' -> S`) para construir un autómata
+    /// LR: siempre un nombre garantizado fresco (nunca colisiona con ningún token
+    /// o no-terminal ya declarado), sin importar cómo se llame `start_symbol`.
+    ///
+    /// Antes se intentaba adivinar si la gramática de entrada "ya venía
+    /// aumentada" mirando si `start_symbol` terminaba en `'` o contenía la
+    /// subcadena "prima" — eso confundía identificadores ordinarios en español
+    /// (`prima`, `expresion_primaria`) con gramáticas pre-aumentadas y corrompía
+    /// la tabla ACTION/GOTO en silencio (ver hallazgo A3). Aumentar siempre,
+    /// sin excepciones, elimina la ambigüedad de raíz.
+    pub(crate) fn augmented_start_symbol(&self) -> String {
+        let used = self.collect_used_names();
+        let mut candidate = format!("{}'", self.start_symbol);
+        while used.contains(&candidate) {
+            candidate.push('\'');
+        }
+        candidate
+    }
+
+    // sanitize_aux_head:
     // Convierte un nombre de cabeza de producción en una forma segura para usar como auxiliar.
     fn sanitize_aux_head(head: &str) -> String {
         let sanitized: String = head
@@ -238,7 +275,7 @@ impl Grammar {
     }
     /// ## 1. Eliminación de recursión por la izquierda — DIRECTA e INDIRECTA
     /// ## 2. Factorización por la izquierda (Left Factoring)
-    pub fn eliminate_ambiguity(&mut self) {
+    pub fn eliminate_ambiguity(&mut self) -> Result<(), String> {
         // ── FASE 1: Eliminación de recursión izquierda (directa + indirecta) ──
         self.transformation_log.clear(); // Limpiar
 
@@ -350,20 +387,50 @@ impl Grammar {
             i += 1; // avanzar el índice del while
         }
 
-        // Reconstruir self.productions preservando el orden y eliminando
-        // duplicados de cabeza (puede haber si la gramática original ya tenía A')
-        let mut seen_heads: HashSet<String> = HashSet::new();
-        self.productions = ordered
+        // Reconstruir self.productions preservando el orden de la PRIMERA aparición
+        // de cada cabeza, pero FUSIONANDO los cuerpos de cabezas repetidas (puede
+        // haberlas tanto si la gramática original ya tenía A' como si el usuario
+        // escribió la misma cabeza en dos bloques separados, un estilo yacc válido:
+        // 'E : E PLUS T ;' y luego 'E : T ;'). Antes se descartaba el bloque
+        // repetido entero en silencio — ver hallazgo A9.
+        let mut merged: Vec<(String, Vec<Vec<Symbol>>)> = Vec::new();
+        let mut head_index: HashMap<String, usize> = HashMap::new();
+        for (head, bodies) in ordered {
+            if let Some(&idx) = head_index.get(&head) {
+                merged[idx].1.extend(bodies);
+            } else {
+                head_index.insert(head.clone(), merged.len());
+                merged.push((head, bodies));
+            }
+        }
+        self.productions = merged
             .into_iter()
-            .filter(|(head, _)| seen_heads.insert(head.clone()))
             .map(|(head, bodies)| Production { head, bodies })
             .collect();
 
         // ── FASE 2: Factorización por la izquierda ────────────────────────────
         // Se repite hasta que no haya más prefijos comunes que factorizar.
+        // `left_factor_production` deduplica alternativas idénticas antes de
+        // factorizar (ver más abajo) precisamente para que esto converja; esta
+        // cota es solo una red de seguridad ante algún caso patológico no
+        // previsto — una gramática real nunca necesita más de un puñado de
+        // rondas (ver hallazgo A8: antes de deduplicar, 'E : ID | ID ;' entraba
+        // en un bucle infinito factorizando AUX -> ε | ε una y otra vez).
+        const MAX_LEFT_FACTOR_ROUNDS: usize = 1000;
         let mut changed = true;
+        let mut round = 0;
 
         while changed {
+            round += 1;
+            if round > MAX_LEFT_FACTOR_ROUNDS {
+                return Err(format!(
+                    "La factorización por la izquierda no converge después de {} rondas. \
+                     Revisa la gramática: probablemente tiene alternativas redundantes o \
+                     una estructura recursiva que la factorización no puede resolver.",
+                    MAX_LEFT_FACTOR_ROUNDS
+                ));
+            }
+
             changed = false;
             let mut result: Vec<Production> = Vec::new();
 
@@ -383,6 +450,7 @@ impl Grammar {
 
             self.productions = result;
         }
+        Ok(())
     }
 
     pub fn detect_left_recursion(&self) -> Result<(), String> {
@@ -440,6 +508,26 @@ impl Grammar {
         used_names: &mut HashSet<String>,
         transformation_log: &mut Vec<String>,
     ) -> Vec<Production> {
+        // Deduplicar alternativas idénticas ANTES de agrupar. Una alternativa
+        // repetida ('A : x | x ;') no aporta nada al lenguaje reconocido, pero si
+        // se deja pasar a la factorización de abajo, el prefijo común de dos
+        // cuerpos idénticos es el cuerpo entero — el sufijo de ambos es ε, así
+        // que se genera un auxiliar 'AUX -> ε | ε' con el MISMO problema, que
+        // nunca converge (hallazgo A8). Se hace aquí, en cada llamada, para
+        // cubrir tanto las producciones originales como los auxiliares que esta
+        // misma función genera en rondas posteriores.
+        let mut seen_bodies: HashSet<&Vec<Symbol>> = HashSet::new();
+        let prod = Production {
+            head: prod.head.clone(),
+            bodies: prod
+                .bodies
+                .iter()
+                .filter(|body| seen_bodies.insert(body))
+                .cloned()
+                .collect(),
+        };
+        let prod = &prod;
+
         // Agrupar cuerpos por su primer símbolo
         let mut groups: std::collections::BTreeMap<Option<&Symbol>, Vec<&Vec<Symbol>>> =
             std::collections::BTreeMap::new();

@@ -4,7 +4,7 @@
 // constructor `build_from_*` que la rellena. El driver `LRParser` la consume
 // indistintamente.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use super::grammar::{Associativity, Grammar, Symbol};
 use super::lalr::{LALRAutomaton, LALRItem};
 use super::lr0::LR0Automaton;
@@ -71,6 +71,15 @@ pub struct LRTable {
     pub start_state: usize,
     pub start_head: String,
     pub conflicts: Vec<Conflict>,
+    /// Celdas (estado, terminal) marcadas explícitamente como error por un
+    /// conflicto `%nonassoc`. `action` no tiene entrada para ellas — igual que
+    /// para cualquier celda de error genuina — pero a diferencia de esas, una
+    /// inserción posterior NUNCA puede resucitarlas con un Reduce (A7): antes,
+    /// el error se codificaba solo como "ausencia de clave en `action`", así
+    /// que un segundo ítem completo con el mismo (estado, terminal) —de otra
+    /// producción, o la ruta SLR iterando FOLLOW(A)— repoblaba la celda sin
+    /// que se detectara ni registrara ningún conflicto.
+    pub nonassoc_errors: HashSet<(usize, String)>,
 }
 
 impl LRTable {
@@ -81,6 +90,7 @@ impl LRTable {
         let mut action: HashMap<(usize, String), Action> = HashMap::new();
         let mut goto: HashMap<(usize, String), usize> = HashMap::new();
         let mut conflicts: Vec<Conflict> = Vec::new();
+        let mut nonassoc_errors: HashSet<(usize, String)> = HashSet::new();
 
         let prod_index = build_production_index(grammar);
         let prec_map   = build_prec_map(grammar);
@@ -90,7 +100,7 @@ impl LRTable {
             match sym {
                 Symbol::Terminal(t) => {
                     insert_action(
-                        &mut action, &mut conflicts,
+                        &mut action, &mut conflicts, &mut nonassoc_errors,
                         *from, t.clone(), Action::Shift(*to),
                         &prod_index, &prec_map,
                     );
@@ -110,14 +120,14 @@ impl LRTable {
 
                 if item.head == automaton.start_head {
                     insert_action(
-                        &mut action, &mut conflicts,
+                        &mut action, &mut conflicts, &mut nonassoc_errors,
                         state.id, "$".to_string(), Action::Accept,
                         &prod_index, &prec_map,
                     );
                 } else {
                     for la in &item.lookaheads {
                         insert_action(
-                            &mut action, &mut conflicts,
+                            &mut action, &mut conflicts, &mut nonassoc_errors,
                             state.id, la.clone(),
                             Action::Reduce { head: item.head.clone(), body: item.body.clone() },
                             &prod_index, &prec_map,
@@ -127,7 +137,7 @@ impl LRTable {
             }
         }
 
-        LRTable { action, goto, start_state: 0, start_head: automaton.start_head.clone(), conflicts }
+        LRTable { action, goto, start_state: 0, start_head: automaton.start_head.clone(), conflicts, nonassoc_errors }
     }
 
     /// Construye la tabla ACTION/GOTO a partir del autómata LR(0) + FOLLOW sets (SLR(1)).
@@ -136,6 +146,7 @@ impl LRTable {
         let mut action: HashMap<(usize, String), Action> = HashMap::new();
         let mut goto:   HashMap<(usize, String), usize>  = HashMap::new();
         let mut conflicts: Vec<Conflict> = Vec::new();
+        let mut nonassoc_errors: HashSet<(usize, String)> = HashSet::new();
 
         let prod_index = build_production_index(grammar);
         let prec_map   = build_prec_map(grammar);
@@ -145,7 +156,7 @@ impl LRTable {
             match sym {
                 Symbol::Terminal(t) => {
                     insert_action(
-                        &mut action, &mut conflicts,
+                        &mut action, &mut conflicts, &mut nonassoc_errors,
                         *from, t.clone(), Action::Shift(*to),
                         &prod_index, &prec_map,
                     );
@@ -166,7 +177,7 @@ impl LRTable {
                 if item.head == automaton.start_head {
                     // Accept: [S' → S •] solo con $
                     insert_action(
-                        &mut action, &mut conflicts,
+                        &mut action, &mut conflicts, &mut nonassoc_errors,
                         state.id, "$".to_string(), Action::Accept,
                         &prod_index, &prec_map,
                     );
@@ -175,7 +186,7 @@ impl LRTable {
                     if let Some(follow) = follow_sets.get(&item.head) {
                         for terminal in follow {
                             insert_action(
-                                &mut action, &mut conflicts,
+                                &mut action, &mut conflicts, &mut nonassoc_errors,
                                 state.id, terminal.clone(),
                                 Action::Reduce { head: item.head.clone(), body: item.body.clone() },
                                 &prod_index, &prec_map,
@@ -186,7 +197,7 @@ impl LRTable {
             }
         }
 
-        LRTable { action, goto, start_state: 0, start_head: automaton.start_head.clone(), conflicts }
+        LRTable { action, goto, start_state: 0, start_head: automaton.start_head.clone(), conflicts, nonassoc_errors }
     }
 
     /// Imprime la tabla en formato 2D (terminales + no-terminales como columnas).
@@ -299,9 +310,18 @@ fn resolve_shift_reduce(
 
 /// Intenta insertar una acción en la tabla.  Si ya existe, aplica resolución de conflictos.
 /// pub so tests/regression_tests.rs (a separate crate) can exercise it directly (see a7_* test).
+///
+/// `nonassoc_errors` registra las celdas (estado, terminal) que un conflicto
+/// `%nonassoc` resolvió como error explícito. Se consulta ANTES que `action`
+/// (que, para esas celdas, deliberadamente no tiene entrada — igual que
+/// cualquier celda de error) precisamente para que ninguna inserción
+/// posterior pueda repoblarlas con un Reduce (A7): antes, "sin entrada en
+/// `action`" era indistinguible de "sin conflicto aún", así que un segundo
+/// ítem completo con la misma clave la resucitaba en silencio.
 pub fn insert_action(
     action: &mut HashMap<(usize, String), Action>,
     conflicts: &mut Vec<Conflict>,
+    nonassoc_errors: &mut HashSet<(usize, String)>,
     state: usize,
     terminal: String,
     new_action: Action,
@@ -310,6 +330,10 @@ pub fn insert_action(
 ) {
     let key = (state, terminal.clone());
 
+    if nonassoc_errors.contains(&key) {
+        return;
+    }
+
     if let Some(existing) = action.get(&key) {
         match (existing.clone(), new_action.clone()) {
             // Shift vs Reduce: intentar resolver por precedencia primero
@@ -317,7 +341,7 @@ pub fn insert_action(
                 match resolve_shift_reduce(&terminal, &body, prec_map) {
                     Some(SR::KeepShift)     => {} // shift ya está, sin conflicto
                     Some(SR::DoReduce)      => { action.insert(key, Action::Reduce { head, body }); }
-                    Some(SR::NonAssocError) => { action.remove(&key); } // celda de error
+                    Some(SR::NonAssocError) => { action.remove(&key); nonassoc_errors.insert(key); } // celda de error
                     None => {
                         // Sin info de precedencia → shift gana (estilo yacc), registrar conflicto
                         conflicts.push(Conflict::ShiftReduce {
@@ -330,7 +354,7 @@ pub fn insert_action(
                 match resolve_shift_reduce(&terminal, &body, prec_map) {
                     Some(SR::KeepShift)     => { action.insert(key, Action::Shift(n)); }
                     Some(SR::DoReduce)      => {} // reduce ya está, sin conflicto
-                    Some(SR::NonAssocError) => { action.remove(&key); }
+                    Some(SR::NonAssocError) => { action.remove(&key); nonassoc_errors.insert(key); }
                     None => {
                         conflicts.push(Conflict::ShiftReduce {
                             state, terminal, shift_to: n, reduce_with: (head, body),

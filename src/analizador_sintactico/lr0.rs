@@ -83,12 +83,10 @@ impl LR0Automaton {
         let mut states: Vec<State> = Vec::new();
         let mut transitions: HashMap<(usize, Symbol), usize> = HashMap::new();
 
-        // 1. AUTO-AUMENTAR LA GRAMÁTICA
-        let (start_head, start_body) = if grammar.start_symbol.ends_with('\'') || grammar.start_symbol.contains("prima") {
-            (grammar.start_symbol.clone(), grammar.productions[0].bodies[0].clone())
-        } else {
-            (format!("{}'", grammar.start_symbol), vec![Symbol::NonTerminal(grammar.start_symbol.clone())])
-        };
+        // 1. AUTO-AUMENTAR LA GRAMÁTICA con un símbolo inicial siempre fresco
+        // (ver Grammar::augmented_start_symbol — A3 en el plan de refactor).
+        let start_head = grammar.augmented_start_symbol();
+        let start_body = vec![Symbol::NonTerminal(grammar.start_symbol.clone())];
 
         let start_item = LR0Item {
             head: start_head.clone(),

@@ -162,26 +162,16 @@ impl LR1Automaton {
 
     /// Construye el autómata completo por BFS sobre los estados.
     ///
-    /// La gramática se AUMENTA automáticamente si el símbolo inicial no tiene
-    /// ya el formato S' / prima.
+    /// La gramática SIEMPRE se aumenta con un símbolo inicial fresco `S' -> S`
+    /// (ver `Grammar::augmented_start_symbol`) — nunca se asume que ya venía
+    /// aumentada por parecerlo.
     pub fn build(grammar: &Grammar, first_sets: &FirstSets) -> Self {
         let mut states: Vec<LR1State> = Vec::new();
         let mut transitions: HashMap<(usize, Symbol), usize> = HashMap::new();
 
         // Gramática aumentada: S' -> S  con lookahead $
-        let (start_head, start_body) = if grammar.start_symbol.ends_with('\'')
-            || grammar.start_symbol.contains("prima")
-        {
-            (
-                grammar.start_symbol.clone(),
-                grammar.productions[0].bodies[0].clone(),
-            )
-        } else {
-            (
-                format!("{}'", grammar.start_symbol),
-                vec![Symbol::NonTerminal(grammar.start_symbol.clone())],
-            )
-        };
+        let start_head = grammar.augmented_start_symbol();
+        let start_body = vec![Symbol::NonTerminal(grammar.start_symbol.clone())];
 
         let seed = LR1Item {
             head: start_head.clone(),

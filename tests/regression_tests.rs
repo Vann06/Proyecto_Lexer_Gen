@@ -45,16 +45,20 @@ fn a3_augmentation_heuristic_does_not_corrupt_table_for_prima_start_symbol() {
     // treats it as if it were.
     let content = "%token NUM PLUS\n%%\nprima : prima PLUS NUM | NUM ;\n";
 
+    // A bare NUM is a legitimately complete derivation of `prima` (via the second
+    // alternative) — it SHOULD be accepted; this is just a sanity check, not the
+    // regression probe (a single-token input can't distinguish premature accept
+    // from correct accept, since there's nothing left to parse either way).
     let resp = api::build_parse_response(content, vec!["NUM".into()], "lalr")
         .expect("grammar should compile");
-    assert!(
-        !resp.accepted,
-        "a bare NUM should NOT satisfy the augmented start rule directly; \
-         if it does, the accept condition is matching on head name instead of the \
-         augmented production (A3): {:?}",
-        resp.trace
-    );
+    assert!(resp.accepted, "a bare NUM should derive 'prima' via NUM alone: {:?}", resp.trace);
 
+    // The real probe: 'NUM PLUS NUM' requires reducing the first NUM up to `prima`
+    // as an INTERMEDIATE step (to build the left-recursive 'prima PLUS NUM'
+    // pattern) before the PLUS/second NUM are even shifted. The buggy heuristic
+    // turned every complete item with head == "prima" into Accept, so that first,
+    // intermediate reduction fired Accept prematurely instead of Reduce-and-continue,
+    // and the trailing 'PLUS NUM' was rejected as unexpected leftover input.
     let resp2 = api::build_parse_response(
         content,
         vec!["NUM".into(), "PLUS".into(), "NUM".into()],
@@ -66,6 +70,16 @@ fn a3_augmentation_heuristic_does_not_corrupt_table_for_prima_start_symbol() {
         "'NUM PLUS NUM' must be accepted by 'prima : prima PLUS NUM | NUM ;' — \
          if it's rejected, the augmentation heuristic corrupted the table (A3): {:?}",
         resp2.error
+    );
+    let acc_positions: Vec<usize> = resp2.trace.iter().enumerate()
+        .filter(|(_, s)| s["action"] == "acc")
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(
+        acc_positions, vec![resp2.trace.len() - 1],
+        "'acc' must appear exactly once, as the LAST step — a premature accept \
+         mid-derivation is exactly the A3 symptom: {:?}",
+        resp2.trace
     );
 }
 
@@ -101,10 +115,11 @@ fn a5_dollar_token_name_does_not_panic_the_driver() {
 #[test]
 fn a7_nonassoc_error_cell_is_not_resurrected_by_a_later_reduce() {
     use analizador_sintactico::tables::{insert_action, Action, Conflict, PrecInfo};
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     let mut action: HashMap<(usize, String), Action> = HashMap::new();
     let mut conflicts: Vec<Conflict> = Vec::new();
+    let mut nonassoc_errors: HashSet<(usize, String)> = HashSet::new();
     let prod_index: HashMap<(String, Vec<Symbol>), usize> = HashMap::new();
 
     let mut prec_map = HashMap::new();
@@ -117,13 +132,13 @@ fn a7_nonassoc_error_cell_is_not_resurrected_by_a_later_reduce() {
     );
 
     // 1. A shift on EQ is already in the table (from a transition).
-    insert_action(&mut action, &mut conflicts, 0, "EQ".to_string(), Action::Shift(5), &prod_index, &prec_map);
+    insert_action(&mut action, &mut conflicts, &mut nonassoc_errors, 0, "EQ".to_string(), Action::Shift(5), &prod_index, &prec_map);
 
     // 2. A complete item reduces on EQ too, body ends in EQ (same precedence level) ->
     //    nonassoc conflict -> the cell should become an explicit error (not just absent).
     let body_a = vec![Symbol::Terminal("EQ".to_string())];
     insert_action(
-        &mut action, &mut conflicts, 0, "EQ".to_string(),
+        &mut action, &mut conflicts, &mut nonassoc_errors, 0, "EQ".to_string(),
         Action::Reduce { head: "A".to_string(), body: body_a },
         &prod_index, &prec_map,
     );
@@ -134,7 +149,7 @@ fn a7_nonassoc_error_cell_is_not_resurrected_by_a_later_reduce() {
     //    and silently re-populates the cell with a Reduce — losing the nonassoc error.
     let body_b = vec![Symbol::Terminal("ID".to_string())];
     insert_action(
-        &mut action, &mut conflicts, 0, "EQ".to_string(),
+        &mut action, &mut conflicts, &mut nonassoc_errors, 0, "EQ".to_string(),
         Action::Reduce { head: "B".to_string(), body: body_b },
         &prod_index, &prec_map,
     );
@@ -144,6 +159,10 @@ fn a7_nonassoc_error_cell_is_not_resurrected_by_a_later_reduce() {
         "the nonassoc error cell at (state 0, 'EQ') was resurrected as a Reduce by a \
          later, unrelated insert_action call (A7): {:?}",
         action.get(&(0, "EQ".to_string()))
+    );
+    assert!(
+        nonassoc_errors.contains(&(0, "EQ".to_string())),
+        "the nonassoc conflict must be recorded explicitly so it can't be resurrected"
     );
 }
 
