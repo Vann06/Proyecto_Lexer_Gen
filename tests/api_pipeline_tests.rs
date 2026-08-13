@@ -66,3 +66,27 @@ fn default_workspace_files_parse_a_default_input_line() {
         );
     }
 }
+
+// B2 — parse_recovering_with_pos (panic-mode recovery) existed in parser_lr.rs but
+// nothing called it, so build_pipeline_response only ever reported the FIRST
+// syntax error on a line even when there were several independent ones. Now
+// wired in for LALR/SLR: verify two unrelated mistakes both get reported.
+#[test]
+fn pipeline_reports_more_than_one_syntax_error_via_panic_mode_recovery() {
+    let yal = "let digit = ['0'-'9']\nlet letter = ['a'-'z']\nrule tokens =\n  | letter { return ID }\n  | digit+ { return NUM }\n  | '='    { return ASSIGN }\n  | ';'    { return SEMI }\n  | ' '    { skip }";
+    let yalp = "%token ID ASSIGN NUM SEMI\n%%\nprogram : stmt_list ;\nstmt_list : stmt_list stmt | stmt ;\nstmt : ID ASSIGN NUM SEMI ;\n";
+    // Two independent mistakes: 'z' where a NUM is expected, and later a stray ';'
+    // where the recovered state expects ASSIGN.
+    let src = "x = 5 ; y = z ; w = 9 ;";
+
+    let resp = api::build_pipeline_response(yal, yalp, src, "lalr")
+        .expect("pipeline should return a response");
+
+    assert!(!resp.accepted, "input has genuine syntax errors, must not be accepted");
+    let syntax_errors: Vec<_> = resp.problems.iter().filter(|p| p["code"] == "P001").collect();
+    assert!(
+        syntax_errors.len() >= 2,
+        "expected at least 2 independently-recovered syntax errors, got {}: {:?}",
+        syntax_errors.len(), resp.problems
+    );
+}

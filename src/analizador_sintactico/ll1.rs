@@ -116,7 +116,13 @@ impl LL1Parser {
 
         while !stack.is_empty() {
             let top = stack.pop().unwrap();
-            let current_token = &input[current_token_idx];
+            // '$' is rejected as a token name at grammar-parse time (Grammar::validate),
+            // so current_token_idx should never run past EOF — index defensively
+            // anyway instead of panicking the request thread (A5).
+            let current_token = match input.get(current_token_idx) {
+                Some(t) => t,
+                None => return Err("Error interno: se agotó la entrada de forma inesperada.".to_string()),
+            };
 
             if top == EOF && *current_token == EOF {
                 println!("¡Parseo exitoso!");
@@ -183,7 +189,12 @@ impl LL1Parser {
         let mut ip = 0usize;
 
         while let Some((top_sym, top_idx)) = stack.pop() {
-            let current = &input[ip];
+            // '$' is rejected as a token name at grammar-parse time, so `ip` should
+            // never run past EOF — index defensively anyway instead of panicking (A5).
+            let current = match input.get(ip) {
+                Some(t) => t,
+                None => return Err("Error interno: se agotó la entrada de forma inesperada.".to_string()),
+            };
 
             if top_sym == EOF && current.kind == EOF {
                 break;

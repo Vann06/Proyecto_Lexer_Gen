@@ -620,6 +620,19 @@ impl Grammar {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        // '$' es el centinela de fin de entrada que el driver LR/LL usa
+        // internamente (ver EOF en lr1.rs/follow.rs). Si un %token se llamara
+        // "$", ACTION[estado, "$"] podría ser un Shift genuino y el driver
+        // leería más allá del final del stream de tokens — un panic por índice
+        // fuera de rango alcanzable desde HTTP (A5). Se rechaza en el parseo en
+        // vez de intentar distinguirlo caso por caso en cada driver.
+        if self.tokens.contains("$") {
+            return Err(
+                "Error crítico de gramática: '$' está reservado como centinela de fin de \
+                 entrada y no puede declararse como %token.".to_string()
+            );
+        }
+
         let mut valid_non_terminals = HashSet::new();
         for prod in &self.productions {
             valid_non_terminals.insert(prod.head.clone());

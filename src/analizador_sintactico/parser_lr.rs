@@ -40,7 +40,11 @@ impl<'a> LRParser<'a> {
 
         loop {
             let s = *state_stack.last().unwrap();
-            let a = &input[ip];
+            // '$' is rejected as a token name at grammar-parse time, so no Shift can
+            // ever push `ip` past it — index defensively anyway instead of panicking (A5).
+            let a = input.get(ip).ok_or_else(|| {
+                "Error interno: se agotó la entrada de forma inesperada.".to_string()
+            })?;
 
             match self.table.action.get(&(s, a.clone())) {
                 Some(Action::Shift(t)) => {
@@ -97,12 +101,17 @@ impl<'a> LRParser<'a> {
 
         loop {
             let s = *state_stack.last().unwrap();
-            let a = &input[ip].kind;
+            // '$' is rejected as a token name at grammar-parse time, so no Shift can
+            // ever push `ip` past it — index defensively anyway instead of panicking (A5).
+            let current = input.get(ip).ok_or_else(|| {
+                "Error interno: se agotó la entrada de forma inesperada.".to_string()
+            })?;
+            let a = &current.kind;
 
             match self.table.action.get(&(s, a.clone())) {
                 Some(Action::Shift(t)) => {
                     let t = *t;
-                    node_stack.push(ParseNode::leaf(&input[ip]));
+                    node_stack.push(ParseNode::leaf(current));
                     state_stack.push(t);
                     ip += 1;
                 }
@@ -172,17 +181,38 @@ impl<'a> LRParser<'a> {
         let mut input = tokens;
         input.push(ParseToken { kind: "$".to_string(), lexeme: String::new() });
         let mut ip = 0usize;
+        // Recuerda la posición de la última vez que entramos en modo pánico SIN que
+        // ningún Shift haya consumido input desde entonces. Si volvemos a entrar en
+        // pánico exactamente en la misma posición, es que la recuperación anterior
+        // (desapilar hasta un estado con acción para el símbolo de sync) llevó a un
+        // ε-reduce que no avanza `ip` y vuelve a fallar — un ciclo real sin cota
+        // (A10). Forzar el avance de un token rompe el ciclo garantizando progreso.
+        let mut last_panic_ip: Option<usize> = None;
 
         loop {
             let s = *state_stack.last().unwrap();
-            let a = input[ip].kind.clone();
+            // '$' is rejected as a token name at grammar-parse time, so no Shift can
+            // ever push `ip` past it — index defensively anyway instead of panicking (A5).
+            let current = match input.get(ip) {
+                Some(t) => t,
+                None => {
+                    errors.push(ParseErrorDetail {
+                        pos: ip,
+                        token: String::new(),
+                        msg: "Error interno: se agotó la entrada de forma inesperada.".to_string(),
+                    });
+                    return (None, errors);
+                }
+            };
+            let a = current.kind.clone();
 
             match self.table.action.get(&(s, a.clone())) {
                 Some(Action::Shift(t)) => {
                     let t = *t;
-                    node_stack.push(ParseNode::leaf(&input[ip]));
+                    node_stack.push(ParseNode::leaf(current));
                     state_stack.push(t);
                     ip += 1;
+                    last_panic_ip = None; // progreso real: se consumió un token
                 }
                 Some(Action::Reduce { head, body }) => {
                     let head = head.clone();
@@ -215,6 +245,29 @@ impl<'a> LRParser<'a> {
                 }
                 None => {
                     // ── Modo pánico ──────────────────────────────────────────
+                    if last_panic_ip == Some(ip) {
+                        // Ya entramos en pánico en esta MISMA posición sin haber
+                        // consumido ningún token desde entonces: la recuperación
+                        // anterior llevó a un ε-reduce que no avanzó `ip` y volvió a
+                        // fallar. Forzar el avance rompe el ciclo (A10).
+                        errors.push(ParseErrorDetail {
+                            pos: ip,
+                            token: a.clone(),
+                            msg: format!(
+                                "Error sintáctico irrecuperable en la posición actual \
+                                 (token '{}'); se descarta para evitar un bucle sin fin.",
+                                a
+                            ),
+                        });
+                        ip += 1;
+                        last_panic_ip = None;
+                        if ip >= input.len() {
+                            return (None, errors);
+                        }
+                        continue;
+                    }
+                    last_panic_ip = Some(ip);
+
                     errors.push(ParseErrorDetail {
                         pos: ip,
                         token: a.clone(),

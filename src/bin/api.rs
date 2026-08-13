@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
+use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::{Any, CorsLayer};
 
 // ─── Request types ────────────────────────────────────────────────────────────
@@ -151,7 +152,13 @@ async fn main() {
         .route("/api/pipeline",        post(run_pipeline))
         .route("/api/workspace",       get(workspace_list))
         .route("/api/workspace/:name", get(workspace_read).put(workspace_write))
-        .layer(cors);
+        .layer(cors)
+        // Last line of defense: turn any panic reachable from arbitrary grammar/
+        // input over HTTP into a 500 response instead of taking down the whole
+        // request (A5). Every panic site this audit found is already fixed at the
+        // source (bound-checked indexing, '$' rejected as a token name), but a
+        // future bug shouldn't be able to bypass that without an explicit test.
+        .layer(CatchPanicLayer::new());
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
     println!("Syntra API · http://0.0.0.0:8080");

@@ -7,13 +7,8 @@ use crate::analizador_sintactico::lalr::{merge_by_core, LALRItem};
 use crate::analizador_sintactico::ll1::LL1Parser;
 use crate::analizador_sintactico::lr0::{LR0Automaton, LR0Item};
 use crate::analizador_sintactico::lr1::LR1Automaton;
-// Unused until panic-mode recovery is wired into build_pipeline_response (planned:
-// parse_recovering_with_pos should report every syntax error on a line, not just the
-// first) — see phase 4 / finding B2 of the refactor plan.
-#[allow(unused_imports)]
 use crate::analizador_sintactico::parse_tree::ParseToken;
-#[allow(unused_imports)]
-use crate::analizador_sintactico::parser_lr::{LRParser, ParseErrorDetail};
+use crate::analizador_sintactico::parser_lr::LRParser;
 use crate::analizador_sintactico::tables::{Action, Conflict, LRTable};
 use crate::regex::parser::parse_regex;
 use crate::runtime::simulator::{LexResult, Simulator};
@@ -283,64 +278,39 @@ pub fn build_pipeline_response(
         if !resp.accepted {
             response.error = Some("Error sintáctico".to_string());
 
-            // Compute which token was consumed according to the trace's remaining length
-            let consumed = resp
-                .trace
-                .last()
-                .and_then(|last| {
-                    last.get("remaining").and_then(|r| r.as_array().map(|arr| token_kinds.len().saturating_sub(arr.len())))
-                })
-                .unwrap_or_else(|| {
-                    resp.trace
-                        .iter()
-                        .filter(|s| {
-                            let a = s.get("action").and_then(|v| v.as_str()).unwrap_or("");
-                            a == "match" || a.starts_with('s')
-                        })
-                        .count()
-                });
+            // Panic-mode recovery (only available for LALR/SLR — LL(1) has no
+            // LRTable/LRParser) reports EVERY syntax error in one pass instead of
+            // just the first (B2: parse_recovering_with_pos existed but nothing
+            // called it). Fall back to the single first-error report — using the
+            // same "which token was the driver stuck on" heuristic as before — when
+            // recovery isn't available or finds nothing (e.g. LL(1) mode).
+            let recovered = collect_lr_syntax_errors(yalp, &token_map, mode);
+            if !recovered.is_empty() {
+                for (kind, lexeme, line, col, msg) in &recovered {
+                    push_syntax_problem(&mut lex_problems, kind, lexeme, *line, *col, msg, &grammar_for_filter.tokens);
+                }
+            } else {
+                // Compute which token was consumed according to the trace's remaining length
+                let consumed = resp
+                    .trace
+                    .last()
+                    .and_then(|last| {
+                        last.get("remaining").and_then(|r| r.as_array().map(|arr| token_kinds.len().saturating_sub(arr.len())))
+                    })
+                    .unwrap_or_else(|| {
+                        resp.trace
+                            .iter()
+                            .filter(|s| {
+                                let a = s.get("action").and_then(|v| v.as_str()).unwrap_or("");
+                                a == "match" || a.starts_with('s')
+                            })
+                            .count()
+                    });
 
-            let loc_entry = token_map.get(consumed).or_else(|| token_map.last());
-            if let Some((kind, lexeme, line, col)) = loc_entry {
-                let base_msg = resp
-                    .error
-                    .clone()
-                    .unwrap_or_else(|| "Error sintáctico".to_string());
-
-                let suggestion = suggest_similar_token(lexeme, &grammar_for_filter.tokens);
-                if let Some(s) = suggestion {
-                    if is_identifier_like(lexeme) && &s != kind {
-                        lex_problems.push(json!({
-                            "level": "err",
-                            "code": "L001",
-                            "msg": format!("Lexema posiblemente mal escrito: '{}' (¿quiso '{}'?)", lexeme, s),
-                            "loc": format!("input.txt:{}:{}", line, col),
-                            "line": line,
-                            "col": col,
-                            "token": kind,
-                        }));
-                    } else {
-                        let msg = format!("{} · lexema \"{}\" (¿quiso \"{}\"?)", base_msg, lexeme, s);
-                        lex_problems.push(json!({
-                            "level": "err",
-                            "code": "P001",
-                            "msg": msg,
-                            "loc": format!("input.txt:{}:{}", line, col),
-                            "line": line,
-                            "col": col,
-                            "token": kind,
-                        }));
-                    }
-                } else {
-                    lex_problems.push(json!({
-                        "level": "err",
-                        "code": "P001",
-                        "msg": format!("{} · lexema \"{}\"", base_msg, lexeme),
-                        "loc": format!("input.txt:{}:{}", line, col),
-                        "line": line,
-                        "col": col,
-                        "token": kind,
-                    }));
+                let loc_entry = token_map.get(consumed).or_else(|| token_map.last());
+                if let Some((kind, lexeme, line, col)) = loc_entry {
+                    let base_msg = resp.error.clone().unwrap_or_else(|| "Error sintáctico".to_string());
+                    push_syntax_problem(&mut lex_problems, kind, lexeme, *line, *col, &base_msg, &grammar_for_filter.tokens);
                 }
             }
         }
@@ -461,6 +431,107 @@ fn build_compile_ll1(content: &str) -> Result<CompileResponse, String> {
     })
 }
 
+/// Modo pánico: recupera TODOS los errores de sintaxis del token_map en una sola
+/// pasada, en vez de solo el primero (B2). Solo disponible para LALR/SLR — LL(1)
+/// no tiene LRTable/LRParser, así que el llamador debe usar el reporte de un solo
+/// error como fallback en ese caso (o si la recuperación no encuentra nada).
+fn collect_lr_syntax_errors(
+    yalp: &str,
+    token_map: &[(String, String, usize, usize)],
+    mode: &str,
+) -> Vec<(String, String, usize, usize, String)> {
+    if mode != "lalr" && mode != "slr" {
+        return Vec::new();
+    }
+    let Ok(grammar) = Grammar::parse_for_lr_from_str(yalp) else { return Vec::new(); };
+    let first_sets = calculate_first(&grammar);
+    let table = if mode == "slr" {
+        let follow_sets = calculate_follow(&grammar, &first_sets);
+        let lr0 = LR0Automaton::build(&grammar);
+        LRTable::build_from_slr(&lr0, &grammar, &follow_sets)
+    } else {
+        let lr1 = LR1Automaton::build(&grammar, &first_sets);
+        let lalr = merge_by_core(lr1);
+        LRTable::build_from_lalr(&lalr, &grammar)
+    };
+
+    let parse_tokens: Vec<ParseToken> = token_map
+        .iter()
+        .map(|(k, lx, _, _)| ParseToken { kind: k.clone(), lexeme: lx.clone() })
+        .collect();
+    // Cualquier token declarado sirve como punto de sincronización: en cuanto se
+    // descarta la entrada hasta encontrar UNO que el estado recuperado pueda
+    // aceptar, se reintenta desde ahí — una heurística genérica razonable sin
+    // conocer de antemano la estructura de la gramática (p. ej. cuál token hace
+    // de separador de sentencias).
+    let sync: Vec<&str> = grammar.tokens.iter().map(|t| t.as_str()).collect();
+
+    let parser = LRParser::new(&table);
+    let (_, errors) = parser.parse_recovering_with_pos(parse_tokens, &sync);
+
+    errors
+        .into_iter()
+        .map(|e| {
+            let (kind, lexeme, line, col) = token_map
+                .get(e.pos)
+                .cloned()
+                .or_else(|| token_map.last().cloned())
+                .unwrap_or_else(|| (e.token.clone(), String::new(), 1, 1));
+            (kind, lexeme, line, col, e.msg)
+        })
+        .collect()
+}
+
+/// Enriquece un error de sintaxis con una sugerencia de token por distancia de
+/// Levenshtein (si el lexema se parece a algún token declarado) y lo empuja como
+/// entrada de `problems`. Compartido entre el reporte de un solo error y el modo
+/// pánico multi-error (B2) para que ambos caminos generen el mismo formato.
+fn push_syntax_problem(
+    lex_problems: &mut Vec<Value>,
+    kind: &str,
+    lexeme: &str,
+    line: usize,
+    col: usize,
+    base_msg: &str,
+    tokens: &HashSet<String>,
+) {
+    let suggestion = suggest_similar_token(lexeme, tokens);
+    if let Some(s) = suggestion {
+        if is_identifier_like(lexeme) && s != kind {
+            lex_problems.push(json!({
+                "level": "err",
+                "code": "L001",
+                "msg": format!("Lexema posiblemente mal escrito: '{}' (¿quiso '{}'?)", lexeme, s),
+                "loc": format!("input.txt:{}:{}", line, col),
+                "line": line,
+                "col": col,
+                "token": kind,
+            }));
+        } else {
+            let msg = format!("{} · lexema \"{}\" (¿quiso \"{}\"?)", base_msg, lexeme, s);
+            lex_problems.push(json!({
+                "level": "err",
+                "code": "P001",
+                "msg": msg,
+                "loc": format!("input.txt:{}:{}", line, col),
+                "line": line,
+                "col": col,
+                "token": kind,
+            }));
+        }
+    } else {
+        lex_problems.push(json!({
+            "level": "err",
+            "code": "P001",
+            "msg": format!("{} · lexema \"{}\"", base_msg, lexeme),
+            "loc": format!("input.txt:{}:{}", line, col),
+            "line": line,
+            "col": col,
+            "token": kind,
+        }));
+    }
+}
+
 fn build_lexer_table_from_str(yal_src: &str) -> Result<TransitionTable, String> {
     let spec = parse_yalex(yal_src).map_err(|e| format!("Error al parsear .yal: {}", e))?;
     let expanded = expand_definitions(&spec);
@@ -502,7 +573,21 @@ fn parse_with_trace_lr(table: &LRTable, tokens: Vec<String>) -> Vec<Value> {
 
     while !done {
         let s = *state_stack.last().unwrap();
-        let a = input[ip].clone();
+        // `$` is rejected as a token name at grammar-parse time (Grammar::validate),
+        // so no Shift can ever advance `ip` past it — but index defensively instead
+        // of panicking the request thread if that invariant is ever broken (A5).
+        let a = match input.get(ip) {
+            Some(t) => t.clone(),
+            None => {
+                trace.push(json!({
+                    "stack": Value::Null,
+                    "remaining": Value::Array(vec![]),
+                    "action": "error",
+                    "desc": "Error interno: se agotó la entrada de forma inesperada.",
+                }));
+                break;
+            }
+        };
 
         // Snapshot BEFORE the action
         let remaining: Vec<Value> = input[ip..].iter().map(|t| json!(t)).collect();
@@ -531,11 +616,22 @@ fn parse_with_trace_lr(table: &LRTable, tokens: Vec<String>) -> Vec<Value> {
                     symbol_stack.pop();
                 }
                 let top = *state_stack.last().unwrap();
-                if let Some(&next) = table.goto.get(&(top, head.clone())) {
-                    state_stack.push(next);
-                    symbol_stack.push(head.clone());
+                match table.goto.get(&(top, head.clone())) {
+                    Some(&next) => {
+                        state_stack.push(next);
+                        symbol_stack.push(head.clone());
+                        ("r".to_string(), format!("{} → {}", head, body_str))
+                    }
+                    None => {
+                        // Tabla interna inconsistente: sin esto, el bucle seguía con la
+                        // pila ya reducida pero sin avanzar, creciendo `trace` sin fin (A12).
+                        done = true;
+                        (
+                            "error".to_string(),
+                            format!("Error interno: GOTO[I{}, {}] no definido tras reducción.", top, head),
+                        )
+                    }
                 }
-                ("r".to_string(), format!("{} → {}", head, body_str))
             }
             Some(Action::Accept) => {
                 done = true;
