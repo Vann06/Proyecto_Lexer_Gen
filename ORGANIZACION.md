@@ -384,7 +384,7 @@ Genera el archivo fuente final del analizador léxico.
 * escribir la tabla de transición
 * escribir la lógica de `next_token`
 * insertar acciones de usuario
-* guardar el archivo generado, por ejemplo `generated/lexer.rs`
+* guardar el archivo generado, por ejemplo `generated/src/lexer.rs`
 
 ### Entrada
 

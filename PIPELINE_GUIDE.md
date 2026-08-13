@@ -2,6 +2,15 @@
 
 Documento para agentes o front-ends que quieran consumir o invocar el sistema.
 
+> **El IDE real (`frontend/IDE/`) no usa nada de esto.** Habla con el servidor
+> HTTP (`src/bin/api.rs`) descrito en [GUIA_USO.md](GUIA_USO.md) —
+> `POST /api/pipeline` hace exactamente lo que describe este documento, pero
+> devuelve JSON en vez de que el caller tenga que invocar un binario y
+> parsear su stdout/stderr. La sección "Flujo completo recomendado para un
+> front-end" de más abajo es el diseño anterior al servidor HTTP; se deja
+> como referencia de los binarios de CLI (siguen siendo útiles para debug
+> manual), no como la integración recomendada.
+
 ---
 
 ## Visión general

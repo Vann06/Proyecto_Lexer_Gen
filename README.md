@@ -1,6 +1,9 @@
 # Lexer Generator
 
-Proyecto de Generador de Analizadores Léxicos a partir de especificaciones en YALex.
+Generador de analizadores léxicos (YALex) y sintácticos LR/LL (YAPar), con una
+API HTTP y un IDE web (`frontend/IDE/`) para compilar gramáticas y ver la
+traza de parseo paso a paso. Ver [GUIA_USO.md](GUIA_USO.md) para levantar el
+IDE + API, o seguir leyendo para el generador de lexers standalone (CLI).
 
 ## Objetivo
 Leer un archivo `.yal`, procesar sus definiciones y reglas, construir internamente los autómatas necesarios y generar un analizador léxico funcional.
@@ -18,69 +21,57 @@ Leer un archivo `.yal`, procesar sus definiciones y reglas, construir internamen
 
 ---
 
-## 2. Estructura general sugerida
+## 2. Estructura general
 
 ```text
 lexer-generator/
 ├── Cargo.toml
 ├── .gitignore
 ├── README.md
+├── Dockerfile.api
+├── docker-compose.yml
+├── frontend/IDE/         # IDE React (servido por nginx en el contenedor)
 ├── examples/
-│   └── basic/
-│       ├── lexer.yal
-│       └── input.txt
-├── generated/
-│   └── .gitkeep
-├── graphs/
-│   └── .gitkeep
-├── tests/
-│   └── smoke_test.rs
+│   ├── lexer/            # .yal de ejemplo (ejemplo_c.yal, hardtest.yal, ...)
+│   ├── grammar/          # .yalp de ejemplo
+│   ├── source/           # fuentes de prueba para tokenizar/parsear
+│   └── cases/            # casos de extremo a extremo (lexer+grammar+input+README por caso)
+├── workspace/            # archivos que sirve /api/workspace (montados como volumen en Docker)
+├── generated/            # salida de `cargo run` — crate standalone con el lexer generado
+├── tests/                # tests de integración (cargo test)
 └── src/
-    ├── main.rs
+    ├── lib.rs            # raíz del crate — declara todos los módulos de abajo
+    ├── main.rs            # CLI del generador de lexers standalone
     ├── error.rs
-    ├── spec/
-    │   ├── mod.rs
-    │   ├── ast.rs
-    │   ├── parser.rs
-    │   └── expand.rs
-    ├── regex/
-    │   ├── mod.rs
-    │   ├── ast.rs
-    │   └── parser.rs
-    ├── automata/
-    │   ├── mod.rs
-    │   ├── nfa.rs
-    │   ├── dfa.rs
-    │   ├── subset.rs
-    │   └── minimize.rs
-    ├── table/
-    │   ├── mod.rs
-    │   └── transition_table.rs
-    ├── runtime/
-    │   ├── mod.rs
-    │   └── simulator.rs
-    ├── codegen/
-    │   ├── mod.rs
-    │   └── rust_codegen.rs
-    └── graph/
-        ├── mod.rs
-        └── dot.rs
+    ├── spec/              # parseo de .yal (header, definiciones, reglas, trailer)
+    ├── regex/              # parseo de expresiones regulares a AST
+    ├── automata/            # Thompson (NFA), subset construction (DFA), minimización
+    ├── table/                # tabla de transiciones del DFA
+    ├── runtime/               # simulador del lexer (maximal munch)
+    ├── codegen/                # emite el lexer.rs standalone
+    ├── graph/                   # exporta AST/DFA a Graphviz DOT
+    ├── analizador_sintactico/    # gramática YAPar, FIRST/FOLLOW, LR(0)/LR(1)/LALR/SLR/LL(1)
+    ├── api/                       # lógica compartida por el servidor HTTP y los tests
+    └── bin/
+        ├── api.rs                 # servidor HTTP (Axum) — expone api:: al IDE
+        ├── test_lalr.rs            # REPL de consola para LALR(1)/LR(1)
+        ├── test_ll1.rs              # REPL de consola para LL(1)
+        └── test_pipeline.rs          # pipeline completo por CLI: .yal + .yalp + fuente → árbol
 ```
 
 ---
 
 
-## Ejecución
+## Ejecución (CLI del generador de lexers)
 
 Pruebas con varios .txt de entrada en `examples/` y generación de lexers en `generated/`.
-Input txt propuestos en el proyecto:
-* `examples/basic/input.txt`: texto de prueba con tokens válidos e inválidos para el lexer generado a partir de `examples/basic/lexer.yal`.
-* `examples/basic/input_test.txt`: otro texto de prueba para verificar el comportamiento del lexer.
-* `examples/basic/input_test2.txt`: otro texto de prueba para verificar el comportamiento del lexer.
-* `examples/basic/input_errors.txt`: texto de prueba con errores léxicos.
+Input txt propuestos en el proyecto (bajo `examples/source/`):
+* `input_test.txt`, `input_test2.txt`: texto de prueba con tokens válidos e inválidos.
+* `input_errors.txt`: texto de prueba con errores léxicos.
 
 ```bash
-
-cargo run -- examples/basic/ejemplo_c.yal examples/basic/input_test2.txt
-
+cargo run -- examples/lexer/ejemplo_c.yal examples/source/input_test2.txt
 ```
+
+El código generado queda en `generated/src/lexer.rs` (crate standalone,
+`cargo run` dentro de `generated/` lo compila y ejecuta sobre el `.txt`).

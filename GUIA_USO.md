@@ -158,12 +158,52 @@ Valores de `mode`: `lalr` (default) · `slr` · `ll1`
 // Response
 {
   "trace": [
-    { "stack": [0], "remaining": ["c","c","d","c","d","$"], "action": "s3", "desc": "Shift a I3" }
+    { "stack": [0, "c", 3], "remaining": ["c","d","c","d","$"], "action": "s3", "desc": "Shift 'c' → I3" }
   ],
   "accepted": true,
   "error": null
 }
 ```
+
+`trace[].stack` **no** es una lista de estados: es un array intercalado
+`[estado, símbolo, estado, símbolo, …]` — siempre un estado más que símbolos,
+así que el último elemento es siempre el estado actual (`stack[stack.length-1]`
+en el frontend). En modo `ll1` la forma del paso es distinta (`stack`/`remaining`
+son pilas de símbolos, no estados, y cada paso trae `pos`).
+
+---
+
+### Pipeline completo (.yal + .yalp + fuente → traza)
+
+`POST http://localhost:8080/api/pipeline`
+
+Combina lexer + parser en una sola llamada: tokeniza `source` con el `.yal`
+dado y parsea el resultado con el `.yalp` dado. Pensado para UN caso de
+prueba por llamada (una línea/expresión) — no agrupa ni separa por saltos de
+línea internamente, así que `source` puede ser un programa de varias líneas.
+
+```json
+// Request
+{
+  "yal_content":  "let digit = ['0'-'9']\nrule tokens =\n  | digit+ { return NUM }\n",
+  "yalp_content": "%token NUM\n%%\nS : NUM ;\n",
+  "source": "42",
+  "mode": "lalr"
+}
+
+// Response — mismo shape que /api/parser/parse, más:
+{
+  "trace": [ /* igual que arriba, cada paso con "line" además */ ],
+  "accepted": true,
+  "error": null,
+  "problems":  [ /* errores léxicos (L001) y sintácticos (P001), con line/col */ ],
+  "token_map": [ { "kind": "NUM", "lexeme": "42", "line": 1, "col": 1 } ]
+}
+```
+
+En modo `lalr`/`slr`, si hay más de un error de sintaxis independiente,
+`problems` los reporta TODOS (recuperación en modo pánico) — no solo el
+primero.
 
 ---
 

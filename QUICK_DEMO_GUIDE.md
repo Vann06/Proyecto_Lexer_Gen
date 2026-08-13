@@ -2,7 +2,7 @@
 
 ## 📌 Checklist Pre-Demo
 
-- [ ] SYNTRA abierto en http://localhost:8000
+- [ ] SYNTRA abierto en http://localhost:4000
 - [ ] Test files descargados en `test_files/`
 - [ ] Script (`SCRIPT_DEMO_LR1.md`) a mano
 - [ ] Entrada lista: `id plus num`

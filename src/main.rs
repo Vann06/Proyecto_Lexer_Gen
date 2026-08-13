@@ -323,7 +323,7 @@ fn main() {{
     println!("Salidas Esperadas Generadas:");
     println!("  - Árbol de Expresión grandote unificado (Ver graphs/ast_grandote.png)");
     println!("  - Un Autómata graficado (Ver graphs/dfa.png)");
-    println!("  - Un programa fuente del analizador léxico (Ver generated/lexer.rs)");
+    println!("  - Un programa fuente del analizador léxico (Ver generated/src/lexer.rs)");
     println!("============================================================");
 
     println!("\n¡Proceso completado correctamente!");
