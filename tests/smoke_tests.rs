@@ -1,7 +1,5 @@
-#![allow(dead_code, unused_imports, unused_assignments)]
-// Integración LALR(1) — usa #[path] ya que no hay lib.rs
-#[path = "../src/analizador_sintactico/mod.rs"]
-mod analizador_sintactico;
+// Integración LALR(1)
+use lexer_generator::analizador_sintactico;
 
 use analizador_sintactico::grammar::Grammar;
 use analizador_sintactico::first::calculate_first;

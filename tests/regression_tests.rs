@@ -1,24 +1,8 @@
-#![allow(dead_code, unused_imports, unused_assignments)]
 // Regression tests for the bugs found in the pre-refactor audit (see the plan file).
 // Each test documents the concrete failure scenario for one bug and is expected to
 // FAIL until that bug is fixed. Keep the bug id (Ax) in the test name / comment so the
 // fix commit can be matched back to this file.
-#[path = "../src/analizador_sintactico/mod.rs"]
-mod analizador_sintactico;
-#[path = "../src/error.rs"]
-mod error;
-#[path = "../src/spec/mod.rs"]
-mod spec;
-#[path = "../src/regex/mod.rs"]
-mod regex;
-#[path = "../src/automata/mod.rs"]
-mod automata;
-#[path = "../src/table/mod.rs"]
-mod table;
-#[path = "../src/runtime/mod.rs"]
-mod runtime;
-#[path = "../src/api/mod.rs"]
-mod api;
+use lexer_generator::{analizador_sintactico, api, automata, regex, runtime, spec, table};
 
 use analizador_sintactico::first::calculate_first;
 use analizador_sintactico::follow::calculate_follow;

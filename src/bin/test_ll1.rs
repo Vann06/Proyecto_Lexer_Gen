@@ -1,7 +1,4 @@
-#![allow(dead_code, unused_imports, unused_assignments)]
-
-#[path = "../analizador_sintactico/mod.rs"]
-mod analizador_sintactico;
+use lexer_generator::analizador_sintactico;
 
 use analizador_sintactico::grammar::{Grammar, Symbol};
 use analizador_sintactico::first::calculate_first;

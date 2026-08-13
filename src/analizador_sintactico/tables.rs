@@ -254,11 +254,11 @@ impl LRTable {
 
 // ─── Precedencia ─────────────────────────────────────────────────────────────
 
-// pub(crate) so tests/regression_tests.rs can drive insert_action directly for the
-// A7 (%nonassoc error-cell resurrection) regression test.
-pub(crate) struct PrecInfo {
-    pub(crate) level: usize,
-    pub(crate) assoc: Associativity,
+// pub so tests/regression_tests.rs (a separate integration-test crate) can drive
+// insert_action directly for the A7 (%nonassoc error-cell resurrection) regression test.
+pub struct PrecInfo {
+    pub level: usize,
+    pub assoc: Associativity,
 }
 
 fn build_prec_map(grammar: &Grammar) -> HashMap<String, PrecInfo> {
@@ -298,8 +298,8 @@ fn resolve_shift_reduce(
 }
 
 /// Intenta insertar una acción en la tabla.  Si ya existe, aplica resolución de conflictos.
-/// pub(crate) so tests/regression_tests.rs can exercise it directly (see a7_* test).
-pub(crate) fn insert_action(
+/// pub so tests/regression_tests.rs (a separate crate) can exercise it directly (see a7_* test).
+pub fn insert_action(
     action: &mut HashMap<(usize, String), Action>,
     conflicts: &mut Vec<Conflict>,
     state: usize,

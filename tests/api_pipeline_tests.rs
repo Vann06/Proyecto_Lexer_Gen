@@ -1,21 +1,5 @@
-#![allow(dead_code, unused_imports, unused_assignments)]
 // Tests for API business logic (no HTTP server required).
-#[path = "../src/analizador_sintactico/mod.rs"]
-mod analizador_sintactico;
-#[path = "../src/error.rs"]
-mod error;
-#[path = "../src/spec/mod.rs"]
-mod spec;
-#[path = "../src/regex/mod.rs"]
-mod regex;
-#[path = "../src/automata/mod.rs"]
-mod automata;
-#[path = "../src/table/mod.rs"]
-mod table;
-#[path = "../src/runtime/mod.rs"]
-mod runtime;
-#[path = "../src/api/mod.rs"]
-mod api;
+use lexer_generator::api;
 
 #[test]
 fn pipeline_reports_lex_error_with_location() {

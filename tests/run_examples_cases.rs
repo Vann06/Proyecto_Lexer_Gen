@@ -1,23 +1,7 @@
-#![allow(dead_code, unused_imports)]
 use std::fs;
 use std::path::Path;
 
-#[path = "../src/analizador_sintactico/mod.rs"]
-mod analizador_sintactico;
-#[path = "../src/error.rs"]
-mod error;
-#[path = "../src/spec/mod.rs"]
-mod spec;
-#[path = "../src/regex/mod.rs"]
-mod regex;
-#[path = "../src/automata/mod.rs"]
-mod automata;
-#[path = "../src/table/mod.rs"]
-mod table;
-#[path = "../src/runtime/mod.rs"]
-mod runtime;
-#[path = "../src/api/mod.rs"]
-mod api;
+use lexer_generator::api;
 
 #[test]
 fn run_all_example_cases() {

@@ -1,13 +1,5 @@
-#![allow(dead_code, unused_imports, unused_assignments)]
 // Tests for YALex/YALP parsing and error handling.
-#[path = "../src/error.rs"]
-mod error;
-#[path = "../src/spec/mod.rs"]
-mod spec;
-#[path = "../src/regex/mod.rs"]
-mod regex;
-#[path = "../src/analizador_sintactico/mod.rs"]
-mod analizador_sintactico;
+use lexer_generator::{analizador_sintactico, regex, spec};
 
 use spec::parser::parse_yalex;
 use regex::parser::parse_regex;

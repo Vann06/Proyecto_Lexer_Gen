@@ -3,6 +3,10 @@ name = "lexer-generator"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "lexer_generator"
+path = "src/lib.rs"
+
 [dependencies]
 thiserror  = "1.0"
 axum       = "0.7"

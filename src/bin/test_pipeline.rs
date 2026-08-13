@@ -1,4 +1,3 @@
-#![allow(dead_code, unused_imports, unused_assignments)]
 // Pipeline end-to-end: archivo fuente → lexer → parser → árbol de derivación.
 //
 // Uso:
@@ -14,23 +13,7 @@
 //   5. Mapea Vec<Token> a Vec<ParseToken> usando el kind extraído del lexer.
 //   6. Llama parse_tree y muestra el árbol en ASCII + escribe DOT a output/.
 
-#[path = "../analizador_sintactico/mod.rs"]
-mod analizador_sintactico;
-
-#[path = "../spec/mod.rs"]
-mod spec;
-#[path = "../regex/mod.rs"]
-mod regex;
-#[path = "../automata/mod.rs"]
-mod automata;
-#[path = "../table/mod.rs"]
-mod table;
-#[path = "../runtime/mod.rs"]
-mod runtime;
-#[path = "../graph/mod.rs"]
-mod graph;
-#[path = "../error.rs"]
-mod error;
+use lexer_generator::{analizador_sintactico, automata, regex, runtime, spec, table};
 
 use std::env;
 use std::fs;

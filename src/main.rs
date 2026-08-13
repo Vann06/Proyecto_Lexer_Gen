@@ -1,5 +1,3 @@
-#![allow(dead_code, unused_imports, unused_assignments)]
-
 // Punto de entrada del generador de lexers.
 //
 // Este programa implementa el pipeline completo para generar un analizador léxico
@@ -47,14 +45,7 @@
 //     - Opcionalmente simula la ejecución en memoria.
 //     - Módulo: `codegen::rust_codegen` / `runtime::simulator`
 //
-mod error;
-mod spec;
-mod regex;
-mod automata;
-mod table;
-mod runtime;
-mod codegen;
-mod graph;
+use lexer_generator::{automata, codegen, graph, regex, runtime, spec, table};
 
 use std::env;
 use std::fs;

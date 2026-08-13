@@ -5,20 +5,32 @@ WORKDIR /app
 # Copiar manifiestos primero para aprovechar cache de capas Docker
 COPY Cargo.toml Cargo.lock ./
 
-# Crear fuentes dummy para que Cargo descargue y compile dependencias
-RUN mkdir -p src/bin src/analizador_sintactico src/automata src/codegen \
-             src/graph src/regex src/runtime src/spec src/table && \
-    echo "fn main(){}" > src/main.rs && \
-    for b in api test_ll1 test_parser test_lr1; do \
-        echo "fn main(){}" > src/bin/$b.rs; \
-    done && \
-    touch src/error.rs && \
-    cargo build --release --bin api 2>/dev/null || true && \
+# Compilar solo las dependencias externas contra fuentes dummy, para que esta capa
+# quede cacheada mientras Cargo.toml/Cargo.lock no cambien. El bin dummy toca las
+# mismas dependencias externas (axum/tokio/tower-http/serde) que el real "api", así
+# el compilador las compila de verdad aquí en vez de solo descargarlas. A diferencia
+# de la versión anterior, los errores de esta etapa YA NO se ocultan: si falla,
+# el build debe fallar aquí y no 3-5 minutos después con menos contexto.
+RUN mkdir -p src/bin && \
+    echo "" > src/lib.rs && \
+    printf '%s\n' \
+      'use axum::{routing::get, Router};' \
+      'use serde::Serialize;' \
+      'use tower_http::cors::{Any, CorsLayer};' \
+      '#[derive(Serialize)]' \
+      'struct Dummy { ok: bool }' \
+      '#[tokio::main]' \
+      'async fn main() {' \
+      '    let _ = serde_json::json!(Dummy { ok: true });' \
+      '    let _ = CorsLayer::new().allow_origin(Any);' \
+      '    let _: Router = Router::new().route("/health", get(|| async { "" }));' \
+      '}' > src/bin/api.rs && \
+    cargo build --release --bin api && \
     rm -rf src/
 
-# Copiar el código real y compilar solo el binario api
+# Copiar el código real y compilar el binario api (único bin que empaqueta la imagen)
 COPY src/ ./src/
-RUN touch src/bin/api.rs && cargo build --release --bin api
+RUN touch src/lib.rs src/bin/api.rs && cargo build --release --bin api
 
 # ── Stage 2: imagen mínima de ejecución ──────────────────────────────────────
 FROM debian:bookworm-slim

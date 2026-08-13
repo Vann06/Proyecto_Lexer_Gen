@@ -7,7 +7,12 @@ use crate::analizador_sintactico::lalr::{merge_by_core, LALRItem};
 use crate::analizador_sintactico::ll1::LL1Parser;
 use crate::analizador_sintactico::lr0::{LR0Automaton, LR0Item};
 use crate::analizador_sintactico::lr1::LR1Automaton;
+// Unused until panic-mode recovery is wired into build_pipeline_response (planned:
+// parse_recovering_with_pos should report every syntax error on a line, not just the
+// first) — see phase 4 / finding B2 of the refactor plan.
+#[allow(unused_imports)]
 use crate::analizador_sintactico::parse_tree::ParseToken;
+#[allow(unused_imports)]
 use crate::analizador_sintactico::parser_lr::{LRParser, ParseErrorDetail};
 use crate::analizador_sintactico::tables::{Action, Conflict, LRTable};
 use crate::regex::parser::parse_regex;

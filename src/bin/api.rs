@@ -1,21 +1,5 @@
-#![allow(dead_code, unused_imports, unused_assignments)]
 // src/bin/api.rs — Servidor HTTP (Axum) que expone el pipeline al frontend
-#[path = "../analizador_sintactico/mod.rs"]
-mod analizador_sintactico;
-#[path = "../spec/mod.rs"]
-mod spec;
-#[path = "../regex/mod.rs"]
-mod regex;
-#[path = "../automata/mod.rs"]
-mod automata;
-#[path = "../table/mod.rs"]
-mod table;
-#[path = "../runtime/mod.rs"]
-mod runtime;
-#[path = "../error.rs"]
-mod error;
-#[path = "../api/mod.rs"]
-mod api;
+use lexer_generator::api;
 
 use axum::{
     extract::{Json, Path},
