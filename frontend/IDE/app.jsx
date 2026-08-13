@@ -6,19 +6,6 @@ const API = "http://localhost:8080";
 
 /* ============================== Helpers ============================== */
 
-function CodeLine({ row, cur, errFlag, warnFlag }){
-  if (row.t === "blank") return <div className={"row " + (cur?"cur":"")}>&nbsp;</div>;
-  if (row.t === "com")   return <div className={"row " + (cur?"cur":"")}><span className="com">{row.v}</span></div>;
-  return (
-    <div className={"row " + (cur?"cur ":"") + (errFlag?"err ":"") + (warnFlag?"warn":"")}>
-      {row.v.map((p,i)=> Array.isArray(p)
-        ? <span key={i} className={p[0]}>{p[1]}</span>
-        : <span key={i}>{p}</span>)}
-      {cur && <span className="caret"/>}
-    </div>
-  );
-}
-
 function FileTree({ active, onPick, onLoadFile }){
   return (
     <div className="filetree">
@@ -772,7 +759,6 @@ function StackView({ step }){
 }
 
 function ParseConsole({ stepIdx, setStep, onParse, mode }){
-  const [input, setInput] = useState("c c d c d");
   const [selectedTestIdx, setSelectedTestIdx] = useState(0);
   const [testCasesPanelWidth, setTestCasesPanelWidth] = useState(0.35);
   const [isDraggingResize, setIsDraggingResize] = useState(false);
@@ -840,6 +826,7 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
         <button className="cbtn icon cyan" onClick={()=>setStep(Math.min(D.TRACE.length-1,stepIdx+1))}>PASO ▶</button>
         <button className="cbtn icon" onClick={()=>setStep(D.TRACE.length-1)}>⏭</button>
       </div>
+      {testCases.length > 0 ? (
       <div style={{display:'flex', gap:0, height:'100%', minHeight:0}}>
           {/* Columna izquierda: Test Cases */}
           <div style={{width: `${testCasesPanelWidth*100}%`, minWidth:'150px', maxWidth:'80%', borderRight:'1px solid var(--line)', overflowY:'auto', padding:'8px', display:'flex', flexDirection:'column'}}>
@@ -850,7 +837,6 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
                   key={idx}
                   onClick={() => {
                     setSelectedTestIdx(idx);
-                    setInput(testCase);
                     onParse(testCase);
                   }}
                   style={{
@@ -1109,13 +1095,27 @@ function App(){
   };
 
   // ── WORKSPACE: carga archivos del servidor al arrancar ──────────────────────
+  // El workspace real puede tener muchos archivos de cada tipo (yal/yalp/txt);
+  // se prefiere el nombre canónico que src/bin/api.rs siembra por defecto
+  // (lexer.yal / parser.yalp / input.txt) si existe, y si no, el primero de
+  // ese tipo en el orden ya alfabético que devuelve el backend — determinístico,
+  // en vez de sobreescribir en cada iteración y quedarse con el último al azar.
+  const PREFERRED_WORKSPACE_NAME = { yal: "lexer.yal", yalp: "parser.yalp", test: "input.txt" };
   const fetchWorkspace = async () => {
     try {
       const res = await fetch(`${API}/api/workspace`);
       if (!res.ok) return;
       const { files } = await res.json();
+      const pickByKind = { yal: null, yalp: null, test: null };
       for (const { name, kind } of files) {
         const slot = kind === "yal" ? "yal" : kind === "yalp" ? "yalp" : "test";
+        if (!pickByKind[slot] || name === PREFERRED_WORKSPACE_NAME[slot]) {
+          pickByKind[slot] = name;
+        }
+      }
+      for (const slot of Object.keys(pickByKind)) {
+        const name = pickByKind[slot];
+        if (!name) continue;
         const content = await fetch(`${API}/api/workspace/${encodeURIComponent(name)}`).then(r => r.text());
         D.FILES[slot].rawContent = content;
         D.FILES[slot].name  = name;

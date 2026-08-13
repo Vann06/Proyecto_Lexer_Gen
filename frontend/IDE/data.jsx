@@ -2,44 +2,6 @@
    Mock data — LR(1) clásico:   S' → S    S → C C    C → c C  |  d
    ========================================================================== */
 
-const YAL_SRC = [
-  { t: "com",   v: "(* lexer.yal — definiciones léxicas *)" },
-  { t: "blank" },
-  { t: "tok", v: [["kw","let"],[" "],["fn","digit"],[" = "],["str","['0'-'9']"]] },
-  { t: "tok", v: [["kw","let"],[" "],["fn","letter"],[" = "],["str","['a'-'z' 'A'-'Z']"]] },
-  { t: "tok", v: [["kw","let"],[" "],["fn","id"],[" = "],["fn","letter"],[" (",""],["fn","letter"],["|"],["fn","digit"],[")*"]] },
-  { t: "blank" },
-  { t: "tok", v: [["kw","rule"],[" "],["fn","tokens"],[" "],["op","="]] },
-  { t: "tok", v: [["op","  | "],["fn","id"],["         { "],["kw","return"],[" ID }"]] },
-  { t: "tok", v: [["op","  | "],["fn","digit"],["+      { "],["kw","return"],[" NUM }"]] },
-  { t: "tok", v: [["op","  | "],["str","'+'"],["          { "],["kw","return"],[" PLUS }"]] },
-  { t: "tok", v: [["op","  | "],["str","'*'"],["          { "],["kw","return"],[" STAR }"]] },
-  { t: "tok", v: [["op","  | "],["str","' '"],["          { skip }"]] },
-];
-
-const YALP_SRC = [
-  { t: "com", v: "(* parser.yalp — gramática LR(1) *)" },
-  { t: "blank" },
-  { t: "tok", v: [["kw","%token"],[" "],["term","c"],[" "],["term","d"]] },
-  { t: "tok", v: [["kw","%start"],[" "],["nonterm","S"]] },
-  { t: "tok", v: [["kw","%%"]] },
-  { t: "blank" },
-  { t: "tok", v: [["nonterm","S"],[" "],["op",":"],["  "],["nonterm","C"],[" "],["nonterm","C"]] },
-  { t: "tok", v: [["op","   ;"]] },
-  { t: "blank" },
-  { t: "tok", v: [["nonterm","C"],[" "],["op",":"],["  "],["term","c"],[" "],["nonterm","C"]] },
-  { t: "tok", v: [["op","   | "],["term","d"]] },
-  { t: "tok", v: [["op","   ;"]] },
-];
-
-const TEST_SRC = [
-  { t: "com", v: "# texto de prueba" },
-  { t: "tok", v: [["op","c c d c d"]] },
-  { t: "blank" },
-  { t: "tok", v: [["op","c d d"]] },
-  { t: "tok", v: [["op","d c d"]] },
-];
-
 // Contenido crudo de cada archivo — usado por el API cuando se hace RUN / PARSEAR
 const YAL_RAW = `let digit = ['0'-'9']
 let letter = ['a'-'z' 'A'-'Z']
@@ -63,9 +25,9 @@ c d d
 d c d`;
 
 const FILES = {
-  yal:  { name: "lexer.yal",   path: "src/lexer.yal",   src: YAL_SRC,  kind:"yal",  current: 9, badges:{warn:1}, rawContent: YAL_RAW,  dirty: false },
-  yalp: { name: "parser.yalp", path: "src/parser.yalp", src: YALP_SRC, kind:"yalp", current: 7,                  rawContent: YALP_RAW, dirty: false },
-  test: { name: "input.txt",   path: "tests/input.txt", src: TEST_SRC, kind:"txt",  current: 2,                  rawContent: TEST_RAW, dirty: false },
+  yal:  { name: "lexer.yal",   path: "src/lexer.yal",   kind:"yal",  current: 9, badges:{warn:1}, rawContent: YAL_RAW,  dirty: false },
+  yalp: { name: "parser.yalp", path: "src/parser.yalp", kind:"yalp", current: 7,                  rawContent: YALP_RAW, dirty: false },
+  test: { name: "input.txt",   path: "tests/input.txt", kind:"txt",  current: 2,                  rawContent: TEST_RAW, dirty: false },
 };
 
 /* ---- LR(1) states for S' → S    S → CC    C → cC | d ---- */
