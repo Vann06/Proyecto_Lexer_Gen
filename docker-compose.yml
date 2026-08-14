@@ -11,7 +11,7 @@ services:
       - ./workspace:/app/workspace
     restart: unless-stopped
 
-  # UI estática — sirve el IDE React en :3000
+  # UI estática — sirve el IDE React en :4000
   frontend:
     build:
       context: ./frontend/IDE

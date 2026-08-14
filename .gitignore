@@ -12,6 +12,9 @@
 /graphs/*
 !/graphs/.gitkeep
 
+/output/*
+!/output/.gitkeep
+
 # OS / Editor
 .DS_Store
 Thumbs.db

@@ -15,5 +15,5 @@ Arithmetic with subtraction, division, and numeric literals.
 
 ## Run
 ```
-python src/main.py --cli tests/cases/02_arithmetic_extended/lexer.yal tests/cases/02_arithmetic_extended/grammar.yapar tests/cases/02_arithmetic_extended/input.txt
+cargo run --bin test_pipeline -- examples/cases/02_arithmetic_extended/grammar.yapar examples/cases/02_arithmetic_extended/lexer.yal examples/cases/02_arithmetic_extended/input.txt
 ```

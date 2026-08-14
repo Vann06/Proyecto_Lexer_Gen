@@ -22,7 +22,7 @@ All 8 inputs should be **REJECT** under SLR(1) and LALR, with descriptive error 
 
 ## Run
 ```
-python src/main.py --cli tests/cases/06_rejection_examples/lexer.yal tests/cases/06_rejection_examples/grammar.yapar tests/cases/06_rejection_examples/input.txt
+cargo run --bin test_pipeline -- examples/cases/06_rejection_examples/grammar.yapar examples/cases/06_rejection_examples/lexer.yal examples/cases/06_rejection_examples/input.txt
 ```
 
 In the GUI, rejected lines are highlighted red in the input editor with wavy underline.

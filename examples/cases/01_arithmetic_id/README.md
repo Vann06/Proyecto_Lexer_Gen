@@ -16,5 +16,5 @@ Classic LR grammar for arithmetic expressions over identifiers.
 
 ## Run
 ```
-python src/main.py --cli tests/cases/01_arithmetic_id/lexer.yal tests/cases/01_arithmetic_id/grammar.yapar tests/cases/01_arithmetic_id/input.txt
+cargo run --bin test_pipeline -- examples/cases/01_arithmetic_id/grammar.yapar examples/cases/01_arithmetic_id/lexer.yal examples/cases/01_arithmetic_id/input.txt
 ```

@@ -14,5 +14,5 @@ Same as case 01 but with NUMBER instead of ID.
 
 ## Run
 ```
-python src/main.py --cli tests/cases/03_arithmetic_numbers/lexer.yal tests/cases/03_arithmetic_numbers/grammar.yapar tests/cases/03_arithmetic_numbers/input.txt
+cargo run --bin test_pipeline -- examples/cases/03_arithmetic_numbers/grammar.yapar examples/cases/03_arithmetic_numbers/lexer.yal examples/cases/03_arithmetic_numbers/input.txt
 ```

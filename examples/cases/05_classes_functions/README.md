@@ -25,5 +25,5 @@ After running, check `output/tree_01.png` through `output/tree_05.png` for visua
 
 ## Run
 ```
-python src/main.py --cli tests/cases/05_classes_functions/lexer.yal tests/cases/05_classes_functions/grammar.yapar tests/cases/05_classes_functions/input.txt
+cargo run --bin test_pipeline -- examples/cases/05_classes_functions/grammar.yapar examples/cases/05_classes_functions/lexer.yal examples/cases/05_classes_functions/input.txt
 ```

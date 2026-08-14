@@ -14,5 +14,5 @@ Statement-level grammar with assignment (`:=`), comparison (`<`, `=`), and arith
 
 ## Run
 ```
-python src/main.py --cli tests/cases/04_assignments/lexer.yal tests/cases/04_assignments/grammar.yapar tests/cases/04_assignments/input.txt
+cargo run --bin test_pipeline -- examples/cases/04_assignments/grammar.yapar examples/cases/04_assignments/lexer.yal examples/cases/04_assignments/input.txt
 ```
