@@ -109,37 +109,12 @@ const PROBLEMS = [
   { level:"warn", code:"W104", msg:"terminal 'c' usado 4 veces — considera token nombrado", loc:"parser.yalp:9" },
 ];
 
-/* generated lexer code (mock) */
-const GEN_CODE = String.raw`// auto-generated · lexer.rs
-use crate::token::Token;
-
-pub struct Lexer<'a> {
-    src: &'a [u8],
-    pos: usize,
-    line: u32,
-    col:  u32,
-}
-
-impl<'a> Lexer<'a> {
-    pub fn new(src: &'a str) -> Self {
-        Self { src: src.as_bytes(), pos: 0, line: 1, col: 1 }
-    }
-
-    pub fn next_token(&mut self) -> Option<Token> {
-        self.skip_ws();
-        let start = self.pos;
-        let ch = *self.src.get(self.pos)?;
-        match ch {
-            b'c' => { self.advance(); Some(Token::C) }
-            b'd' => { self.advance(); Some(Token::D) }
-            _   => None
-        }
-    }
-}`;
-
 window.IDE_DATA = {
   FILES, STATES, ACTION, GOTO, TERMINALS, NONTERMINALS,
-  FIRST, FOLLOW, PRODS, TRACE, TOKENS, PROBLEMS, GEN_CODE,
+  FIRST, FOLLOW, PRODS, TRACE, TOKENS, PROBLEMS,
+  // Llenado por /api/codegen (ver handleRun en app.jsx) — antes era un mock
+  // hardcodeado que nunca reflejaba el .yal cargado.
+  GEN_CODE: "",
   LR0_DOT: "",
   PARSE_TREE_DOT: "",
 };

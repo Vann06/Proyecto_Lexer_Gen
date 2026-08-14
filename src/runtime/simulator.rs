@@ -131,52 +131,9 @@ impl<'a> Simulator<'a> {
             self.col = last_accept_col;
             let lexeme: String = self.input[start_pos..accept_pos].iter().collect();
             let act = last_accept_token.unwrap_or_default();
-            let clean_act = act.trim();
-            let kind_name = if clean_act.is_empty()
-                || clean_act.eq_ignore_ascii_case("skip")
-                || clean_act.eq_ignore_ascii_case("ignore")
-            {
-                // Reglas con acciones vacías, `skip` o `ignore` descartan el token
-                // (ej. ws { }, ws { skip }).
-                "Ignored".to_string()
-            } else if clean_act.starts_with("return") {
-                // Manejar acciones del estilo `return NUM` o `return Token::NUM`
-                let tail = clean_act.trim_start_matches("return").trim();
-                if let Some(idx) = tail.find("Token::") {
-                    let tail = &tail[idx + 7..];
-                    let end = tail
-                        .find(|c: char| !c.is_alphanumeric() && c != '_')
-                        .unwrap_or(tail.len());
-                    tail[..end].to_string()
-                } else if tail.starts_with('"') {
-                    if let Some(second_quote) = tail[1..].find('"') {
-                        tail[1..1 + second_quote].to_string()
-                    } else {
-                        tail.to_string()
-                    }
-                } else {
-                    let end = tail
-                        .find(|c: char| !c.is_alphanumeric() && c != '_')
-                        .unwrap_or(tail.len());
-                    tail[..end].to_string()
-                }
-            } else if let Some(idx) = act.find("Token::") {
-                let tail = &act[idx + 7..];
-                let end = tail
-                    .find(|c: char| !c.is_alphanumeric() && c != '_')
-                    .unwrap_or(tail.len());
-                tail[..end].to_string()
-            } else if act.contains("None") {
-                "Ignored".to_string()
-            } else if let Some(first_quote) = act.find('"') {
-                if let Some(second_quote) = act[first_quote + 1..].find('"') {
-                    act[first_quote + 1..first_quote + 1 + second_quote].to_string()
-                } else {
-                    clean_act.to_string()
-                }
-            } else {
-                clean_act.to_string()
-            };
+            // Extracción de kind: ver transition_table::kind_from_action, que es
+            // la única fuente de verdad compartida con codegen::rust_codegen.
+            let kind_name = crate::table::transition_table::kind_from_action(&act);
 
             LexResult::Token(Token {
                 kind: kind_name,

@@ -33,7 +33,7 @@ pub struct ProdData {
     pub rhs: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct ProblemData {
     pub level: String,
     pub code: String,
@@ -48,6 +48,14 @@ pub struct ParseResponse {
     pub error: Option<String>,
     pub problems: Vec<Value>,
     pub token_map: Vec<Value>,
+}
+
+#[derive(Serialize)]
+pub struct CodegenResponse {
+    pub code: String,
+    pub n_states: usize,
+    pub indent_sensitive: bool,
+    pub problems: Vec<ProblemData>,
 }
 
 #[derive(Serialize)]
@@ -553,7 +561,14 @@ fn push_syntax_problem(
     }
 }
 
-fn build_lexer_table_from_str(yal_src: &str) -> Result<TransitionTable, String> {
+/// Corre el pipeline lexer completo (parse .yal → expandir macros → NFA por
+/// regla → NFA maestro → DFA por subconjuntos → DFA minimizado → tabla) y
+/// devuelve TODO lo que produce, no solo la tabla — `codegen::rust_codegen`
+/// necesita además `spec.header`/`spec.trailer` y las reglas expandidas,
+/// que la versión vieja (que solo devolvía la tabla) descartaba.
+pub fn build_lexer_artifacts(
+    yal_src: &str,
+) -> Result<(crate::spec::ast::SpecIR, Vec<crate::spec::expand::ExpandedRule>, TransitionTable), String> {
     let spec = parse_yalex(yal_src).map_err(|e| format!("Error al parsear .yal: {}", e))?;
     let expanded = expand_definitions(&spec);
 
@@ -571,7 +586,59 @@ fn build_lexer_table_from_str(yal_src: &str) -> Result<TransitionTable, String> 
     let master = crate::automata::nfa::combine_nfas(nfas, &mut id_counter);
     let dfa = crate::automata::subset::build_dfa_from_nfa(&master);
     let min_dfa = crate::automata::minimize::minimize_dfa(&dfa);
-    Ok(crate::table::transition_table::build(&min_dfa))
+    let table = crate::table::transition_table::build(&min_dfa);
+    Ok((spec, expanded, table))
+}
+
+fn build_lexer_table_from_str(yal_src: &str) -> Result<TransitionTable, String> {
+    build_lexer_artifacts(yal_src).map(|(_, _, table)| table)
+}
+
+/// Genera el lexer standalone en Rust para el `.yal` dado. `yalp` es
+/// opcional (pasar `""` si no hay gramática cargada): sin ella el código se
+/// genera igual, solo que sin filtrado de ignorables ni soporte de
+/// indentación, porque esas dos cosas dependen de qué declara el `.yalp`
+/// (`grammar.ignores` y si NEWLINE+INDENT+DEDENT están declarados — ver
+/// `runtime::indent::is_indent_sensitive`).
+pub fn build_codegen_response(yal: &str, yalp: &str) -> Result<CodegenResponse, String> {
+    let (spec, expanded, table) = build_lexer_artifacts(yal)?;
+
+    let mut opts = crate::codegen::rust_codegen::CodegenOptions::default();
+    let mut problems = Vec::new();
+    if !yalp.trim().is_empty() {
+        match Grammar::parse_for_lr_from_str(yalp) {
+            Ok(grammar) => {
+                opts.indent_sensitive = indent::is_indent_sensitive(&grammar.tokens);
+                opts.ignored_kinds = grammar.ignores.iter().cloned().collect();
+            }
+            Err(e) => {
+                // El .yal ya generó tabla sin problema; un .yalp inválido no
+                // debe tumbar la generación del lexer, solo degrada (sin
+                // filtrado de ignorables ni indentación) y se reporta.
+                problems.push(ProblemData {
+                    level: "warn".to_string(),
+                    code: "G001".to_string(),
+                    msg: format!("No se pudo leer parser.yalp para codegen: {}", e),
+                    loc: "parser.yalp".to_string(),
+                });
+            }
+        }
+    }
+
+    let code = crate::codegen::rust_codegen::emit_string(
+        &table,
+        &expanded,
+        spec.header.as_deref(),
+        spec.trailer.as_deref(),
+        &opts,
+    );
+
+    Ok(CodegenResponse {
+        n_states: table.n_states,
+        indent_sensitive: opts.indent_sensitive,
+        code,
+        problems,
+    })
 }
 
 fn lex_normalize_kind(kind: &str) -> String {

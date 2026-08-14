@@ -34,6 +34,63 @@ impl TransitionTable {
     }
 }
 
+/// Deriva el nombre del token a partir del código de acción de una regla
+/// del `.yal` (el string crudo guardado en `accept[state]`, ej. `return NUM`,
+/// `Token::Id`, `{ "PLUS" }`, `skip`, o vacío). Única fuente de verdad para
+/// esto: antes vivía completa en `Simulator::next_token` y, por separado,
+/// una versión empobrecida en `codegen::rust_codegen` que solo entendía
+/// `Token::X` (con fallback a `"Unknown"`) — 5 de los 8 `.yal` de ejemplo
+/// del repo (hardtest, hardtest_sim, miniprog, python_hard, python) usan el
+/// estilo `{ "X" }`, que esa copia nunca reconocía.
+pub fn kind_from_action(action: &str) -> String {
+    let clean_act = action.trim();
+    if clean_act.is_empty()
+        || clean_act.eq_ignore_ascii_case("skip")
+        || clean_act.eq_ignore_ascii_case("ignore")
+    {
+        // Reglas con acciones vacías, `skip` o `ignore` descartan el token
+        // (ej. ws { }, ws { skip }).
+        "Ignored".to_string()
+    } else if clean_act.starts_with("return") {
+        // Manejar acciones del estilo `return NUM` o `return Token::NUM`
+        let tail = clean_act.trim_start_matches("return").trim();
+        if let Some(idx) = tail.find("Token::") {
+            let tail = &tail[idx + 7..];
+            let end = tail
+                .find(|c: char| !c.is_alphanumeric() && c != '_')
+                .unwrap_or(tail.len());
+            tail[..end].to_string()
+        } else if tail.starts_with('"') {
+            if let Some(second_quote) = tail[1..].find('"') {
+                tail[1..1 + second_quote].to_string()
+            } else {
+                tail.to_string()
+            }
+        } else {
+            let end = tail
+                .find(|c: char| !c.is_alphanumeric() && c != '_')
+                .unwrap_or(tail.len());
+            tail[..end].to_string()
+        }
+    } else if let Some(idx) = action.find("Token::") {
+        let tail = &action[idx + 7..];
+        let end = tail
+            .find(|c: char| !c.is_alphanumeric() && c != '_')
+            .unwrap_or(tail.len());
+        tail[..end].to_string()
+    } else if action.contains("None") {
+        "Ignored".to_string()
+    } else if let Some(first_quote) = action.find('"') {
+        if let Some(second_quote) = action[first_quote + 1..].find('"') {
+            action[first_quote + 1..first_quote + 1 + second_quote].to_string()
+        } else {
+            clean_act.to_string()
+        }
+    } else {
+        clean_act.to_string()
+    }
+}
+
 /// Construye la tabla de transición a partir del DFA minimizado.
 /// Se asume que los IDs de estado del DFA son contiguos 0..n-1.
 pub fn build(dfa: &Dfa) -> TransitionTable {
@@ -146,5 +203,47 @@ mod tests {
         assert_eq!(tt.next(0, '5'), 1);
         assert_eq!(tt.next(0, 'a'), DEAD);
         assert_eq!(tt.next(1, '9'), 1);
+    }
+
+    #[test]
+    fn kind_from_action_handles_token_colon_style() {
+        assert_eq!(kind_from_action("return Token::NUM;"), "NUM");
+        assert_eq!(kind_from_action("Token::Id"), "Id");
+    }
+
+    #[test]
+    fn kind_from_action_handles_return_bare_ident() {
+        assert_eq!(kind_from_action("return NUM"), "NUM");
+    }
+
+    #[test]
+    fn kind_from_action_handles_return_quoted_string() {
+        assert_eq!(kind_from_action(r#"return "NUM""#), "NUM");
+    }
+
+    #[test]
+    fn kind_from_action_handles_bare_quoted_string() {
+        // Estilo usado por 5 de los 8 .yal de ejemplo del repo (python_hard,
+        // hardtest, miniprog, ...) — el bug que este cambio arregla: la copia
+        // vieja en rust_codegen no reconocía este caso y devolvía "Unknown".
+        assert_eq!(kind_from_action(r#"{ "PLUS" }"#), "PLUS");
+    }
+
+    #[test]
+    fn kind_from_action_handles_skip_and_ignore() {
+        assert_eq!(kind_from_action("skip"), "Ignored");
+        assert_eq!(kind_from_action("  Ignore  "), "Ignored");
+        assert_eq!(kind_from_action(""), "Ignored");
+        assert_eq!(kind_from_action("   "), "Ignored");
+    }
+
+    #[test]
+    fn kind_from_action_handles_none() {
+        assert_eq!(kind_from_action("None"), "Ignored");
+    }
+
+    #[test]
+    fn kind_from_action_falls_back_to_trimmed_action() {
+        assert_eq!(kind_from_action("  PLUS  "), "PLUS");
     }
 }

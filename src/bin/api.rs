@@ -41,6 +41,13 @@ struct PipelineRequest {
     mode: String,
 }
 
+#[derive(Deserialize)]
+struct CodegenRequest {
+    yal_content: String,
+    #[serde(default)]
+    yalp_content: String,
+}
+
 fn default_mode() -> String { "lalr".to_string() }
 
 #[derive(Serialize)]
@@ -123,6 +130,14 @@ async fn run_pipeline(
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))
 }
 
+async fn run_codegen(
+    Json(req): Json<CodegenRequest>,
+) -> Result<Json<api::CodegenResponse>, (StatusCode, Json<Value>)> {
+    api::build_codegen_response(&req.yal_content, &req.yalp_content)
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -150,6 +165,7 @@ async fn main() {
         .route("/api/parser/compile",  post(compile_parser))
         .route("/api/parser/parse",    post(parse_tokens))
         .route("/api/pipeline",        post(run_pipeline))
+        .route("/api/codegen",         post(run_codegen))
         .route("/api/workspace",       get(workspace_list))
         .route("/api/workspace/:name", get(workspace_read).put(workspace_write))
         .layer(cors)

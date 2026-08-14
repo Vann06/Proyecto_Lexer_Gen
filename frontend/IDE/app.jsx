@@ -495,8 +495,16 @@ function LR0Graph({ renderKey }){
 }
 
 function GeneratedCode(){
-  // simple highlighter
   const code = D.GEN_CODE;
+  if (!code) {
+    return (
+      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
+        ▍ CÓDIGO GENERADO
+        <span className="dim" style={{marginLeft:10}}>· ejecuta RUN primero</span>
+      </div>
+    );
+  }
+  // simple highlighter
   // crude split for visual sugar
   const lines = code.split("\n").map((ln,i)=>{
     const t = ln
@@ -510,10 +518,11 @@ function GeneratedCode(){
     });
     return <div key={i}>{parts.length?parts:<>&nbsp;</>}</div>;
   });
+  const outName = (D.FILES.yal.name || "lexer.yal").replace(/\.(yal|yalex)$/i, "") + ".rs";
   return (
     <div>
       <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
-        ▍ CÓDIGO GENERADO · build/lexer.rs · {code.split("\n").length} líneas
+        ▍ CÓDIGO GENERADO · {outName} · {code.split("\n").length} líneas
       </div>
       <div className="gen">{lines}</div>
     </div>
@@ -1216,14 +1225,47 @@ function App(){
       setStep(0);
       rerender();
 
-      // Si hay archivo .txt cargado, auto-ejecutar primer test case
+      // Generar el lexer standalone real para la pestaña CÓD.GEN (antes era
+      // un mock hardcodeado que nunca reflejaba el .yal cargado — ver
+      // data.jsx). Un fallo de codegen no debe tumbar el RUN: se registra
+      // aparte y se sigue, en vez de caer en el catch de más abajo.
+      if (D.FILES.yal.rawContent && D.FILES.yal.rawContent.trim()) {
+        try {
+          const genRes = await fetch(`${API}/api/codegen`, {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify({
+              yal_content:  D.FILES.yal.rawContent,
+              yalp_content: D.FILES.yalp.rawContent,
+            }),
+          });
+          if (genRes.ok) {
+            const genData = await genRes.json();
+            D.GEN_CODE = genData.code || "";
+            rerender();
+          } else {
+            console.error("API /codegen:", await genRes.text());
+          }
+        } catch(genErr) {
+          console.error("API /codegen:", genErr);
+        }
+      }
+
+      // Si hay archivo .txt cargado, auto-ejecutar un test case.
+      // Gramáticas sensibles a indentación (NEWLINE+INDENT+DEDENT declarados,
+      // ver src/runtime/indent.rs) tratan el .txt como UN programa: una sola
+      // línea nunca puede cerrar un `suite: NEWLINE INDENT ...`, así que ahí
+      // se manda el archivo completo. El resto de gramáticas usan cada línea
+      // como un caso de prueba independiente, así que se conserva el
+      // comportamiento de solo previsualizar la primera.
       if (D.FILES.test && D.FILES.test.rawContent) {
-        const firstLine = D.FILES.test.rawContent
-          .split('\n')
-          .map(l => l.trim())
-          .find(l => l.length > 0);
-        if (firstLine) {
-          setTimeout(() => handleParse(firstLine), 100);
+        const terms = new Set(data.terminals || []);
+        const isIndentSensitive = terms.has('NEWLINE') && terms.has('INDENT') && terms.has('DEDENT');
+        const testInput = isIndentSensitive
+          ? D.FILES.test.rawContent
+          : D.FILES.test.rawContent.split('\n').map(l => l.trim()).find(l => l.length > 0);
+        if (testInput) {
+          setTimeout(() => handleParse(testInput), 100);
         }
       }
     } catch(e) {

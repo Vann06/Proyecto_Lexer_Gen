@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::path::Path;
-use crate::table::transition_table::TransitionTable;
+use crate::table::transition_table::{self, TransitionTable};
 use crate::spec::expand::ExpandedRule;
 
 /// Escapa un string para usarlo dentro de un literal Rust `"..."`.
@@ -22,19 +22,32 @@ fn escape_rust_string(s: &str) -> String {
     out
 }
 
-/// Genera el archivo `path` con el lexer en Rust.
-/// Crea el directorio padre si no existe.
-pub fn emit_file(
-    path: &str,
+/// Opciones de generación que dependen de la gramática (`.yalp`) — el lexer
+/// generado en sí no tiene noción de `Grammar`, así que lo que se necesita
+/// de ahí se hornea aquí en el momento de generar.
+#[derive(Debug, Clone, Default)]
+pub struct CodegenOptions {
+    /// Si es true, emite `synthesize_indentation`/`tokenize_for_parser`
+    /// (ver `runtime::indent`). Debe venir de
+    /// `indent::is_indent_sensitive(&grammar.tokens)`.
+    pub indent_sensitive: bool,
+    /// Kinds (en cualquier case; se normalizan a MAYÚSCULAS) a descartar
+    /// antes de sintetizar indentación — típicamente `grammar.ignores`
+    /// (ej. COMMENT, DOCSTRING). El sentinel "IGNORED" (tokens con acción
+    /// vacía/`skip`/`ignore`, ej. whitespace) siempre se incluye, sin
+    /// necesidad de listarlo.
+    pub ignored_kinds: Vec<String>,
+}
+
+/// Construye el código Rust del lexer como String, sin tocar el filesystem.
+/// `emit_file` es un wrapper delgado sobre esto que además escribe a disco.
+pub fn emit_string(
     tt: &TransitionTable,
     _rules: &[ExpandedRule],
     header: Option<&str>,
     trailer: Option<&str>,
-) -> std::io::Result<()> {
-    if let Some(parent) = Path::new(path).parent() {
-        fs::create_dir_all(parent)?;
-    }
-
+    opts: &CodegenOptions,
+) -> String {
     let mut code = String::new();
 
     code.push_str("// Generado automáticamente por YALex — NO editar\n\n");
@@ -66,14 +79,13 @@ pub fn emit_file(
     for s in 0..n {
         match &tt.accept[s] {
             Some(act) => {
-                let mut kind_name = "Unknown".to_string();
-                if let Some(idx) = act.find("Token::") {
-                    let tail = &act[idx + 7..];
-                    let end = tail.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(tail.len());
-                    kind_name = tail[..end].to_string();
-                } else if act.contains("None") {
-                    kind_name = "Ignored".to_string();
-                }
+                // Extracción de kind vía transition_table::kind_from_action —
+                // única fuente de verdad compartida con el Simulator interpretado
+                // (antes esta copia solo entendía `Token::X` y caía a "Unknown"
+                // para el estilo `{ "X" }` que usan 5 de los 8 .yal de ejemplo).
+                // Se normaliza a MAYÚSCULAS para calzar con los %token del .yalp,
+                // igual que hace el pipeline interpretado (lex_normalize_kind).
+                let kind_name = transition_table::kind_from_action(act).to_uppercase();
                 code.push_str(&format!("    Some((\"{}\", \"{}\")),\n", kind_name, escape_rust_string(act)));
             }
             None => code.push_str("    None,\n"),
@@ -140,11 +152,119 @@ pub fn emit_file(
     code.push_str("    (tokens, errors)\n");
     code.push_str("}\n");
 
+    if opts.indent_sensitive {
+        code.push('\n');
+        emit_indent_support(&mut code, &opts.ignored_kinds);
+    }
+
     if let Some(t) = trailer {
         code.push_str("\n\n");
         code.push_str(t.trim());
         code.push('\n');
     }
 
-    fs::write(path, code)
+    code
+}
+
+/// Emite el post-procesamiento de indentación estilo Python — mismo
+/// algoritmo que `runtime::indent::synthesize` (ver ese módulo para la
+/// explicación completa), pero como código fuente Rust en vez de una
+/// función que corre en el intérprete: el lexer generado es standalone y
+/// no tiene acceso a esa función en tiempo de ejecución.
+fn emit_indent_support(code: &mut String, ignored_kinds: &[String]) {
+    // El sentinel "IGNORED" (acciones vacías/skip/ignore, ej. whitespace)
+    // siempre se filtra, sin que el llamador tenga que pedirlo.
+    let mut ignored: Vec<String> = vec!["IGNORED".to_string()];
+    for k in ignored_kinds {
+        let up = k.to_uppercase();
+        if !ignored.contains(&up) {
+            ignored.push(up);
+        }
+    }
+    let ignored_list = ignored
+        .iter()
+        .map(|k| format!("\"{}\"", escape_rust_string(k)))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    code.push_str(&format!("static IGNORED_KINDS: &[&str] = &[{}];\n\n", ignored_list));
+
+    code.push_str("/// Sintetiza tokens INDENT/DEDENT (estilo Python) sobre un stream YA\n");
+    code.push_str("/// FILTRADO de ignorables. Ver runtime::indent::synthesize (la función\n");
+    code.push_str("/// de la que este código es un port literal) para la explicación\n");
+    code.push_str("/// completa del algoritmo: pila de niveles de indentación comparada por\n");
+    code.push_str("/// línea lógica, NEWLINEs huérfanos de línea en blanco/comentario\n");
+    code.push_str("/// descartados, NEWLINE final sintetizado si falta antes de EOF.\n");
+    code.push_str("pub fn synthesize_indentation(tokens: Vec<Token>) -> Result<Vec<Token>, String> {\n");
+    code.push_str("    let mut stack: Vec<usize> = vec![0];\n");
+    code.push_str("    let mut out: Vec<Token> = Vec::with_capacity(tokens.len());\n");
+    code.push_str("    let mut at_line_start = true;\n");
+    code.push_str("    let mut last_line = 1usize;\n\n");
+    code.push_str("    for tok in tokens {\n");
+    code.push_str("        if tok.kind == \"NEWLINE\" && at_line_start {\n");
+    code.push_str("            last_line = tok.line;\n");
+    code.push_str("            continue;\n");
+    code.push_str("        }\n\n");
+    code.push_str("        if at_line_start && tok.kind != \"NEWLINE\" {\n");
+    code.push_str("            let indent = tok.col.saturating_sub(1);\n");
+    code.push_str("            let top = *stack.last().unwrap();\n");
+    code.push_str("            if indent > top {\n");
+    code.push_str("                stack.push(indent);\n");
+    code.push_str("                out.push(Token { kind: \"INDENT\", action: \"\", lexeme: String::new(), line: tok.line, col: 1 });\n");
+    code.push_str("            } else {\n");
+    code.push_str("                while indent < *stack.last().unwrap() {\n");
+    code.push_str("                    stack.pop();\n");
+    code.push_str("                    out.push(Token { kind: \"DEDENT\", action: \"\", lexeme: String::new(), line: tok.line, col: 1 });\n");
+    code.push_str("                }\n");
+    code.push_str("                if indent != *stack.last().unwrap() {\n");
+    code.push_str("                    return Err(format!(\n");
+    code.push_str("                        \"Indentación inconsistente en la línea {}: la columna {} no coincide con ningún nivel de indentación abierto ({:?}).\",\n");
+    code.push_str("                        tok.line, tok.col, stack\n");
+    code.push_str("                    ));\n");
+    code.push_str("                }\n");
+    code.push_str("            }\n");
+    code.push_str("            at_line_start = false;\n");
+    code.push_str("        }\n\n");
+    code.push_str("        if tok.kind == \"NEWLINE\" { at_line_start = true; }\n");
+    code.push_str("        last_line = tok.line;\n");
+    code.push_str("        out.push(tok);\n");
+    code.push_str("    }\n\n");
+    code.push_str("    if !at_line_start {\n");
+    code.push_str("        out.push(Token { kind: \"NEWLINE\", action: \"\", lexeme: String::new(), line: last_line, col: 1 });\n");
+    code.push_str("    }\n");
+    code.push_str("    while stack.len() > 1 {\n");
+    code.push_str("        stack.pop();\n");
+    code.push_str("        out.push(Token { kind: \"DEDENT\", action: \"\", lexeme: String::new(), line: last_line, col: 1 });\n");
+    code.push_str("    }\n\n");
+    code.push_str("    Ok(out)\n");
+    code.push_str("}\n\n");
+
+    code.push_str("/// Filtra IGNORED_KINDS y sintetiza INDENT/DEDENT — punto de entrada\n");
+    code.push_str("/// recomendado para alimentar un parser generado a partir de una\n");
+    code.push_str("/// gramática sensible a indentación (equivalente standalone de lo que\n");
+    code.push_str("/// hace build_pipeline_response en el servidor).\n");
+    code.push_str("pub fn tokenize_for_parser(src: &str) -> Result<(Vec<Token>, Vec<String>), String> {\n");
+    code.push_str("    let (raw, errors) = tokenize(src);\n");
+    code.push_str("    let significant: Vec<Token> = raw.into_iter()\n");
+    code.push_str("        .filter(|t| !IGNORED_KINDS.contains(&t.kind))\n");
+    code.push_str("        .collect();\n");
+    code.push_str("    let synthesized = synthesize_indentation(significant)?;\n");
+    code.push_str("    Ok((synthesized, errors))\n");
+    code.push_str("}\n");
+}
+
+/// Genera el archivo `path` con el lexer en Rust.
+/// Crea el directorio padre si no existe.
+pub fn emit_file(
+    path: &str,
+    tt: &TransitionTable,
+    rules: &[ExpandedRule],
+    header: Option<&str>,
+    trailer: Option<&str>,
+    opts: &CodegenOptions,
+) -> std::io::Result<()> {
+    if let Some(parent) = Path::new(path).parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, emit_string(tt, rules, header, trailer, opts))
 }

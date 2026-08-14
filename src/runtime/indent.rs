@@ -69,6 +69,20 @@ pub fn synthesize(
     let mut last_line = 1usize;
 
     for (kind, lexeme, line, col) in tokens {
+        // Una línea cuyo único contenido era un comentario o docstring (ya
+        // filtrados como IGNORE antes de llegar aquí) todavía deja su propio
+        // NEWLINE de cierre en el stream — igual que una línea en blanco.
+        // Gramáticas con `suite: NEWLINE INDENT ...` no toleran un segundo
+        // NEWLINE consecutivo (no hay producción que lo consuma), así que
+        // ambos casos se descartan aquí: si YA estábamos "al inicio de
+        // línea" (la línea anterior no dejó ningún token significativo) un
+        // NEWLINE más no aporta nada gramaticalmente. Mismo comportamiento
+        // que el NL (vs. NEWLINE) del tokenizer real de Python.
+        if kind == NEWLINE_KIND && at_line_start {
+            last_line = line;
+            continue;
+        }
+
         if at_line_start && kind != NEWLINE_KIND {
             let indent = col.saturating_sub(1);
             let top = *stack.last().unwrap();
@@ -101,6 +115,16 @@ pub fn synthesize(
 
         last_line = line;
         out.push((kind, lexeme, line, col));
+    }
+
+    // Si el archivo no termina con un salto de línea, la última línea lógica
+    // nunca dispara `at_line_start = true` y por lo tanto nunca deja un
+    // NEWLINE en `out` — pero la gramática espera uno antes del/de los
+    // DEDENT de cierre (`simple_stmt NEWLINE`, igual que cualquier otra
+    // sentencia). El tokenizer de CPython hace lo mismo: sintetiza un
+    // NEWLINE final si falta antes de emitir ENDMARKER.
+    if !at_line_start {
+        out.push((NEWLINE_KIND.to_string(), String::new(), last_line, 1));
     }
 
     while stack.len() > 1 {
@@ -214,12 +238,57 @@ mod tests {
             tok("NEWLINE", 4, 9),
         ];
         let out = synthesize(input).unwrap();
-        // Solo UN INDENT (de la línea 2) — la línea en blanco no dispara nada,
-        // y la línea 4 sigue al mismo nivel que la 2, así que tampoco dispara.
-        // El DEDENT final es el flush de EOF (el input nunca vuelve a nivel 0).
+        // Solo UN INDENT (de la línea 2) — la línea en blanco no dispara nada
+        // en la pila NI dejar rastro en el stream (se descarta, igual que un
+        // NL de CPython), y la línea 4 sigue al mismo nivel que la 2, así que
+        // tampoco dispara. El DEDENT final es el flush de EOF (el input nunca
+        // vuelve a nivel 0).
         assert_eq!(
             kinds(&out),
-            vec!["IF", "COLON", "NEWLINE", "INDENT", "PASS", "NEWLINE", "NEWLINE", "PASS", "NEWLINE", "DEDENT"]
+            vec!["IF", "COLON", "NEWLINE", "INDENT", "PASS", "NEWLINE", "PASS", "NEWLINE", "DEDENT"]
+        );
+    }
+
+    #[test]
+    fn comment_only_line_newline_is_dropped_not_just_ignored_for_indent() {
+        // Una línea cuyo único contenido era un comentario (ya filtrado como
+        // IGNORE antes de llegar a `synthesize`) todavía deja su propio
+        // NEWLINE de cierre en el stream. Una gramática con
+        // `suite: NEWLINE INDENT ...` no tolera un segundo NEWLINE seguido —
+        // debe descartarse por completo, no solo "no contar" para la pila.
+        let input = vec![
+            tok("IF", 1, 1),
+            tok("COLON", 1, 10),
+            tok("NEWLINE", 1, 11),
+            tok("NEWLINE", 2, 30), // línea 2 era solo un comentario
+            tok("PASS", 3, 5),
+            tok("NEWLINE", 3, 9),
+        ];
+        let out = synthesize(input).unwrap();
+        assert_eq!(
+            kinds(&out),
+            vec!["IF", "COLON", "NEWLINE", "INDENT", "PASS", "NEWLINE", "DEDENT"],
+            "el NEWLINE huérfano de la línea de comentario debe desaparecer del todo: {:?}",
+            out
+        );
+    }
+
+    #[test]
+    fn missing_trailing_newline_before_eof_is_synthesized() {
+        // Un archivo que no termina en '\n' (última línea sin terminador)
+        // nunca dispara `at_line_start`, así que sin este fix el DEDENT de
+        // cierre de EOF llegaría sin el NEWLINE que `simple_stmt NEWLINE`
+        // exige. CPython sintetiza ese NEWLINE final; nosotros también.
+        let input = vec![
+            tok("IF", 1, 1),
+            tok("COLON", 1, 10),
+            tok("NEWLINE", 1, 11),
+            tok("PASS", 2, 5), // sin NEWLINE detrás: EOF llega justo aquí
+        ];
+        let out = synthesize(input).unwrap();
+        assert_eq!(
+            kinds(&out),
+            vec!["IF", "COLON", "NEWLINE", "INDENT", "PASS", "NEWLINE", "DEDENT"]
         );
     }
 

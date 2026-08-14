@@ -206,6 +206,7 @@ fn main() {
         &expanded,
         spec.header.as_deref(),
         spec.trailer.as_deref(),
+        &crate::codegen::rust_codegen::CodegenOptions::default(),
     ) {
         eprintln!("Error al generar lexer: {}", e);
         std::process::exit(1);
