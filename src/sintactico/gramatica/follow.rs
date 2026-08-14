@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
-use super::grammar::{Grammar, Symbol};
-use super::first::{FirstSets, first_of_sequence, EPSILON};
+use crate::sintactico::gramatica::grammar::{Grammar, Symbol};
+use crate::sintactico::gramatica::first::{FirstSets, first_of_sequence, EPSILON};
 
 pub const EOF: &str = "$";
 pub type FollowSets = HashMap<String, HashSet<String>>;

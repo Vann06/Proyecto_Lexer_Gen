@@ -3,8 +3,8 @@
 // move 
 
 use std::collections::{HashMap, BTreeSet, VecDeque};
-use crate::automata::nfa::{Nfa, Transition};
-use crate::automata::dfa::{Dfa, DfaState};
+use crate::lexico::automata::nfa::{Nfa, Transition};
+use crate::lexico::automata::dfa::{Dfa, DfaState};
 
 // === 1. Algoritmo Epsilon-Closure (Clausura-ε) ===
 // "Desde estas bolitas iniciales, ¿a qué otras bolitas puedo llegar mágicamente gratis?"

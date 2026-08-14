@@ -1,13 +1,13 @@
 // src/bin/test_lalr.rs
-use lexer_generator::analizador_sintactico;
+use lexer_generator::sintactico;
 
-use analizador_sintactico::grammar::{body_to_string, Grammar, Symbol};
-use analizador_sintactico::first::calculate_first;
-use analizador_sintactico::lr1::LR1Automaton;
-use analizador_sintactico::lalr::merge_by_core;
-use analizador_sintactico::tables::{LRTable, print_productions};
-use analizador_sintactico::parser_lr::{LRParser, print_trace};
-use analizador_sintactico::parse_tree::{ParseToken, print_ascii, to_dot};
+use sintactico::gramatica::grammar::{body_to_string, Grammar, Symbol};
+use sintactico::gramatica::first::calculate_first;
+use sintactico::automatas::lr1::LR1Automaton;
+use sintactico::automatas::lalr::merge_by_core;
+use sintactico::tablas::{LRTable, print_productions};
+use sintactico::runtime::parser_lr::{LRParser, print_trace};
+use sintactico::runtime::parse_tree::{ParseToken, print_ascii, to_dot};
 use std::io::{self, Write};
 
 fn main() {
@@ -134,7 +134,7 @@ fn main() {
     }
 }
 
-fn print_lr1_state(state: &analizador_sintactico::lr1::LR1State, start_head: &str) {
+fn print_lr1_state(state: &sintactico::automatas::lr1::LR1State, start_head: &str) {
     if let Some((from, sym)) = &state.origin {
         println!("Estado I{}: Goto(I{}, {})", state.id, from, sym);
     } else {
@@ -154,7 +154,7 @@ fn print_lr1_state(state: &analizador_sintactico::lr1::LR1State, start_head: &st
     println!();
 }
 
-fn print_lalr_state(state: &analizador_sintactico::lalr::LALRState, start_head: &str) {
+fn print_lalr_state(state: &sintactico::automatas::lalr::LALRState, start_head: &str) {
     if let Some((from, sym)) = &state.origin {
         println!("Estado I{}: Goto(I{}, {})", state.id, from, sym);
     } else {

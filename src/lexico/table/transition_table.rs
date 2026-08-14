@@ -2,7 +2,7 @@
 // Núcleo del lexer en tiempo de ejecución (acceso O(1)).
 
 use std::collections::HashSet;
-use crate::automata::dfa::Dfa;
+use crate::lexico::automata::dfa::Dfa;
 
 pub const DEAD: i32 = -1;
 
@@ -155,7 +155,7 @@ pub fn print_table(tt: &TransitionTable) {
 #[cfg(test)]
 pub(crate) fn make_dummy_dfa_num() -> Dfa {
     use std::collections::HashMap;
-    use crate::automata::dfa::DfaState;
+    use crate::lexico::automata::dfa::DfaState;
     let mut states = HashMap::new();
     let mut trans0 = HashMap::new();
     for c in '0'..='9' {

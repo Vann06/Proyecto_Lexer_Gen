@@ -1,7 +1,7 @@
 // logica general para los conjuntos FIRST y FOLLOW.
 
 use std::collections::{HashMap, HashSet};
-use super::grammar::{Grammar, Symbol};
+use crate::sintactico::gramatica::grammar::{Grammar, Symbol};
 
 pub const EPSILON: &str = "ε";
 

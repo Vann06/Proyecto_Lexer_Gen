@@ -1,7 +1,7 @@
 // minimizar AFD 
 
 use std::collections::{HashMap, HashSet, BTreeSet};
-use crate::automata::dfa::{Dfa, DfaState};
+use crate::lexico::automata::dfa::{Dfa, DfaState};
 
 /// Fase 10: Algoritmo de minimización de particiones de Hopcroft Modificado
 pub fn minimize_dfa(dfa: &Dfa) -> Dfa {

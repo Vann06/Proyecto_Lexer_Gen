@@ -1,7 +1,7 @@
 // Driver shift-reduce GENÉRICO para cualquier parser LR.
-use super::grammar::Symbol;
-use super::parse_tree::{ParseNode, ParseToken};
-use super::tables::{Action, LRTable};
+use crate::sintactico::gramatica::grammar::Symbol;
+use crate::sintactico::runtime::parse_tree::{ParseNode, ParseToken};
+use crate::sintactico::tablas::{Action, LRTable};
 
 #[derive(Debug, Clone)]
 pub enum ParseStep {
@@ -312,7 +312,7 @@ impl<'a> LRParser<'a> {
 }
 
 fn format_error(state: usize, token: &str, table: &LRTable) -> String {
-    let expected_str = super::tables::format_expected_tokens(&table.expected_tokens(state));
+    let expected_str = crate::sintactico::tablas::format_expected_tokens(&table.expected_tokens(state));
     format!("Error sintáctico: estado I{}, token '{}'. Esperado: {}",
             state, token, expected_str)
 }
@@ -327,7 +327,7 @@ pub fn print_trace(trace: &[ParseStep]) {
                 println!("  push I{}  ←  shift '{}'", state, token);
             }
             ParseStep::Reduce { head, body } => {
-                println!("  reduce   :  {} → {}", head, super::grammar::body_to_string(body));
+                println!("  reduce   :  {} → {}", head, crate::sintactico::gramatica::grammar::body_to_string(body));
             }
             ParseStep::Accept => {
                 println!("  accept   ");

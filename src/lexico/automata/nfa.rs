@@ -173,8 +173,8 @@ fn expand_char_class(class_content: &str) -> (bool, Vec<char>) {
 // ---  Algoritmo de Thompson ---
 
 // Función principal. Recibe el Arbol, y construye la estructura Nfa
-pub fn build_nfa_from_ast(ast: &crate::regex::ast::RegexAst, id_counter: &mut usize) -> Nfa {
-    use crate::regex::ast::RegexAst; // Para no escribir tanto
+pub fn build_nfa_from_ast(ast: &crate::lexico::regex::ast::RegexAst, id_counter: &mut usize) -> Nfa {
+    use crate::lexico::regex::ast::RegexAst; // Para no escribir tanto
     
     match ast {
         

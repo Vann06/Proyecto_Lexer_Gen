@@ -1,21 +1,21 @@
 // API logic shared by the HTTP server and tests.
 
-use crate::analizador_sintactico::first::calculate_first;
-use crate::analizador_sintactico::follow::calculate_follow;
-use crate::analizador_sintactico::grammar::{body_to_string, Grammar};
-use crate::analizador_sintactico::lalr::{merge_by_core, LALRItem};
-use crate::analizador_sintactico::ll1::LL1Parser;
-use crate::analizador_sintactico::lr0::{LR0Automaton, LR0Item};
-use crate::analizador_sintactico::lr1::LR1Automaton;
-use crate::analizador_sintactico::parse_tree::ParseToken;
-use crate::analizador_sintactico::parser_lr::LRParser;
-use crate::analizador_sintactico::tables::{format_expected_tokens, Action, Conflict, LRTable};
-use crate::regex::parser::parse_regex;
-use crate::runtime::indent;
-use crate::runtime::simulator::{LexResult, Simulator};
-use crate::spec::expand::expand_definitions;
-use crate::spec::parser::parse_yalex;
-use crate::table::transition_table::TransitionTable;
+use crate::sintactico::gramatica::first::calculate_first;
+use crate::sintactico::gramatica::follow::calculate_follow;
+use crate::sintactico::gramatica::grammar::{body_to_string, Grammar};
+use crate::sintactico::automatas::lalr::{merge_by_core, LALRItem};
+use crate::sintactico::runtime::ll1::LL1Parser;
+use crate::sintactico::automatas::lr0::{LR0Automaton, LR0Item};
+use crate::sintactico::automatas::lr1::LR1Automaton;
+use crate::sintactico::runtime::parse_tree::ParseToken;
+use crate::sintactico::runtime::parser_lr::LRParser;
+use crate::sintactico::tablas::{format_expected_tokens, Action, Conflict, LRTable};
+use crate::lexico::regex::parser::parse_regex;
+use crate::lexico::runtime::indent;
+use crate::lexico::runtime::simulator::{LexResult, Simulator};
+use crate::lexico::spec::expand::expand_definitions;
+use crate::lexico::spec::parser::parse_yalex;
+use crate::lexico::table::transition_table::TransitionTable;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -370,7 +370,7 @@ fn build_compile_ll1(content: &str) -> Result<CompileResponse, String> {
             let nt = &prod.head;
             let mut items: Vec<String> = Vec::new();
             if let Some(row) = ll1.table.get(nt) {
-                let mut pairs: Vec<(&String, &crate::analizador_sintactico::grammar::Production)> =
+                let mut pairs: Vec<(&String, &crate::sintactico::gramatica::grammar::Production)> =
                     row.iter().collect();
                 pairs.sort_by_key(|(t, _)| t.as_str());
                 for (terminal, production) in pairs {
@@ -568,7 +568,7 @@ fn push_syntax_problem(
 /// que la versión vieja (que solo devolvía la tabla) descartaba.
 pub fn build_lexer_artifacts(
     yal_src: &str,
-) -> Result<(crate::spec::ast::SpecIR, Vec<crate::spec::expand::ExpandedRule>, TransitionTable), String> {
+) -> Result<(crate::lexico::spec::ast::SpecIR, Vec<crate::lexico::spec::expand::ExpandedRule>, TransitionTable), String> {
     let spec = parse_yalex(yal_src).map_err(|e| format!("Error al parsear .yal: {}", e))?;
     let expanded = expand_definitions(&spec);
 
@@ -577,16 +577,16 @@ pub fn build_lexer_artifacts(
     for rule in &expanded {
         let ast = parse_regex(&rule.pattern_expanded)
             .map_err(|e| format!("Error en regex '{}': {}", rule.pattern_expanded, e))?;
-        let mut nfa = crate::automata::nfa::build_nfa_from_ast(&ast, &mut id_counter);
+        let mut nfa = crate::lexico::automata::nfa::build_nfa_from_ast(&ast, &mut id_counter);
         if let Some(fs) = nfa.states.get_mut(&nfa.end_state) {
             fs.accept_action = Some((rule.priority, rule.action_code.clone()));
         }
         nfas.push(nfa);
     }
-    let master = crate::automata::nfa::combine_nfas(nfas, &mut id_counter);
-    let dfa = crate::automata::subset::build_dfa_from_nfa(&master);
-    let min_dfa = crate::automata::minimize::minimize_dfa(&dfa);
-    let table = crate::table::transition_table::build(&min_dfa);
+    let master = crate::lexico::automata::nfa::combine_nfas(nfas, &mut id_counter);
+    let dfa = crate::lexico::automata::subset::build_dfa_from_nfa(&master);
+    let min_dfa = crate::lexico::automata::minimize::minimize_dfa(&dfa);
+    let table = crate::lexico::table::transition_table::build(&min_dfa);
     Ok((spec, expanded, table))
 }
 
@@ -603,7 +603,7 @@ fn build_lexer_table_from_str(yal_src: &str) -> Result<TransitionTable, String> 
 pub fn build_codegen_response(yal: &str, yalp: &str) -> Result<CodegenResponse, String> {
     let (spec, expanded, table) = build_lexer_artifacts(yal)?;
 
-    let mut opts = crate::codegen::rust_codegen::CodegenOptions::default();
+    let mut opts = crate::lexico::codegen::rust_codegen::CodegenOptions::default();
     let mut problems = Vec::new();
     if !yalp.trim().is_empty() {
         match Grammar::parse_for_lr_from_str(yalp) {
@@ -625,7 +625,7 @@ pub fn build_codegen_response(yal: &str, yalp: &str) -> Result<CodegenResponse, 
         }
     }
 
-    let code = crate::codegen::rust_codegen::emit_string(
+    let code = crate::lexico::codegen::rust_codegen::emit_string(
         &table,
         &expanded,
         spec.header.as_deref(),
@@ -791,7 +791,7 @@ fn lr0_to_dot(automaton: &LR0Automaton) -> String {
     dot
 }
 
-fn lalr_states_to_data(states: &[crate::analizador_sintactico::lalr::LALRState]) -> Vec<StateData> {
+fn lalr_states_to_data(states: &[crate::sintactico::automatas::lalr::LALRState]) -> Vec<StateData> {
     let mut v: Vec<StateData> = states
         .iter()
         .map(|s| {

@@ -13,26 +13,26 @@
 //   5. Mapea Vec<Token> a Vec<ParseToken> usando el kind extraído del lexer.
 //   6. Llama parse_tree y muestra el árbol en ASCII + escribe DOT a output/.
 
-use lexer_generator::{analizador_sintactico, automata, regex, runtime, spec, table};
+use lexer_generator::{sintactico, lexico};
 
 use std::env;
 use std::fs;
 
-use analizador_sintactico::grammar::Grammar;
-use analizador_sintactico::first::calculate_first;
-use analizador_sintactico::follow::calculate_follow;
-use analizador_sintactico::lr0::LR0Automaton;
-use analizador_sintactico::lr1::LR1Automaton;
-use analizador_sintactico::lalr::merge_by_core;
-use analizador_sintactico::tables::LRTable;
-use analizador_sintactico::parser_lr::LRParser;
-use analizador_sintactico::ll1::LL1Parser;
-use analizador_sintactico::parse_tree::{ParseToken, print_ascii, to_dot};
+use sintactico::gramatica::grammar::Grammar;
+use sintactico::gramatica::first::calculate_first;
+use sintactico::gramatica::follow::calculate_follow;
+use sintactico::automatas::lr0::LR0Automaton;
+use sintactico::automatas::lr1::LR1Automaton;
+use sintactico::automatas::lalr::merge_by_core;
+use sintactico::tablas::LRTable;
+use sintactico::runtime::parser_lr::LRParser;
+use sintactico::runtime::ll1::LL1Parser;
+use sintactico::runtime::parse_tree::{ParseToken, print_ascii, to_dot};
 
-use crate::spec::parser::parse_yalex;
-use crate::spec::expand::expand_definitions;
-use crate::regex::parser::parse_regex;
-use crate::runtime::simulator::{Simulator, LexResult, Token};
+use crate::lexico::spec::parser::parse_yalex;
+use crate::lexico::spec::expand::expand_definitions;
+use crate::lexico::regex::parser::parse_regex;
+use crate::lexico::runtime::simulator::{Simulator, LexResult, Token};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode { LALR, SLR, LL1 }
@@ -104,8 +104,8 @@ fn main() {
     // post-procesamiento que el DFA del lexer no puede hacer por sí solo —
     // ver src/runtime/indent.rs. Debe correr ANTES de descartar line/col
     // (que es lo que hace la conversión a ParseToken de abajo).
-    if runtime::indent::is_indent_sensitive(&grammar.tokens) {
-        match runtime::indent::synthesize(significant) {
+    if lexico::runtime::indent::is_indent_sensitive(&grammar.tokens) {
+        match lexico::runtime::indent::synthesize(significant) {
             Ok(synthesized) => significant = synthesized,
             Err(e) => {
                 eprintln!("Error de indentación: {}", e);
@@ -187,7 +187,7 @@ fn main() {
 }
 
 /// Compila un .yal a una tabla de transición usando las mismas fases que main.rs.
-fn build_lexer_table(yal_path: &str) -> crate::table::transition_table::TransitionTable {
+fn build_lexer_table(yal_path: &str) -> crate::lexico::table::transition_table::TransitionTable {
     let yal_src = fs::read_to_string(yal_path).unwrap_or_else(|e| {
         eprintln!("Error al leer .yal: {}", e);
         std::process::exit(1);
@@ -205,16 +205,16 @@ fn build_lexer_table(yal_path: &str) -> crate::table::transition_table::Transiti
             eprintln!("Error en regex '{}': {}", rule.pattern_expanded, e);
             std::process::exit(1);
         });
-        let mut nfa = crate::automata::nfa::build_nfa_from_ast(&ast, &mut id_counter);
+        let mut nfa = crate::lexico::automata::nfa::build_nfa_from_ast(&ast, &mut id_counter);
         if let Some(fs) = nfa.states.get_mut(&nfa.end_state) {
             fs.accept_action = Some((rule.priority, rule.action_code.clone()));
         }
         nfas.push(nfa);
     }
-    let master = crate::automata::nfa::combine_nfas(nfas, &mut id_counter);
-    let dfa     = crate::automata::subset::build_dfa_from_nfa(&master);
-    let min_dfa = crate::automata::minimize::minimize_dfa(&dfa);
-    crate::table::transition_table::build(&min_dfa)
+    let master = crate::lexico::automata::nfa::combine_nfas(nfas, &mut id_counter);
+    let dfa     = crate::lexico::automata::subset::build_dfa_from_nfa(&master);
+    let min_dfa = crate::lexico::automata::minimize::minimize_dfa(&dfa);
+    crate::lexico::table::transition_table::build(&min_dfa)
 }
 
 /// Normaliza el kind del lexer a UPPERCASE para que coincida con los tokens

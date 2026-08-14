@@ -45,16 +45,16 @@
 //     - Opcionalmente simula la ejecución en memoria.
 //     - Módulo: `codegen::rust_codegen` / `runtime::simulator`
 //
-use lexer_generator::{automata, codegen, graph, regex, runtime, spec, table};
+use lexer_generator::lexico;
 
 use std::env;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use crate::spec::expand::expand_definitions;
-use crate::spec::parser::parse_yalex;
-use crate::regex::parser::parse_regex;
+use crate::lexico::spec::expand::expand_definitions;
+use crate::lexico::spec::parser::parse_yalex;
+use crate::lexico::regex::parser::parse_regex;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -117,7 +117,7 @@ fn main() {
     println!("║ FASE 3 Y 7: ASTs y CONSTRUCCIÓN DE NFAs  ║");
     println!("╚══════════════════════════════════════════╝");
     
-    let mut grandote_ast: Option<crate::regex::ast::RegexAst> = None;
+    let mut grandote_ast: Option<crate::lexico::regex::ast::RegexAst> = None;
     let mut all_ok = true;
     let mut id_counter = 0; 
     let mut nfas_list = Vec::new();
@@ -127,10 +127,10 @@ fn main() {
             Ok(ast) => {
                 grandote_ast = match grandote_ast {
                     None => Some(ast.clone()),
-                    Some(prev) => Some(crate::regex::ast::RegexAst::Union(Box::new(prev), Box::new(ast.clone())))
+                    Some(prev) => Some(crate::lexico::regex::ast::RegexAst::Union(Box::new(prev), Box::new(ast.clone())))
                 };
 
-                let mut rule_nfa = crate::automata::nfa::build_nfa_from_ast(&ast, &mut id_counter);
+                let mut rule_nfa = crate::lexico::automata::nfa::build_nfa_from_ast(&ast, &mut id_counter);
                 
                 if let Some(final_state) = rule_nfa.states.get_mut(&rule_nfa.end_state) {
                     final_state.accept_action = Some((rule.priority, rule.action_code.clone()));
@@ -156,14 +156,14 @@ fn main() {
     fs::create_dir_all("graphs").ok();
     if let Some(big_ast) = &grandote_ast {
         let dot_path = "graphs/ast_grandote.dot";
-        if crate::graph::dot::write_ast_dot(dot_path, big_ast).is_ok() {
+        if crate::lexico::graph::dot::write_ast_dot(dot_path, big_ast).is_ok() {
             println!("  - AST consolidado exportado a '{}'.", dot_path);
             println!("    (Puedes generar PNG usando: dot -Tpng {} -o graphs/ast_grandote.png)", dot_path);
         }
     }
         
     // ── FASE 7 (Final): Juntamos los NFAs en uno solo ───────────────────────
-    let master_nfa = crate::automata::nfa::combine_nfas(nfas_list, &mut id_counter);
+    let master_nfa = crate::lexico::automata::nfa::combine_nfas(nfas_list, &mut id_counter);
     println!("✓ Super-NFA maestro construido con {} estados.", master_nfa.states.len());
     
     // ── FASE 8 Y 9: Construcción del DFA ────────────────────────────────────
@@ -171,7 +171,7 @@ fn main() {
     println!("║      FASE 8 Y 9: CONSTRUCCIÓN DE DFA     ║");
     println!("╚══════════════════════════════════════════╝");
     
-    let dfa = crate::automata::subset::build_dfa_from_nfa(&master_nfa);
+    let dfa = crate::lexico::automata::subset::build_dfa_from_nfa(&master_nfa);
     println!("✓ DFA construido con {} estados mediante construcción de subconjuntos.", dfa.states.len());
     
     // ── FASE 10: Minimizamos el AFD ─────────────────────────────────────────
@@ -179,18 +179,18 @@ fn main() {
     println!("║      FASE 10: MINIMIZACIÓN DE DFA        ║");
     println!("╚══════════════════════════════════════════╝");
     
-    let min_dfa = crate::automata::minimize::minimize_dfa(&dfa);
+    let min_dfa = crate::lexico::automata::minimize::minimize_dfa(&dfa);
     println!("✓ DFA minimizado a {} estados.", min_dfa.states.len());
 
     // ── Generar gráfico del DFA final ──────────────────────────────────────
     let dfa_dot_path = "graphs/dfa.dot";
-    if crate::graph::dot::write_dfa_dot(dfa_dot_path, &min_dfa).is_ok() {
+    if crate::lexico::graph::dot::write_dfa_dot(dfa_dot_path, &min_dfa).is_ok() {
         println!("  - DFA final exportado a '{}'.", dfa_dot_path);
         println!("    (Puedes generar PNG usando: dot -Tpng {} -o graphs/dfa.png)", dfa_dot_path);
     }
 
     // ── Fase 11: Tabla de transición ────────────────────────────────────
-    let table = crate::table::transition_table::build(&min_dfa);
+    let table = crate::lexico::table::transition_table::build(&min_dfa);
     println!("\n✓ Fase 11: Tabla de transición construida ({} estados).", table.n_states);
 
     // ── Fase 13: Generar lexer.rs ───────────────────────────────────────
@@ -200,13 +200,13 @@ fn main() {
     
     fs::create_dir_all("generated/src").expect("No se pudo crear el directorio 'generated/src'");
     let output_path = "generated/src/lexer.rs";
-    if let Err(e) = crate::codegen::rust_codegen::emit_file(
+    if let Err(e) = crate::lexico::codegen::rust_codegen::emit_file(
         output_path,
         &table,
         &expanded,
         spec.header.as_deref(),
         spec.trailer.as_deref(),
-        &crate::codegen::rust_codegen::CodegenOptions::default(),
+        &crate::lexico::codegen::rust_codegen::CodegenOptions::default(),
     ) {
         eprintln!("Error al generar lexer: {}", e);
         std::process::exit(1);
@@ -226,7 +226,7 @@ fn main() {
         
         let test_input = test_input_content.as_str();
 
-        let mut sim = crate::runtime::simulator::Simulator::new(&table, test_input);
+        let mut sim = crate::lexico::runtime::simulator::Simulator::new(&table, test_input);
         let (tokens, errors) = sim.tokenize();
         println!("✓ Analizador Léxico (Simulador) probado con entrada de {} bytes.", test_input.len());
         

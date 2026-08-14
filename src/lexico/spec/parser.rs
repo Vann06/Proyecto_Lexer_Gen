@@ -6,7 +6,7 @@
 // El resultado queda en la estructura SpecIR
 
 use crate::error::LexerGenError;
-use crate::spec::ast::{Definition, Rule, SpecIR};
+use crate::lexico::spec::ast::{Definition, Rule, SpecIR};
 
 pub fn parse_yalex(input: &str) -> Result<SpecIR, LexerGenError> {
     let mut header = None;

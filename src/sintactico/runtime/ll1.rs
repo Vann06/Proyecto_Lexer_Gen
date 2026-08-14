@@ -5,10 +5,10 @@
 // 1 ->
 use std::collections::HashMap;
 
-use super::grammar::{body_to_string, Grammar, Symbol, Production};
-use super::first::{FirstSets, first_of_sequence, EPSILON};
-use super::follow::{FollowSets, EOF};
-use super::parse_tree::{ParseNode, ParseToken};
+use crate::sintactico::gramatica::grammar::{body_to_string, Grammar, Symbol, Production};
+use crate::sintactico::gramatica::first::{FirstSets, first_of_sequence, EPSILON};
+use crate::sintactico::gramatica::follow::{FollowSets, EOF};
+use crate::sintactico::runtime::parse_tree::{ParseNode, ParseToken};
 
 // Tabla de parseo M
 // La tabla LL(1) es un diccionario de diccionarios.

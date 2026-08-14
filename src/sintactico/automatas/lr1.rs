@@ -4,8 +4,8 @@
 // reducir la regla para que la reducción sea válida.  Eso permite al parser
 // distinguir contextos que SLR confunde (usa FOLLOW global).
 use std::collections::{HashMap, HashSet};
-use super::grammar::{Grammar, Symbol};
-use super::first::{FirstSets, first_of_sequence, EPSILON};
+use crate::sintactico::gramatica::grammar::{Grammar, Symbol};
+use crate::sintactico::gramatica::first::{FirstSets, first_of_sequence, EPSILON};
 
 pub const EOF: &str = "$";
 
@@ -31,7 +31,7 @@ impl LR1Item {
         format!(
             "[{} -> {}, {}]",
             self.head,
-            super::grammar::dotted_body_to_string(&self.body, self.dot_pos),
+            crate::sintactico::gramatica::grammar::dotted_body_to_string(&self.body, self.dot_pos),
             self.lookahead
         )
     }

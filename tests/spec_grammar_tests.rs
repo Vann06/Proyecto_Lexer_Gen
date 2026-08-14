@@ -1,9 +1,9 @@
 // Tests for YALex/YALP parsing and error handling.
-use lexer_generator::{analizador_sintactico, regex, spec};
+use lexer_generator::{sintactico, lexico};
 
-use spec::parser::parse_yalex;
-use regex::parser::parse_regex;
-use analizador_sintactico::grammar::Grammar;
+use lexico::spec::parser::parse_yalex;
+use lexico::regex::parser::parse_regex;
+use sintactico::gramatica::grammar::Grammar;
 
 #[test]
 fn yalex_invalid_definition_reports_error() {

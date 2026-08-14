@@ -1,8 +1,8 @@
 // Fase 6: Exportar AST de regex y DFA a formato Graphviz DOT.
 
 use std::fs;
-use crate::regex::ast::RegexAst;
-use crate::automata::dfa::Dfa;
+use crate::lexico::regex::ast::RegexAst;
+use crate::lexico::automata::dfa::Dfa;
 
 /// Genera un archivo .dot con el árbol de la expresión regular.
 #[allow(dead_code)]

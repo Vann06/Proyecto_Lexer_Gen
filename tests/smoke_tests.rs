@@ -1,16 +1,16 @@
 // Integración LALR(1)
-use lexer_generator::analizador_sintactico;
+use lexer_generator::sintactico;
 
-use analizador_sintactico::grammar::Grammar;
-use analizador_sintactico::first::calculate_first;
-use analizador_sintactico::lr1::LR1Automaton;
-use analizador_sintactico::lr0::LR0Automaton;
-use analizador_sintactico::lalr::merge_by_core;
-use analizador_sintactico::tables::LRTable;
-use analizador_sintactico::parser_lr::{LRParser, ParseStep};
-use analizador_sintactico::follow::calculate_follow;
-use analizador_sintactico::ll1::LL1Parser;
-use analizador_sintactico::parse_tree::{ParseToken, to_dot};
+use sintactico::gramatica::grammar::Grammar;
+use sintactico::gramatica::first::calculate_first;
+use sintactico::automatas::lr1::LR1Automaton;
+use sintactico::automatas::lr0::LR0Automaton;
+use sintactico::automatas::lalr::merge_by_core;
+use sintactico::tablas::LRTable;
+use sintactico::runtime::parser_lr::{LRParser, ParseStep};
+use sintactico::gramatica::follow::calculate_follow;
+use sintactico::runtime::ll1::LL1Parser;
+use sintactico::runtime::parse_tree::{ParseToken, to_dot};
 
 const EXPR_YALP: &str = "examples/grammar/expr_left_recursive.yalp";
 const CC_YALP:   &str = "examples/grammar/lalr_cc.yalp";
@@ -172,12 +172,12 @@ fn parse_tree_dot_export() {
 }
 
 // ─── Helpers para tests de árbol ─────────────────────────────────────────────
-fn find_symbol(node: &analizador_sintactico::parse_tree::ParseNode, sym: &str) -> bool {
+fn find_symbol(node: &sintactico::runtime::parse_tree::ParseNode, sym: &str) -> bool {
     if node.symbol == sym { return true; }
     node.children.iter().any(|c| find_symbol(c, sym))
 }
 
-fn count_symbol(node: &analizador_sintactico::parse_tree::ParseNode, sym: &str) -> usize {
+fn count_symbol(node: &sintactico::runtime::parse_tree::ParseNode, sym: &str) -> usize {
     let here = if node.symbol == sym { 1 } else { 0 };
     here + node.children.iter().map(|c| count_symbol(c, sym)).sum::<usize>()
 }
@@ -191,7 +191,7 @@ fn lalr_left_recursion_preserved() {
         prod.bodies.iter().any(|body| {
             body.first()
                 .map(|s| match s {
-                    analizador_sintactico::grammar::Symbol::NonTerminal(nt) => nt == &prod.head,
+                    sintactico::gramatica::grammar::Symbol::NonTerminal(nt) => nt == &prod.head,
                     _ => false,
                 })
                 .unwrap_or(false)

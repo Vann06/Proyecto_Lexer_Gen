@@ -5,10 +5,10 @@
 // indistintamente.
 
 use std::collections::{HashMap, HashSet};
-use super::grammar::{body_to_string, Associativity, Grammar, Symbol};
-use super::lalr::{LALRAutomaton, LALRItem};
-use super::lr0::LR0Automaton;
-use super::follow::FollowSets;
+use crate::sintactico::gramatica::grammar::{body_to_string, Associativity, Grammar, Symbol};
+use crate::sintactico::automatas::lalr::{LALRAutomaton, LALRItem};
+use crate::sintactico::automatas::lr0::LR0Automaton;
+use crate::sintactico::gramatica::follow::FollowSets;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {

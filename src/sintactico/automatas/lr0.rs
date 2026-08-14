@@ -1,7 +1,7 @@
 // esturcutra de datos para los items LR(0) 
 // generación del autómata 
 use std::collections::{HashSet, HashMap};
-use super::grammar::{Grammar, Symbol};
+use crate::sintactico::gramatica::grammar::{Grammar, Symbol};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct LR0Item {

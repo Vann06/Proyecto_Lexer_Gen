@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, BTreeMap, BTreeSet};
-use super::grammar::Symbol;
-use super::lr1::{LR1Automaton, LR1Item};
+use crate::sintactico::gramatica::grammar::Symbol;
+use crate::sintactico::automatas::lr1::{LR1Automaton, LR1Item};
 
 /// Clave de core: (head, body, dot_pos) — todo excepto el lookahead.
 type ItemCore = (String, Vec<Symbol>, usize);

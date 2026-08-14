@@ -2,37 +2,37 @@
 // Each test documents the concrete failure scenario for one bug and is expected to
 // FAIL until that bug is fixed. Keep the bug id (Ax) in the test name / comment so the
 // fix commit can be matched back to this file.
-use lexer_generator::{analizador_sintactico, api, automata, regex, runtime, spec, table};
+use lexer_generator::{sintactico, api, lexico};
 
-use analizador_sintactico::first::calculate_first;
-use analizador_sintactico::follow::calculate_follow;
-use analizador_sintactico::grammar::{Grammar, Symbol};
-use analizador_sintactico::ll1::LL1Parser;
-use table::transition_table::TransitionTable;
-use runtime::simulator::{LexResult, Simulator};
+use sintactico::gramatica::first::calculate_first;
+use sintactico::gramatica::follow::calculate_follow;
+use sintactico::gramatica::grammar::{Grammar, Symbol};
+use sintactico::runtime::ll1::LL1Parser;
+use lexico::table::transition_table::TransitionTable;
+use lexico::runtime::simulator::{LexResult, Simulator};
 
 /// Rebuilds a lexer transition table from a `.yal` source, mirroring
 /// `api::build_lexer_table_from_str` (private to that module) so this test file can
 /// drive the lexer pipeline directly without touching HTTP/JSON plumbing.
 fn build_lexer_table(yal_src: &str) -> TransitionTable {
-    let spec_ir = spec::parser::parse_yalex(yal_src).expect("valid .yal for test fixture");
-    let expanded = spec::expand::expand_definitions(&spec_ir);
+    let spec_ir = lexico::spec::parser::parse_yalex(yal_src).expect("valid .yal for test fixture");
+    let expanded = lexico::spec::expand::expand_definitions(&spec_ir);
 
     let mut id_counter = 0usize;
     let mut nfas = Vec::new();
     for rule in &expanded {
-        let ast = regex::parser::parse_regex(&rule.pattern_expanded)
+        let ast = lexico::regex::parser::parse_regex(&rule.pattern_expanded)
             .unwrap_or_else(|e| panic!("regex '{}' failed to parse: {}", rule.pattern_expanded, e));
-        let mut nfa = automata::nfa::build_nfa_from_ast(&ast, &mut id_counter);
+        let mut nfa = lexico::automata::nfa::build_nfa_from_ast(&ast, &mut id_counter);
         if let Some(fs) = nfa.states.get_mut(&nfa.end_state) {
             fs.accept_action = Some((rule.priority, rule.action_code.clone()));
         }
         nfas.push(nfa);
     }
-    let master = automata::nfa::combine_nfas(nfas, &mut id_counter);
-    let dfa = automata::subset::build_dfa_from_nfa(&master);
-    let min_dfa = automata::minimize::minimize_dfa(&dfa);
-    table::transition_table::build(&min_dfa)
+    let master = lexico::automata::nfa::combine_nfas(nfas, &mut id_counter);
+    let dfa = lexico::automata::subset::build_dfa_from_nfa(&master);
+    let min_dfa = lexico::automata::minimize::minimize_dfa(&dfa);
+    lexico::table::transition_table::build(&min_dfa)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,7 +114,7 @@ fn a5_dollar_token_name_does_not_panic_the_driver() {
 // ─────────────────────────────────────────────────────────────────────────────
 #[test]
 fn a7_nonassoc_error_cell_is_not_resurrected_by_a_later_reduce() {
-    use analizador_sintactico::tables::{insert_action, Action, Conflict, PrecInfo};
+    use sintactico::tablas::{insert_action, Action, Conflict, PrecInfo};
     use std::collections::{HashMap, HashSet};
 
     let mut action: HashMap<(usize, String), Action> = HashMap::new();
@@ -127,7 +127,7 @@ fn a7_nonassoc_error_cell_is_not_resurrected_by_a_later_reduce() {
         "EQ".to_string(),
         PrecInfo {
             level: 0,
-            assoc: analizador_sintactico::grammar::Associativity::NonAssoc,
+            assoc: sintactico::gramatica::grammar::Associativity::NonAssoc,
         },
     );
 

@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use crate::spec::ast::SpecIR;
+use crate::lexico::spec::ast::SpecIR;
 
 /// Regla con su patrón ya completamente expandido (sin referencias a macros).
 #[derive(Debug, Clone)]

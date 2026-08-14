@@ -3,7 +3,7 @@
 // convertir regex a una AST 
 
 use crate::error::LexerGenError;
-use crate::regex::ast::RegexAst;
+use crate::lexico::regex::ast::RegexAst;
 
 pub fn parse_regex(input: &str) -> Result<RegexAst, LexerGenError> {
     let chars: Vec<char> = input.chars().collect();

@@ -1,10 +1,10 @@
-use lexer_generator::analizador_sintactico;
+use lexer_generator::sintactico;
 
-use analizador_sintactico::grammar::{body_to_string, Grammar};
-use analizador_sintactico::first::calculate_first;
-use analizador_sintactico::follow::calculate_follow;
-use analizador_sintactico::ll1::LL1Parser;
-use analizador_sintactico::parse_tree::{ParseToken, print_ascii, to_dot};
+use sintactico::gramatica::grammar::{body_to_string, Grammar};
+use sintactico::gramatica::first::calculate_first;
+use sintactico::gramatica::follow::calculate_follow;
+use sintactico::runtime::ll1::LL1Parser;
+use sintactico::runtime::parse_tree::{ParseToken, print_ascii, to_dot};
 use std::io::{self, Write};
 
 fn main() {

@@ -1,7 +1,7 @@
 // Fase 12: Simulación del lexer sobre texto real.
 // Maximal munch + desempate por prioridad (ya fijada en la tabla).
 
-use crate::table::transition_table::{TransitionTable, DEAD};
+use crate::lexico::table::transition_table::{TransitionTable, DEAD};
 
 #[derive(Debug, Clone)]
 pub struct Token {
@@ -133,7 +133,7 @@ impl<'a> Simulator<'a> {
             let act = last_accept_token.unwrap_or_default();
             // Extracción de kind: ver transition_table::kind_from_action, que es
             // la única fuente de verdad compartida con codegen::rust_codegen.
-            let kind_name = crate::table::transition_table::kind_from_action(&act);
+            let kind_name = crate::lexico::table::transition_table::kind_from_action(&act);
 
             LexResult::Token(Token {
                 kind: kind_name,
@@ -189,7 +189,7 @@ impl<'a> Simulator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::table::transition_table;
+    use crate::lexico::table::transition_table;
 
     #[test]
     fn test_simulator_maximal_munch() {

@@ -3,8 +3,8 @@
 
 use std::fs;
 use std::path::Path;
-use crate::table::transition_table::{self, TransitionTable};
-use crate::spec::expand::ExpandedRule;
+use crate::lexico::table::transition_table::{self, TransitionTable};
+use crate::lexico::spec::expand::ExpandedRule;
 
 /// Escapa un string para usarlo dentro de un literal Rust `"..."`.
 fn escape_rust_string(s: &str) -> String {
