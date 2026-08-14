@@ -419,6 +419,95 @@ Centraliza errores del proyecto.
 
 ---
 
+## Fases futuras (no implementadas)
+
+Todo lo de arriba (Fases 0–14) cubre léxico y sintáctico. El libro del
+dragón sigue con tres fases más que este proyecto todavía no toca. Se
+documentan aquí para que el roadmap quede escrito en algún lado — antes de
+esta sección, ningún doc del repo mencionaba semántica, código intermedio
+ni código objetivo.
+
+**Restricción de diseño que condiciona las tres**: el generador tiene que
+seguir siendo agnóstico a la gramática. Cada práctica entrega un
+`.yal`/`.yalp`/`.txt` distintos — no hay un lenguaje fijo para el que
+hardcodear reglas semánticas, así que las tres fases futuras tienen que
+salir de lo que declara la gramática *dada*, dinámicamente, igual que hoy
+el lexer no sabe de antemano qué tokens va a tokenizar.
+
+---
+
+### Fase 15. Análisis semántico
+
+**Ubicación:** `src/semantico/` (esqueleto creado, sin lógica)
+
+Tabla de símbolos, alcance y chequeo de tipos. Consume el `ParseNode` que ya
+construyen `LRParser::parse_tree`/`parse_recovering_with_pos`
+(`src/sintactico/runtime/parser_lr.rs`) y `LL1Parser::parse_tree`
+(`src/sintactico/runtime/ll1.rs`) — ambos ya anotan cada hoja con
+`line`/`col` (`ParseNode`/`ParseToken` en
+`src/sintactico/runtime/parse_tree.rs`), así que los errores semánticos
+("variable X no declarada en línea N") pueden ubicarse sin trabajo extra.
+
+**Bloqueos a resolver antes de implementarla:**
+
+* **El pipeline HTTP nunca construye ese árbol.** `api::pipeline::
+  build_pipeline_response` descarta línea/columna de cada token al derivar
+  `token_kinds`, y `api::sintactico::build_parse_response` usa
+  `parse_with_trace_lr` — una reimplementación aparte del shift-reduce que
+  solo emite un trace JSON para el stepper del IDE, nunca un `ParseNode`.
+  Hoy el árbol solo lo consumen los binarios de CLI (`src/bin/test_*.rs`).
+* **Deuda de shift-reduce duplicado.** Solo para LR ya hay 4 variantes del
+  mismo driver en `parser_lr.rs` (`parse`, `parse_tree`, `parse_recovering`/
+  `parse_recovering_with_pos`) más una 5ª en `api::sintactico::
+  parse_with_trace_lr`. Conectar semántica al pipeline HTTP sin antes
+  consolidarlas sumaría una 6ª. Riesgo de tocar esto: la variante JSON
+  alimenta directamente la UI de "PASO" del frontend, así que la
+  consolidación tiene que preservar ese contrato byte a byte.
+* **Acciones semánticas dinámicas por producción (diseño, no implementado).**
+  Para que `src/semantico/` sirva con cualquier gramática dada, el `.yalp`
+  necesitará eventualmente sintaxis de acciones al estilo yacc, igual que
+  `.yal` ya tiene `{ action_code }` por regla:
+  ```
+  E : E PLUS T  { $$ = $1 + $3 }
+    | T          { $$ = $1 }
+    ;
+  ```
+  Para keyear cada acción a su producción no hace falta un id nuevo en
+  `Production` (cambiar `Production.bodies: Vec<Vec<Symbol>>` sería
+  invasivo — se itera en `first.rs`, `follow.rs`, `lr0.rs`, `lr1.rs`,
+  `ll1.rs`, `tablas.rs`, `api/sintactico.rs`): el orden de iteración que ya
+  usa `grammar_to_prods` (`src/api/sintactico.rs`) para numerar
+  producciones en la respuesta JSON es determinista y sirve como id
+  implícito.
+* **Sin tipo de diagnóstico compartido.** `src/error.rs` (`LexerGenError`)
+  es exclusivo del lexer (4 variantes, todas `String`) y `sintactico` no lo
+  usa — todo devuelve `Result<_, String>`. Diseñar ya una forma con *spans*
+  compartida sería especular sin un caso de uso real que la valide.
+
+---
+
+### Fase 16. Código intermedio
+
+**Ubicación:** `src/intermedio/` (esqueleto creado, sin lógica)
+
+Código de tres direcciones (TAC) / cuádruplos, a partir de la salida de
+`semantico`. Sin forma fija asumida más allá de la estructura genérica de
+TAC — depende de qué construya la Fase 15 para la gramática dada.
+
+---
+
+### Fase 17. Código objetivo
+
+**Ubicación:** `src/codigo_objetivo/` (esqueleto creado, sin lógica)
+
+Generación de código ensamblador/objetivo a partir de `intermedio`. El
+nombre evita chocar con dos módulos que también se llaman "codegen" pero
+son otra cosa: `lexico::codegen::rust_codegen` (emite el *lexer* standalone,
+Fase 13 ya implementada) y `api::codegen` (el handler HTTP de esa fase,
+`/api/codegen`).
+
+---
+
 ## 5. Flujo completo del proyecto
 
 ```text

@@ -115,7 +115,7 @@ fn main() {
     }
 
     let parse_tokens: Vec<ParseToken> = significant.into_iter()
-        .map(|(kind, lexeme, _line, _col)| ParseToken { kind, lexeme })
+        .map(|(kind, lexeme, line, col)| ParseToken { kind, lexeme, line, col })
         .collect();
 
     println!("✓ Tras filtrar ignorables: {} tokens al parser.", parse_tokens.len());

@@ -96,7 +96,7 @@ impl<'a> LRParser<'a> {
 
         let mut input = tokens;
         // Centinela $ con lexema vacío (no aparece en el árbol porque Accept no lo consume).
-        input.push(ParseToken { kind: "$".to_string(), lexeme: String::new() });
+        input.push(ParseToken { kind: "$".to_string(), lexeme: String::new(), line: 0, col: 0 });
         let mut ip = 0usize;
 
         loop {
@@ -179,7 +179,7 @@ impl<'a> LRParser<'a> {
         let mut node_stack: Vec<ParseNode> = Vec::new();
 
         let mut input = tokens;
-        input.push(ParseToken { kind: "$".to_string(), lexeme: String::new() });
+        input.push(ParseToken { kind: "$".to_string(), lexeme: String::new(), line: 0, col: 0 });
         let mut ip = 0usize;
         // Recuerda la posición de la última vez que entramos en modo pánico SIN que
         // ningún Shift haya consumido input desde entonces. Si volvemos a entrar en

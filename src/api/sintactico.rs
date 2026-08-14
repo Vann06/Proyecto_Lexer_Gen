@@ -281,7 +281,7 @@ pub(crate) fn collect_lr_syntax_errors(
 
     let parse_tokens: Vec<ParseToken> = token_map
         .iter()
-        .map(|(k, lx, _, _)| ParseToken { kind: k.clone(), lexeme: lx.clone() })
+        .map(|(k, lx, line, col)| ParseToken { kind: k.clone(), lexeme: lx.clone(), line: *line, col: *col })
         .collect();
     // Cualquier token declarado sirve como punto de sincronización: en cuanto se
     // descarta la entrada hasta encontrar UNO que el estado recuperado pueda

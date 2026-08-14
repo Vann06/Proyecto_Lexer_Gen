@@ -174,6 +174,8 @@ impl LL1Parser {
             symbol: self.start_symbol.clone(),
             lexeme: None,
             children: Vec::new(),
+            line: 0,
+            col: 0,
         });
         let root_idx = 0usize;
 
@@ -184,7 +186,7 @@ impl LL1Parser {
         stack.push((self.start_symbol.clone(), root_idx));
 
         let mut input = tokens;
-        input.push(ParseToken { kind: EOF.to_string(), lexeme: String::new() });
+        input.push(ParseToken { kind: EOF.to_string(), lexeme: String::new(), line: 0, col: 0 });
         let mut ip = 0usize;
 
         while let Some((top_sym, top_idx)) = stack.pop() {
@@ -202,9 +204,11 @@ impl LL1Parser {
             // ¿El tope es terminal o EOF? (no tiene fila en la tabla)
             if !self.table.contains_key(&top_sym) {
                 if top_sym == current.kind {
-                    // Matchea: asignar el lexema al nodo hoja
+                    // Matchea: asignar el lexema y la posición al nodo hoja
                     if top_idx != usize::MAX {
                         arena[top_idx].lexeme = Some(current.lexeme.clone());
+                        arena[top_idx].line = current.line;
+                        arena[top_idx].col = current.col;
                     }
                     ip += 1;
                 } else {
@@ -230,6 +234,8 @@ impl LL1Parser {
                         symbol: "ε".to_string(),
                         lexeme: None,
                         children: Vec::new(),
+                        line: 0,
+                        col: 0,
                     });
                     arena[top_idx].children.push(eps_idx);
                 } else {
@@ -245,6 +251,8 @@ impl LL1Parser {
                             symbol: name,
                             lexeme: None,
                             children: Vec::new(),
+                            line: 0,
+                            col: 0,
                         });
                         child_indices.push(idx);
                     }
@@ -270,6 +278,10 @@ struct NodeRaw {
     symbol: String,
     lexeme: Option<String>,
     children: Vec<usize>,
+    // Igual que ParseNode: solo se llena al matchear un terminal (ver más abajo);
+    // 0/0 en nodos internos y en el nodo ε.
+    line: usize,
+    col: usize,
 }
 
 pub struct LL1TraceStep {
@@ -370,5 +382,7 @@ fn arena_to_tree(arena: &[NodeRaw], idx: usize) -> ParseNode {
         symbol: n.symbol.clone(),
         lexeme: n.lexeme.clone(),
         children,
+        line: n.line,
+        col: n.col,
     }
 }

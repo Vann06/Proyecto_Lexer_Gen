@@ -4,6 +4,9 @@ Generador de analizadores léxicos (YALex) y sintácticos LR/LL (YAPar), con una
 API HTTP y un IDE web (`frontend/IDE/`) para compilar gramáticas y ver la
 traza de parseo paso a paso. Ver [GUIA_USO.md](GUIA_USO.md) para levantar el
 IDE + API, o seguir leyendo para el generador de lexers standalone (CLI).
+Cubre léxico y sintáctico (Fases 0–14 del libro del dragón); semántica,
+código intermedio y código objetivo están planeados pero no implementados —
+ver [ORGANIZACION.md](ORGANIZACION.md#fases-futuras-no-implementadas).
 
 ## Objetivo
 Leer un archivo `.yal`, procesar sus definiciones y reglas, construir internamente los autómatas necesarios y generar un analizador léxico funcional.

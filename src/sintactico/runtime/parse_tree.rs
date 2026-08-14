@@ -7,19 +7,29 @@ pub struct ParseNode {
     pub symbol: String,            // nombre del NT o del token
     pub lexeme: Option<String>,    // Some sólo en hojas (terminales)
     pub children: Vec<ParseNode>,  // vacío en hojas
+    // Posición en el fuente — solo tiene sentido en hojas reales (línea/columna
+    // del token que originó el nodo); en nodos internos y en epsilon_leaf() queda
+    // en 0. Preparado para que una futura fase de análisis semántico pueda ubicar
+    // sus errores ("variable X no declarada en línea N") sin tener que recorrer
+    // el árbol buscando la hoja más cercana — nada la lee todavía.
+    pub line: usize,
+    pub col: usize,
 }
 
 #[derive(Debug, Clone)]
 pub struct ParseToken {
     pub kind: String,
     pub lexeme: String,
+    pub line: usize,
+    pub col: usize,
 }
 
 impl ParseToken {
     /// Helper para tests / CLI: crea tokens donde el lexema coincide con el kind.
+    /// Sin posición real disponible en ese contexto — queda en 0/0.
     pub fn from_kinds(kinds: Vec<String>) -> Vec<ParseToken> {
         kinds.into_iter()
-            .map(|k| ParseToken { lexeme: k.clone(), kind: k })
+            .map(|k| ParseToken { lexeme: k.clone(), kind: k, line: 0, col: 0 })
             .collect()
     }
 }
@@ -30,6 +40,8 @@ impl ParseNode {
             symbol: token.kind.clone(),
             lexeme: Some(token.lexeme.clone()),
             children: Vec::new(),
+            line: token.line,
+            col: token.col,
         }
     }
 
@@ -38,11 +50,13 @@ impl ParseNode {
             symbol: "ε".to_string(),
             lexeme: None,
             children: Vec::new(),
+            line: 0,
+            col: 0,
         }
     }
 
     pub fn internal(symbol: String, children: Vec<ParseNode>) -> Self {
-        ParseNode { symbol, lexeme: None, children }
+        ParseNode { symbol, lexeme: None, children, line: 0, col: 0 }
     }
 }
 
