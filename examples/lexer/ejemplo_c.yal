@@ -1,0 +1,74 @@
+﻿(* Especificación léxica para un subconjunto de C *)
+
+{
+#[derive(Debug, PartialEq, Clone)]
+pub enum Token {
+    If, Else, While, Return, Int, Float, Struct,
+    Id(String),
+    NumInt(i64),
+    NumFloat(f64),
+    StringLiteral(String),
+    Plus, Minus, Star, Slash,
+    Assign, Equals, NotEquals,
+    Lt, Lte, Gt, Gte,
+    LBrace, RBrace, LParen, RParen, Semicolon, Comma,
+    Whitespace,
+    Comment,
+    Error(String),
+}
+}
+
+let digit = [0-9]
+let lower = [a-z]
+let upper = [A-Z]
+let letter = {lower}|{upper}
+let ws = \s|\t|\n|\r
+
+let id = ({letter}|_)(({letter}|_)|{digit})*
+let int_num = {digit}+
+let float_num = {digit}+\.{digit}+
+
+rule tokens =
+    {ws}+               { return Token::Whitespace; }
+  | //[^\n\r]*          { return Token::Comment; }
+
+  | "if"                { return Token::If; }
+  | "else"              { return Token::Else; }
+  | "while"             { return Token::While; }
+  | "return"            { return Token::Return; }
+  | "int"               { return Token::Int; }
+  | "float"             { return Token::Float; }
+  | "struct"            { return Token::Struct; }
+
+  | {id}                { return Token::Id(lexeme.to_string()); }
+
+  | {float_num}         { return Token::NumFloat(lexeme.parse().unwrap()); }
+  | {int_num}           { return Token::NumInt(lexeme.parse().unwrap()); }
+
+  | \"[^\"\n\r]*\"      { return Token::StringLiteral(lexeme.to_string()); }
+
+  | "{"                 { return Token::LBrace; }
+  | "}"                 { return Token::RBrace; }
+  | "("                 { return Token::LParen; }
+  | ")"                 { return Token::RParen; }
+  | ";"                 { return Token::Semicolon; }
+  | ","                 { return Token::Comma; }
+
+  | "=="                { return Token::Equals; }
+  | "!="                { return Token::NotEquals; }
+  | "<="                { return Token::Lte; }
+  | ">="                { return Token::Gte; }
+  | "<"                 { return Token::Lt; }
+  | ">"                 { return Token::Gt; }
+  | "="                 { return Token::Assign; }
+
+  | "+"                 { return Token::Plus; }
+  | "-"                 { return Token::Minus; }
+  | "*"                 { return Token::Star; }
+  | "/"                 { return Token::Slash; }
+
+{
+fn lexer_error(lex: &str) {
+    eprintln!("Error léxico encontrado: símbolo irreconocible '{}'", lex);
+}
+}

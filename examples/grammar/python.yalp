@@ -1,0 +1,105 @@
+/* Gramática para el hardtest.py */
+
+%token IF FOR WHILE DEF OR AND NOT IN RETURN PRINT
+%token SUMA RESTA MULTIPLICACION DIVISION 
+%token PARENTESIS_IZQUIERDO PARENTESIS_DERECHO ASIGNACION
+%token MENOR_QUE MAYOR_QUE DOS_PUNTOS COMA MENOR_IGUAL_QUE MAYOR_IGUAL_QUE COMPARACION DIFERENTE
+%token IDENTIFICADOR DIGITO NUMERO_CON_DECIMAL STRING COMENTARIO COMENTARIO_MULTILINEA
+%token ELSE 
+
+/* Ignoramos comentarios ya que no afectan la sintaxis */
+IGNORE COMENTARIO COMENTARIO_MULTILINEA
+
+%%
+
+programa:
+    sentencias
+;
+
+sentencias:
+    sentencias sentencia
+  | sentencia
+;
+
+sentencia:
+    declaracion_func
+  | asignacion
+  | sentencia_print
+  | sentencia_if
+  | sentencia_while
+  | sentencia_for
+  | sentencia_return
+;
+
+declaracion_func:
+    DEF IDENTIFICADOR PARENTESIS_IZQUIERDO parametros PARENTESIS_DERECHO DOS_PUNTOS sentencias
+;
+
+parametros:
+    lista_parametros
+  | /* vacio */
+;
+
+lista_parametros:
+    lista_parametros COMA IDENTIFICADOR
+  | IDENTIFICADOR
+;
+
+asignacion:
+    IDENTIFICADOR ASIGNACION expresion
+;
+
+sentencia_print:
+    PRINT PARENTESIS_IZQUIERDO lista_impresion PARENTESIS_DERECHO
+;
+
+lista_impresion:
+    lista_impresion COMA expresion
+  | expresion
+;
+
+sentencia_if:
+    IF expresion DOS_PUNTOS sentencias ELSE DOS_PUNTOS sentencias
+  | IF expresion DOS_PUNTOS sentencias
+;
+
+sentencia_while:
+    WHILE PARENTESIS_IZQUIERDO expresion PARENTESIS_DERECHO DOS_PUNTOS sentencias
+;
+
+sentencia_for:
+    FOR IDENTIFICADOR IN IDENTIFICADOR DOS_PUNTOS sentencias
+;
+
+sentencia_return:
+    RETURN expresion
+;
+
+expresion:
+    expresion SUMA termino
+  | expresion RESTA termino
+  | expresion MAYOR_QUE termino
+  | termino
+;
+
+termino:
+    termino MULTIPLICACION factor
+  | factor
+;
+
+factor:
+    IDENTIFICADOR PARENTESIS_IZQUIERDO argumentos PARENTESIS_DERECHO
+  | IDENTIFICADOR
+  | DIGITO
+  | STRING
+;
+
+argumentos:
+    lista_argumentos
+  | /* vacio */
+;
+
+lista_argumentos:
+    lista_argumentos COMA expresion
+  | expresion
+;

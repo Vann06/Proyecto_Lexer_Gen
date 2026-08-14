@@ -1,0 +1,13 @@
+int main() {
+    int a = 7;
+    float b = 1.25;
+
+    if (a <= 10) {
+        a = a + 1;
+    }
+
+    char *msg = "missing end;
+    int bad&name = 3;
+    b = 12.34.56;
+    return ^a;
+}

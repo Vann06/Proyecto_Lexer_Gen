@@ -1,0 +1,23 @@
+services:
+
+  # Servidor Rust — expone el pipeline LR(1) en :8080
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./workspace:/app/workspace
+    restart: unless-stopped
+
+  # UI estática — sirve el IDE React en :4000
+  frontend:
+    build:
+      context: ./frontend/IDE
+      dockerfile: Dockerfile
+    ports:
+      - "4000:80"
+    depends_on:
+      - api
+    restart: unless-stopped

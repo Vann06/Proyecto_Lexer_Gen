@@ -1,0 +1,28 @@
+/* Prueba base LL(1): expresiones ya sin recursión izquierda */
+
+%token ID PLUS STAR LPAREN RPAREN
+
+%%
+
+e:
+    t e_tail
+;
+
+e_tail:
+    PLUS t e_tail
+  |
+;
+
+t:
+    f t_tail
+;
+
+t_tail:
+    STAR f t_tail
+  |
+;
+
+f:
+    LPAREN e RPAREN
+  | ID
+;

@@ -1,0 +1,330 @@
+/* ============================================================
+ * miniprog.yalp  -  Gramatica LALR para MiniProg
+ *
+ * Cubre: declaraciones de funciones con tipos de retorno,
+ * variables tipadas estaticamente, if/else-if/else anidado,
+ * while, for (init ; cond ; update), break, continue, return,
+ * print, asignaciones compuestas (+=  -=  *=  /=), operadores
+ * de incremento/decremento (++  --) y una jerarquia de
+ * expresiones con precedencia completa.
+ *
+ * Tokens de blancos y comentarios son ignorados por el parser.
+ * ============================================================ */
+
+%token FUN IF ELSE WHILE FOR RETURN BREAK CONTINUE PRINT
+%token INT_T FLOAT_T BOOL_T STR_T VOID_T
+%token TRUE FALSE NULL_KW AND OR NOT
+%token ID INT_LIT FLOAT_LIT STR_LIT COMMENT
+%token EQ NEQ LTE GTE INC DEC
+%token PLUS_ASSIGN MINUS_ASSIGN TIMES_ASSIGN DIV_ASSIGN
+%token ASSIGN PLUS MINUS TIMES DIV MOD LT GT
+%token LPAREN RPAREN LBRACE RBRACE LBRACKET RBRACKET
+%token SEMI COMMA COLON
+
+/* Comentarios ignorados: el parser nunca los ve */
+IGNORE COMMENT
+
+%%
+
+/* ============================================================
+ * Punto de entrada: lista de declaraciones globales
+ * ============================================================ */
+
+programa:
+    decl_list
+;
+
+decl_list:
+    decl_list decl
+  | decl
+;
+
+decl:
+    func_decl
+  | var_decl SEMI
+;
+
+/* ============================================================
+ * Tipos
+ * ============================================================ */
+
+tipo:
+    INT_T
+  | FLOAT_T
+  | BOOL_T
+  | STR_T
+  | VOID_T
+;
+
+/* ============================================================
+ * Declaracion de funcion tipada
+ *   fun nombre(tipo param, ...) : tipo_retorno { ... }
+ * ============================================================ */
+
+func_decl:
+    FUN ID LPAREN param_list RPAREN COLON tipo bloque
+;
+
+param_list:
+    params
+  | /* vacio */
+;
+
+params:
+    params COMMA param
+  | param
+;
+
+param:
+    tipo ID
+;
+
+/* ============================================================
+ * Bloque: cuerpo entre llaves
+ * ============================================================ */
+
+bloque:
+    LBRACE stmt_list RBRACE
+  | LBRACE RBRACE
+;
+
+/* ============================================================
+ * Lista de sentencias
+ * ============================================================ */
+
+stmt_list:
+    stmt_list stmt
+  | stmt
+;
+
+/* ============================================================
+ * Sentencias
+ * ============================================================ */
+
+stmt:
+    var_decl SEMI
+  | assign_stmt SEMI
+  | aug_stmt SEMI
+  | inc_stmt SEMI
+  | if_stmt
+  | while_stmt
+  | for_stmt
+  | return_stmt SEMI
+  | break_stmt SEMI
+  | continue_stmt SEMI
+  | print_stmt SEMI
+  | bloque
+  | expr SEMI
+;
+
+/* ============================================================
+ * Declaracion de variable con tipo estatico
+ * ============================================================ */
+
+var_decl:
+    tipo ID
+  | tipo ID ASSIGN expr
+;
+
+/* ============================================================
+ * Asignacion simple (tambien soporta indexacion)
+ * ============================================================ */
+
+assign_stmt:
+    ID ASSIGN expr
+  | ID LBRACKET expr RBRACKET ASSIGN expr
+;
+
+/* ============================================================
+ * Asignacion compuesta (+=  -=  *=  /=)
+ * ============================================================ */
+
+aug_stmt:
+    ID PLUS_ASSIGN  expr
+  | ID MINUS_ASSIGN expr
+  | ID TIMES_ASSIGN expr
+  | ID DIV_ASSIGN   expr
+;
+
+/* ============================================================
+ * Incremento / decremento postfijo (++  --)
+ * ============================================================ */
+
+inc_stmt:
+    ID INC
+  | ID DEC
+;
+
+/* ============================================================
+ * if / else-if / else
+ *   Las llaves eliminan la ambiguedad del "dangling else"
+ * ============================================================ */
+
+if_stmt:
+    IF LPAREN expr RPAREN bloque
+  | IF LPAREN expr RPAREN bloque ELSE bloque
+  | IF LPAREN expr RPAREN bloque ELSE if_stmt
+;
+
+/* ============================================================
+ * while
+ * ============================================================ */
+
+while_stmt:
+    WHILE LPAREN expr RPAREN bloque
+;
+
+/* ============================================================
+ * for (init ; cond ; update)
+ *   init  puede ser declaracion de variable o asignacion
+ *   update puede ser asignacion simple, compuesta o incremento
+ * ============================================================ */
+
+for_stmt:
+    FOR LPAREN for_init SEMI expr SEMI for_update RPAREN bloque
+;
+
+for_init:
+    tipo ID ASSIGN expr
+  | ID ASSIGN expr
+  | /* vacio */
+;
+
+for_update:
+    ID ASSIGN expr
+  | ID PLUS_ASSIGN expr
+  | ID MINUS_ASSIGN expr
+  | ID INC
+  | ID DEC
+  | /* vacio */
+;
+
+/* ============================================================
+ * return / break / continue
+ * ============================================================ */
+
+return_stmt:
+    RETURN expr
+  | RETURN
+;
+
+break_stmt:
+    BREAK
+;
+
+continue_stmt:
+    CONTINUE
+;
+
+/* ============================================================
+ * print (funcion built-in con multiples argumentos)
+ * ============================================================ */
+
+print_stmt:
+    PRINT LPAREN print_args RPAREN
+;
+
+print_args:
+    print_args COMMA expr
+  | expr
+;
+
+/* ============================================================
+ * Jerarquia de expresiones (menor a mayor precedencia):
+ *
+ *  or_expr
+ *    and_expr
+ *      not_expr
+ *        comparison    (==  !=  <  >  <=  >=)
+ *          arith_expr  (+  -)
+ *            term      (*  /  %)
+ *              unary   (- unario)
+ *                primary
+ *                  atom
+ * ============================================================ */
+
+expr:
+    or_expr
+;
+
+or_expr:
+    or_expr OR and_expr
+  | and_expr
+;
+
+and_expr:
+    and_expr AND not_expr
+  | not_expr
+;
+
+not_expr:
+    NOT not_expr
+  | comparison
+;
+
+comparison:
+    comparison EQ   arith_expr
+  | comparison NEQ  arith_expr
+  | comparison LT   arith_expr
+  | comparison GT   arith_expr
+  | comparison LTE  arith_expr
+  | comparison GTE  arith_expr
+  | arith_expr
+;
+
+arith_expr:
+    arith_expr PLUS  term
+  | arith_expr MINUS term
+  | term
+;
+
+term:
+    term TIMES unary
+  | term DIV   unary
+  | term MOD   unary
+  | unary
+;
+
+unary:
+    MINUS unary
+  | primary
+;
+
+/* ============================================================
+ * Primary: atom con sufijos de llamada e indexacion
+ * ============================================================ */
+
+primary:
+    atom
+  | primary LPAREN arg_list RPAREN
+  | primary LBRACKET expr RBRACKET
+;
+
+/* ============================================================
+ * Atom: expresiones basicas sin sufijos
+ * ============================================================ */
+
+atom:
+    ID
+  | INT_LIT
+  | FLOAT_LIT
+  | STR_LIT
+  | TRUE
+  | FALSE
+  | NULL_KW
+  | LPAREN expr RPAREN
+;
+
+/* ============================================================
+ * Argumentos para llamadas a funcion
+ * ============================================================ */
+
+arg_list:
+    args
+  | /* vacio */
+;
+
+args:
+    args COMMA expr
+  | expr
+;

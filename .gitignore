@@ -1,6 +1,9 @@
 # Rust
 /target/
-Cargo.lock
+# Cargo.lock is tracked deliberately: this package ships binaries (cargo run
+# --bin api / lexer-generator / test_*), and Dockerfile.api's COPY Cargo.toml
+# Cargo.lock depends on it existing in the repo for a reproducible build —
+# ignoring it here meant a fresh clone's docker build failed at that COPY.
 
 # Generated output
 /generated/*
@@ -8,6 +11,9 @@ Cargo.lock
 
 /graphs/*
 !/graphs/.gitkeep
+
+/output/*
+!/output/.gitkeep
 
 # OS / Editor
 .DS_Store

@@ -1,0 +1,388 @@
+/* ============================================================
+ * hardtest.yalp  -  Gramatica LALR para el subconjunto de
+ * Python que aparece en hardtest.py (y variantes comunes).
+ *
+ * Cubre: funciones, if/elif/else, while, for, print,
+ *        asignaciones simples y compuestas, expresiones con
+ *        jerarquia de precedencia completa, listas, dicts,
+ *        class, import, pass, break, continue.
+ *
+ * INDENT y DEDENT son tokens generados por el lexer al
+ * detectar cambios de nivel de indentacion.  NEWLINE marca
+ * el fin de cada sentencia logica.  COMMENT y DOCSTRING
+ * son ignorados por el parser.
+ * ============================================================ */
+
+%token DEF IF ELSE ELIF WHILE FOR IN RETURN PRINT
+%token TRUE FALSE NONE AND OR NOT
+%token CLASS IMPORT FROM PASS BREAK CONTINUE
+%token ID INTEGER FLOAT STRING DOCSTRING COMMENT
+%token EQ NEQ LTE GTE PLUS_ASSIGN MINUS_ASSIGN POW
+%token ASSIGN PLUS MINUS STAR SLASH MOD LT GT
+%token LPAREN RPAREN LBRACKET RBRACKET LBRACE RBRACE
+%token COLON COMMA DOT NEWLINE INDENT DEDENT
+
+/* Tokens ignorados: el parser nunca los ve */
+IGNORE COMMENT DOCSTRING
+
+%%
+
+/* ============================================================
+ * Punto de entrada
+ * ============================================================ */
+
+programa:
+    stmt_list
+;
+
+/* ============================================================
+ * Listas de sentencias
+ * ============================================================ */
+
+stmt_list:
+    stmt_list stmt
+  | stmt
+;
+
+stmt:
+    simple_stmt NEWLINE
+  | compound_stmt
+  | NEWLINE
+;
+
+/* ============================================================
+ * Sentencias simples (terminan con NEWLINE)
+ * ============================================================ */
+
+simple_stmt:
+    assign_stmt
+  | aug_assign_stmt
+  | return_stmt
+  | print_stmt
+  | pass_stmt
+  | break_stmt
+  | continue_stmt
+  | import_stmt
+  | expr_stmt
+;
+
+/* ============================================================
+ * Sentencias compuestas (tienen suite indentado)
+ * ============================================================ */
+
+compound_stmt:
+    func_def
+  | if_stmt
+  | while_stmt
+  | for_stmt
+  | class_def
+;
+
+/* ============================================================
+ * Import
+ * ============================================================ */
+
+import_stmt:
+    IMPORT dotted_name
+  | FROM dotted_name IMPORT ID
+  | FROM dotted_name IMPORT STAR
+;
+
+dotted_name:
+    dotted_name DOT ID
+  | ID
+;
+
+/* ============================================================
+ * Definicion de funcion
+ * ============================================================ */
+
+func_def:
+    DEF ID LPAREN param_list RPAREN COLON suite
+;
+
+param_list:
+    params
+  | /* vacio */
+;
+
+params:
+    params COMMA param
+  | param
+;
+
+param:
+    ID
+  | ID ASSIGN expr
+;
+
+/* ============================================================
+ * Definicion de clase
+ * ============================================================ */
+
+class_def:
+    CLASS ID COLON suite
+  | CLASS ID LPAREN base_list RPAREN COLON suite
+;
+
+base_list:
+    base_list COMMA ID
+  | ID
+;
+
+/* ============================================================
+ * Suite: bloque indentado
+ *   NEWLINE INDENT stmt_list DEDENT
+ * Es la unica forma de abrir un bloque en Python.
+ * ============================================================ */
+
+suite:
+    NEWLINE INDENT stmt_list DEDENT
+;
+
+/* ============================================================
+ * Asignacion simple y compuesta
+ * ============================================================ */
+
+assign_stmt:
+    lvalue ASSIGN expr
+  | lvalue ASSIGN assign_stmt
+;
+
+aug_assign_stmt:
+    ID PLUS_ASSIGN  expr
+  | ID MINUS_ASSIGN expr
+;
+
+lvalue:
+    ID
+  | ID LBRACKET expr RBRACKET
+  | primary DOT ID
+;
+
+/* ============================================================
+ * Sentencias de control
+ * ============================================================ */
+
+return_stmt:
+    RETURN expr
+  | RETURN
+;
+
+pass_stmt:
+    PASS
+;
+
+break_stmt:
+    BREAK
+;
+
+continue_stmt:
+    CONTINUE
+;
+
+/* ============================================================
+ * Print (funcion built-in con forma de sentencia en Python 2,
+ *        pero en Python 3 es llamada de funcion normal).
+ *        Soportamos ambas formas.
+ * ============================================================ */
+
+print_stmt:
+    PRINT LPAREN print_args RPAREN
+;
+
+print_args:
+    print_args COMMA expr
+  | expr
+;
+
+/* ============================================================
+ * Expresion usada como sentencia (ej. llamadas a funcion)
+ * ============================================================ */
+
+expr_stmt:
+    expr
+;
+
+/* ============================================================
+ * If / elif / else
+ * ============================================================ */
+
+if_stmt:
+    IF expr COLON suite
+  | IF expr COLON suite else_clause
+  | IF expr COLON suite elif_chain
+  | IF expr COLON suite elif_chain else_clause
+;
+
+elif_chain:
+    elif_chain ELIF expr COLON suite
+  | ELIF expr COLON suite
+;
+
+else_clause:
+    ELSE COLON suite
+;
+
+/* ============================================================
+ * While
+ * ============================================================ */
+
+while_stmt:
+    WHILE expr COLON suite
+  | WHILE LPAREN expr RPAREN COLON suite
+;
+
+/* ============================================================
+ * For
+ * ============================================================ */
+
+for_stmt:
+    FOR target_list IN expr COLON suite
+;
+
+target_list:
+    target_list COMMA ID
+  | ID
+;
+
+/* ============================================================
+ * Expresiones con jerarquia de precedencia completa
+ *
+ *  (menor prioridad)
+ *   or_expr
+ *     and_expr
+ *       not_expr
+ *         comparison
+ *           arith_expr   (+  -)
+ *             term        (*  /  %)
+ *               power      (**)
+ *                 unary    (- not)
+ *                   primary
+ *                     atom
+ *  (mayor prioridad)
+ * ============================================================ */
+
+expr:
+    or_expr
+;
+
+or_expr:
+    or_expr OR and_expr
+  | and_expr
+;
+
+and_expr:
+    and_expr AND not_expr
+  | not_expr
+;
+
+not_expr:
+    NOT not_expr
+  | comparison
+;
+
+comparison:
+    comparison EQ   arith_expr
+  | comparison NEQ  arith_expr
+  | comparison LT   arith_expr
+  | comparison GT   arith_expr
+  | comparison LTE  arith_expr
+  | comparison GTE  arith_expr
+  | arith_expr
+;
+
+arith_expr:
+    arith_expr PLUS  term
+  | arith_expr MINUS term
+  | term
+;
+
+term:
+    term STAR  power
+  | term SLASH power
+  | term MOD   power
+  | power
+;
+
+power:
+    unary POW power
+  | unary
+;
+
+unary:
+    MINUS unary
+  | NOT   unary
+  | primary
+;
+
+/* ============================================================
+ * Primary: atom con sufijos de llamada, indexacion y acceso
+ * ============================================================ */
+
+primary:
+    atom
+  | primary LPAREN arg_list RPAREN
+  | primary LBRACKET expr RBRACKET
+  | primary DOT ID
+;
+
+/* ============================================================
+ * Atom: expresiones basicas sin sufijos
+ * ============================================================ */
+
+atom:
+    ID
+  | INTEGER
+  | FLOAT
+  | STRING
+  | TRUE
+  | FALSE
+  | NONE
+  | LPAREN expr RPAREN
+  | LBRACKET list_items RBRACKET
+  | LBRACE  dict_items  RBRACE
+;
+
+/* ============================================================
+ * Argumentos para llamadas
+ * ============================================================ */
+
+arg_list:
+    args
+  | /* vacio */
+;
+
+args:
+    args COMMA arg
+  | arg
+;
+
+arg:
+    expr
+  | ID ASSIGN expr
+;
+
+/* ============================================================
+ * Literales de lista
+ * ============================================================ */
+
+list_items:
+    list_items COMMA expr
+  | expr
+  | /* vacio */
+;
+
+/* ============================================================
+ * Literales de diccionario
+ * ============================================================ */
+
+dict_items:
+    dict_items COMMA dict_pair
+  | dict_pair
+  | /* vacio */
+;
+
+dict_pair:
+    expr COLON expr
+;

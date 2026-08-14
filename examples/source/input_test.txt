@@ -1,0 +1,11 @@
+﻿// test file for error identification
+int main() {
+    float x = 3.14;
+    int invalid_var = 10;
+    string text = "hello world\nand more"; // Will report error on \n
+    string valid = "valid string";
+    if (x != 2) {
+       x <= 5;
+    }
+    return x;
+}

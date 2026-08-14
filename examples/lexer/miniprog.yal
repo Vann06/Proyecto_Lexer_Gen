@@ -1,0 +1,142 @@
+(* ============================================================ *)
+(*  miniprog.yal  -  Especificacion lexica para MiniProg        *)
+(*                                                              *)
+(*  Lenguaje tipo C con llaves, tipos estaticos, funciones      *)
+(*  tipadas, if/else-if/else, while, for (init;cond;update),   *)
+(*  operadores compuestos (+=  -=  *=  /=  ++  --) y           *)
+(*  expresiones booleanas con palabras (and  or  not).          *)
+(* ============================================================ *)
+
+(* --- Caracteres base --- *)
+let digit  = ['0'-'9']
+let lower  = ['a'-'z']
+let upper  = ['A'-'Z']
+let letter = lower | upper
+let alnum  = letter | digit
+
+(* --- Blancos --- *)
+let ws = [' ''\t''\n''\r']+
+
+(* --- Identificadores --- *)
+let id = (letter | '_')(alnum | '_')*
+
+(* --- Literales numericos --- *)
+let integer = digit+
+let float_n = digit+'.'digit+
+
+(* --- Strings: caracteres seguros entre comillas dobles --- *)
+let str_safe = alnum | [' ''.''!''?'','':'';''-''_']
+let string_l = '"' str_safe* '"'
+
+(* --- Comentario de una linea: inicia con # --- *)
+let cmt_char = alnum | [' ''.''!''?'','':'';''_''=''-']
+let comment_c = '#' cmt_char*
+
+(* --- Operadores compuestos --- *)
+let eq        = '=''='
+let neq       = '!''='
+let lte       = '<''='
+let gte       = '>''='
+let inc       = '+''+'
+let dec       = '-''-'
+let plus_eq   = '+''='
+let minus_eq  = '-''='
+let times_eq  = '*''='
+let div_eq    = '/''='
+
+(* --- Palabras reservadas --- *)
+let kw_fun      = fun
+let kw_if       = if
+let kw_else     = else
+let kw_while    = while
+let kw_for      = for
+let kw_return   = return
+let kw_break    = break
+let kw_continue = continue
+let kw_print    = print
+let kw_int      = int
+let kw_float    = float
+let kw_bool     = bool
+let kw_str      = str
+let kw_void     = void
+let kw_true     = true
+let kw_false    = false
+let kw_null     = null
+let kw_and      = and
+let kw_or       = or
+let kw_not      = not
+
+(* ============================================================ *)
+(*  REGLAS LEXICAS                                              *)
+(*  Prioridad: keywords > id > numeros > ops compuestos >      *)
+(*             ops simples > delimitadores                      *)
+(* ============================================================ *)
+rule tokens =
+    (* 1. Palabras reservadas - deben ir ANTES que id *)
+    kw_fun      { "FUN" }
+  | kw_if       { "IF" }
+  | kw_else     { "ELSE" }
+  | kw_while    { "WHILE" }
+  | kw_for      { "FOR" }
+  | kw_return   { "RETURN" }
+  | kw_break    { "BREAK" }
+  | kw_continue { "CONTINUE" }
+  | kw_print    { "PRINT" }
+  | kw_int      { "INT_T" }
+  | kw_float    { "FLOAT_T" }
+  | kw_bool     { "BOOL_T" }
+  | kw_str      { "STR_T" }
+  | kw_void     { "VOID_T" }
+  | kw_true     { "TRUE" }
+  | kw_false    { "FALSE" }
+  | kw_null     { "NULL_KW" }
+  | kw_and      { "AND" }
+  | kw_or       { "OR" }
+  | kw_not      { "NOT" }
+
+    (* 2. Identificadores *)
+  | id          { "ID" }
+
+    (* 3. Literales numericos: float antes que int para capturar el punto *)
+  | float_n     { "FLOAT_LIT" }
+  | integer     { "INT_LIT" }
+
+    (* 4. Strings y comentarios *)
+  | string_l    { "STR_LIT" }
+  | comment_c   { "COMMENT" }
+
+    (* 5. Operadores compuestos - DEBEN ir antes que los simples *)
+  | eq          { "EQ" }
+  | neq         { "NEQ" }
+  | lte         { "LTE" }
+  | gte         { "GTE" }
+  | inc         { "INC" }
+  | dec         { "DEC" }
+  | plus_eq     { "PLUS_ASSIGN" }
+  | minus_eq    { "MINUS_ASSIGN" }
+  | times_eq    { "TIMES_ASSIGN" }
+  | div_eq      { "DIV_ASSIGN" }
+
+    (* 6. Operadores simples *)
+  | '='         { "ASSIGN" }
+  | '+'         { "PLUS" }
+  | '-'         { "MINUS" }
+  | '*'         { "TIMES" }
+  | '/'         { "DIV" }
+  | '%'         { "MOD" }
+  | '<'         { "LT" }
+  | '>'         { "GT" }
+
+    (* 7. Delimitadores *)
+  | '('         { "LPAREN" }
+  | ')'         { "RPAREN" }
+  | '{'         { "LBRACE" }
+  | '}'         { "RBRACE" }
+  | '['         { "LBRACKET" }
+  | ']'         { "RBRACKET" }
+  | ';'         { "SEMI" }
+  | ','         { "COMMA" }
+  | ':'         { "COLON" }
+
+    (* 8. Blancos: ignorados silenciosamente *)
+  | ws          {}

@@ -1,0 +1,24 @@
+/* Grammar 5 — Clases, funciones, listas y recursión */
+%token ID NUMBER STRING CLASS DEF RETURN
+%token ASSIGN PLUS MINUS TIMES DIV EQ NEQ LT GT
+%token LPAREN RPAREN LBRACE RBRACE LBRACKET RBRACKET
+%token COMMA SEMICOLON COLON WHITESPACE
+%start program
+%%
+program : decl_list ;
+decl_list : decl_list decl | decl ;
+decl : class_decl | func_decl | stmt ;
+class_decl : CLASS ID LBRACE func_list RBRACE ;
+func_list : func_list func_decl | func_decl ;
+func_decl : DEF ID LPAREN param_list RPAREN LBRACE stmt_list RBRACE ;
+param_list : param_list COMMA ID | ID | ;
+stmt_list : stmt_list stmt | stmt ;
+stmt : ID ASSIGN expr SEMICOLON | RETURN expr SEMICOLON | expr SEMICOLON ;
+expr : expr PLUS term | expr MINUS term | term ;
+term : term TIMES factor | term DIV factor | factor ;
+factor : LPAREN expr RPAREN | func_call | list_expr | ID | NUMBER | STRING ;
+func_call : ID LPAREN arg_list RPAREN ;
+arg_list : arg_list COMMA expr | expr | ;
+list_expr : LBRACKET elem_list RBRACKET ;
+elem_list : elem_list COMMA expr | expr | ;
+%%

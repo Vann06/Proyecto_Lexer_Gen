@@ -1,0 +1,222 @@
+// Fase 12: Simulación del lexer sobre texto real.
+// Maximal munch + desempate por prioridad (ya fijada en la tabla).
+
+use crate::lexico::table::transition_table::{TransitionTable, DEAD};
+
+#[derive(Debug, Clone)]
+pub struct Token {
+    pub kind: String,
+    #[allow(dead_code)]
+    pub action: String,
+    pub lexeme: String,
+    pub line: usize,
+    pub col: usize,
+}
+
+#[derive(Debug)]
+pub enum LexResult {
+    Token(Token),
+    Error { lexeme: char, line: usize, col: usize },
+    EOF,
+}
+
+pub struct Simulator<'a> {
+    table: &'a TransitionTable,
+    input: Vec<char>,
+    pos: usize,
+    line: usize,
+    col: usize,
+}
+
+impl<'a> Simulator<'a> {
+    pub fn new(table: &'a TransitionTable, input: &str) -> Self {
+        Simulator {
+            table,
+            input: input.chars().collect(),
+            pos: 0,
+            line: 1,
+            col: 1,
+        }
+    }
+
+    /// Retorna el siguiente token (maximal munch).
+    pub fn next_token(&mut self) -> LexResult {
+        if self.pos >= self.input.len() {
+            return LexResult::EOF;
+        }
+
+        // Skip isolated whitespace-like characters that the DFA doesn't accept
+        // (helps with inputs that have CR/LF or stray spaces as delimiters).
+        loop {
+            if self.pos >= self.input.len() {
+                return LexResult::EOF;
+            }
+            let c0 = self.input[self.pos];
+            // Handle non-ascii whitespace (e.g., NBSP) by skipping it if it's whitespace
+            if !c0.is_ascii() && c0.is_whitespace() {
+                if c0 == '\n' {
+                    self.line += 1;
+                    self.col = 1;
+                } else {
+                    self.col += 1;
+                }
+                self.pos += 1;
+                continue;
+            }
+
+            // If ASCII whitespace and DFA has no transition from start state on it,
+            // skip it as a delimiter. If DFA accepts it, let the normal algorithm
+            // consume it so actions like returning WHITESPACE still work.
+            if c0.is_whitespace() {
+                let start_state = self.table.start as usize;
+                let nxt = self.table.next(start_state, c0);
+                if nxt == DEAD {
+                    if c0 == '\n' {
+                        self.pos += 1;
+                        self.line += 1;
+                        self.col = 1;
+                    } else {
+                        self.pos += 1;
+                        self.col += 1;
+                    }
+                    continue;
+                }
+            }
+
+            break;
+        }
+
+        let mut state = self.table.start as i32;
+        let start_pos = self.pos;
+        let start_line = self.line;
+        let start_col = self.col;
+
+        let mut last_accept_pos: Option<usize> = None;
+        let mut last_accept_token: Option<String> = None;
+        // line/col AT last_accept_pos, so backtracking past a failed longer match
+        // rolls back the cursor together with pos instead of leaving it wherever the
+        // speculative scan happened to overshoot to.
+        let mut last_accept_line = self.line;
+        let mut last_accept_col = self.col;
+
+        while self.pos < self.input.len() {
+            let c = self.input[self.pos];
+            if (c as usize) >= 128 {
+                break;
+            }
+            let next = self.table.next(state as usize, c);
+            if next == DEAD {
+                break;
+            }
+            state = next;
+            self.pos += 1;
+            if c == '\n' {
+                self.line += 1;
+                self.col = 1;
+            } else {
+                self.col += 1;
+            }
+
+            if self.table.is_accepting(state as usize) {
+                last_accept_pos = Some(self.pos);
+                last_accept_token = self.table.token_at(state as usize).map(String::from);
+                last_accept_line = self.line;
+                last_accept_col = self.col;
+            }
+        }
+
+        if let Some(accept_pos) = last_accept_pos {
+            self.pos = accept_pos;
+            self.line = last_accept_line;
+            self.col = last_accept_col;
+            let lexeme: String = self.input[start_pos..accept_pos].iter().collect();
+            let act = last_accept_token.unwrap_or_default();
+            // Extracción de kind: ver transition_table::kind_from_action, que es
+            // la única fuente de verdad compartida con codegen::rust_codegen.
+            let kind_name = crate::lexico::table::transition_table::kind_from_action(&act);
+
+            LexResult::Token(Token {
+                kind: kind_name,
+                action: act,
+                lexeme,
+                line: start_line,
+                col: start_col,
+            })
+        } else {
+            let bad = self.input[start_pos];
+            self.pos = start_pos + 1;
+            // No accepting state was ever reached, but the DFA may still have walked
+            // several characters (including newlines) before dying — roll line/col
+            // back to right after the single bad character, not wherever the failed
+            // speculative scan drifted to.
+            self.line = start_line;
+            self.col = start_col;
+            if bad == '\n' {
+                self.line += 1;
+                self.col = 1;
+            } else {
+                self.col += 1;
+            }
+            LexResult::Error {
+                lexeme: bad,
+                line: start_line,
+                col: start_col,
+            }
+        }
+    }
+
+    /// Tokeniza todo el input.
+    pub fn tokenize(&mut self) -> (Vec<Token>, Vec<String>) {
+        let mut tokens = Vec::new();
+        let mut errors = Vec::new();
+        loop {
+            match self.next_token() {
+                // Ignore whitespace and comments
+                LexResult::Token(t) if t.kind.contains("Whitespace") || t.kind.contains("Comment") || t.kind.contains("Ignored") => {
+                    // ignore
+                }
+                LexResult::Token(t) => tokens.push(t),
+                LexResult::Error { lexeme, line, col } => {
+                    errors.push(format!("Error línea {}:{} — carácter '{}'", line, col, lexeme));
+                }
+                LexResult::EOF => break,
+            }
+        }
+        (tokens, errors)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexico::table::transition_table;
+
+    #[test]
+    fn test_simulator_maximal_munch() {
+        // Tabla dummy: estado 0 -> con dígito va a 1; estado 1 acepta "NUM", con dígito sigue en 1
+        let dfa = transition_table::make_dummy_dfa_num();
+        let tt = transition_table::build(&dfa);
+        let mut sim = Simulator::new(&tt, "42");
+        let (tokens, errors) = sim.tokenize();
+        assert_eq!(errors.len(), 0);
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].lexeme, "42");
+        assert_eq!(tokens[0].kind, "NUM");
+        assert_eq!(tokens[0].line, 1);
+        assert_eq!(tokens[0].col, 1);
+    }
+
+    #[test]
+    fn test_simulator_error_on_invalid_char() {
+        let dfa = transition_table::make_dummy_dfa_num();
+        let tt = transition_table::build(&dfa);
+        let mut sim = Simulator::new(&tt, "42x");
+        let (tokens, errors) = sim.tokenize();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].lexeme, "42");
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains('x'));
+    }
+}
+
+

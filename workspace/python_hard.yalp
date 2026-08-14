@@ -1,0 +1,280 @@
+/* ============================================================
+ * python_hard.yalp
+ * Gramática LALR/SLR para subconjunto de Python.
+ * Cubre: funciones, clases, if/elif/else, while, for, return,
+ * print, listas, diccionarios, llamadas, indexación, atributos,
+ * operadores aritméticos, booleanos y comparaciones.
+ * ============================================================ */
+
+%token DEF IF ELSE ELIF WHILE FOR IN RETURN PRINT
+%token TRUE FALSE NONE AND OR NOT
+%token CLASS IMPORT FROM PASS BREAK CONTINUE
+%token ID INTEGER FLOAT STRING DOCSTRING COMMENT
+%token EQ NEQ LTE GTE PLUS_ASSIGN MINUS_ASSIGN POW
+%token ASSIGN PLUS MINUS STAR SLASH MOD LT GT
+%token LPAREN RPAREN LBRACKET RBRACKET LBRACE RBRACE
+%token COLON COMMA DOT NEWLINE INDENT DEDENT
+
+IGNORE COMMENT DOCSTRING
+
+%%
+
+programa:
+    stmt_list
+;
+
+stmt_list:
+    stmt_list stmt
+  | stmt
+;
+
+stmt:
+    simple_stmt NEWLINE
+  | compound_stmt
+  | NEWLINE
+;
+
+simple_stmt:
+    assign_stmt
+  | aug_assign_stmt
+  | return_stmt
+  | print_stmt
+  | pass_stmt
+  | break_stmt
+  | continue_stmt
+  | import_stmt
+  | expr_stmt
+;
+
+compound_stmt:
+    func_def
+  | class_def
+  | if_stmt
+  | while_stmt
+  | for_stmt
+;
+
+import_stmt:
+    IMPORT dotted_name
+  | FROM dotted_name IMPORT ID
+  | FROM dotted_name IMPORT STAR
+;
+
+dotted_name:
+    dotted_name DOT ID
+  | ID
+;
+
+func_def:
+    DEF ID LPAREN param_list RPAREN COLON suite
+;
+
+param_list:
+    params
+  | /* vacio */
+;
+
+params:
+    params COMMA param
+  | param
+;
+
+param:
+    ID
+  | ID ASSIGN expr
+;
+
+class_def:
+    CLASS ID COLON suite
+  | CLASS ID LPAREN base_list RPAREN COLON suite
+;
+
+base_list:
+    base_list COMMA ID
+  | ID
+;
+
+suite:
+    NEWLINE INDENT stmt_list DEDENT
+;
+
+assign_stmt:
+    lvalue ASSIGN expr
+  | lvalue ASSIGN assign_stmt
+;
+
+aug_assign_stmt:
+    ID PLUS_ASSIGN expr
+  | ID MINUS_ASSIGN expr
+;
+
+lvalue:
+    ID
+  | ID LBRACKET expr RBRACKET
+  | primary DOT ID
+;
+
+return_stmt:
+    RETURN expr
+  | RETURN
+;
+
+pass_stmt:
+    PASS
+;
+
+break_stmt:
+    BREAK
+;
+
+continue_stmt:
+    CONTINUE
+;
+
+print_stmt:
+    PRINT LPAREN print_args RPAREN
+;
+
+print_args:
+    print_args COMMA expr
+  | expr
+  | /* vacio */
+;
+
+expr_stmt:
+    expr
+;
+
+if_stmt:
+    IF expr COLON suite
+  | IF expr COLON suite else_clause
+  | IF expr COLON suite elif_chain
+  | IF expr COLON suite elif_chain else_clause
+;
+
+elif_chain:
+    elif_chain ELIF expr COLON suite
+  | ELIF expr COLON suite
+;
+
+else_clause:
+    ELSE COLON suite
+;
+
+while_stmt:
+    WHILE expr COLON suite
+  | WHILE LPAREN expr RPAREN COLON suite
+;
+
+for_stmt:
+    FOR target_list IN expr COLON suite
+;
+
+target_list:
+    target_list COMMA ID
+  | ID
+;
+
+expr:
+    or_expr
+;
+
+or_expr:
+    or_expr OR and_expr
+  | and_expr
+;
+
+and_expr:
+    and_expr AND not_expr
+  | not_expr
+;
+
+not_expr:
+    NOT not_expr
+  | comparison
+;
+
+comparison:
+    comparison EQ arith_expr
+  | comparison NEQ arith_expr
+  | comparison LT arith_expr
+  | comparison GT arith_expr
+  | comparison LTE arith_expr
+  | comparison GTE arith_expr
+  | arith_expr
+;
+
+arith_expr:
+    arith_expr PLUS term
+  | arith_expr MINUS term
+  | term
+;
+
+term:
+    term STAR power
+  | term SLASH power
+  | term MOD power
+  | power
+;
+
+power:
+    unary POW power
+  | unary
+;
+
+unary:
+    MINUS unary
+  | NOT unary
+  | primary
+;
+
+primary:
+    atom
+  | primary LPAREN arg_list RPAREN
+  | primary LBRACKET expr RBRACKET
+  | primary DOT ID
+;
+
+atom:
+    ID
+  | INTEGER
+  | FLOAT
+  | STRING
+  | TRUE
+  | FALSE
+  | NONE
+  | LPAREN expr RPAREN
+  | LBRACKET list_items RBRACKET
+  | LBRACE dict_items RBRACE
+;
+
+arg_list:
+    args
+  | /* vacio */
+;
+
+args:
+    args COMMA arg
+  | arg
+;
+
+arg:
+    expr
+  | ID ASSIGN expr
+;
+
+list_items:
+    list_items COMMA expr
+  | expr
+  | /* vacio */
+;
+
+dict_items:
+    dict_items COMMA dict_pair
+  | dict_pair
+  | /* vacio */
+;
+
+dict_pair:
+    expr COLON expr
+;

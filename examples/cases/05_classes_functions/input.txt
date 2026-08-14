@@ -1,0 +1,5 @@
+x = 1 ;
+def foo ( x , y ) { x = x + y ; return x ; }
+class MyClass { def bar ( ) { return 1 ; } }
+result = foo ( 1 , 2 ) ;
+items = [ 1 , 2 , 3 ] ;

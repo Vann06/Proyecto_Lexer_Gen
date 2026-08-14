@@ -1,0 +1,15 @@
+/* Prueba de left factoring */
+
+%token ID ASSIGN LPAREN RPAREN NUM
+
+%%
+
+stmt:
+    ID ASSIGN expr
+  | ID LPAREN expr RPAREN
+;
+
+expr:
+    ID
+  | NUM
+;

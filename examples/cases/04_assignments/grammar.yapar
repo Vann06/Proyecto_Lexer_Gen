@@ -1,0 +1,12 @@
+/* Grammar 4 — Asignaciones */
+%token ID NUMBER SEMICOLON ASSIGNOP LT EQ PLUS MINUS TIMES DIV LPAREN RPAREN WHITESPACE
+%start program
+%%
+program : stmt_list ;
+stmt_list : stmt_list stmt | stmt ;
+stmt : ID ASSIGNOP expr SEMICOLON | comparison ;
+comparison : expr LT expr | expr EQ expr ;
+expr : expr PLUS term | expr MINUS term | term ;
+term : term TIMES factor | term DIV factor | factor ;
+factor : LPAREN expr RPAREN | ID | NUMBER ;
+%%

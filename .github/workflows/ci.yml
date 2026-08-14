@@ -1,0 +1,39 @@
+name: CI
+
+# Corre en cada push directo a main y en cada pull request cuyo destino sea
+# main (el filtro `branches` de `pull_request` mira la rama BASE del PR, no
+# la rama de origen — así que un PR desde cualquier rama hacia main dispara
+# esto sin importar cómo se llame la rama de origen).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar toolchain de Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache de cargo
+        uses: Swatinem/rust-cache@v2
+
+      # --locked: Cargo.lock está trackeado a propósito (Dockerfile.api
+      # depende de que exista para un build reproducible) — si alguien
+      # cambia Cargo.toml sin regenerar el lock, esto falla en vez de
+      # actualizarlo en silencio.
+      - name: Build (lib + bins + tests)
+        run: cargo build --all-targets --locked
+
+      - name: Test suite completa
+        run: cargo test --no-fail-fast --locked

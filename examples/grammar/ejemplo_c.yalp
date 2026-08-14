@@ -1,0 +1,108 @@
+/* Especificacion YAPar para el subconjunto de C */
+
+/* Sección de Tokens que coinciden con el enum de Rust */
+%token IF ELSE WHILE RETURN INT FLOAT STRUCT
+%token ID NUMINT NUMFLOAT STRINGLITERAL
+%token PLUS MINUS STAR SLASH
+%token ASSIGN EQUALS NOTEQUALS LT LTE GT GTE
+%token LBRACE RBRACE LPAREN RPAREN SEMICOLON COMMA
+%token WHITESPACE COMMENT ERROR
+
+/* Ignoramos espacios y comentarios en el parser */
+IGNORE WHITESPACE COMMENT ERROR
+
+%%
+
+/* Sección de Producciones */
+
+programa:
+    declaraciones
+;
+
+declaraciones:
+    declaraciones declaracion
+  | declaracion
+;
+
+declaracion:
+    declaracion_var
+  | declaracion_func
+  | declaracion_struct
+;
+
+tipo:
+    INT
+  | FLOAT
+;
+
+declaracion_var:
+    tipo ID SEMICOLON
+  | tipo ID ASSIGN expresion SEMICOLON
+;
+
+declaracion_struct:
+    STRUCT ID LBRACE declaraciones RBRACE SEMICOLON
+;
+
+declaracion_func:
+    tipo ID LPAREN parametros RPAREN bloque
+;
+
+parametros:
+    lista_parametros
+  | /* vacio */
+;
+
+lista_parametros:
+    lista_parametros COMMA parametro
+  | parametro
+;
+
+parametro:
+    tipo ID
+;
+
+bloque:
+    LBRACE sentencias RBRACE
+;
+
+sentencias:
+    sentencias sentencia
+  | sentencia
+;
+
+sentencia:
+    declaracion_var
+  | bloque
+  | IF LPAREN expresion RPAREN sentencia
+  | IF LPAREN expresion RPAREN sentencia ELSE sentencia
+  | WHILE LPAREN expresion RPAREN sentencia
+  | RETURN expresion SEMICOLON
+  | ID ASSIGN expresion SEMICOLON
+;
+
+expresion:
+    expresion EQUALS   termino
+  | expresion NOTEQUALS termino
+  | expresion LT       termino
+  | expresion LTE      termino
+  | expresion GT       termino
+  | expresion GTE      termino
+  | expresion PLUS     termino
+  | expresion MINUS    termino
+  | termino
+;
+
+termino:
+    termino STAR factor
+  | termino SLASH factor
+  | factor
+;
+
+factor:
+    LPAREN expresion RPAREN
+  | ID
+  | NUMINT
+  | NUMFLOAT
+  | STRINGLITERAL
+;

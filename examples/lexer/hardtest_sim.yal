@@ -1,0 +1,97 @@
+(* hardtest_sim.yal - Lexer para subconjunto de C *)
+
+let digit  = ['0'-'9']
+let lower  = ['a'-'z']
+let upper  = ['A'-'Z']
+let letter = lower | upper
+let alnum  = letter | digit
+let ws     = [' ''\t''\n''\r']
+
+let id = (letter | '_')(alnum | '_')*
+
+let integer   = digit+
+let float_num = digit+'.'digit+
+
+(* Operadores compuestos *)
+let eq           = '=''='
+let neq          = '!''='
+let lte          = '<''='
+let gte          = '>''='
+let log_and      = '&''&'
+let log_or       = '|''|'
+let plus_assign  = '+''='
+let minus_assign = '-''='
+let inc          = '+''+'
+let dec          = '-''-'
+let arrow        = '-''>'
+
+(* Palabras reservadas *)
+let kw_int      = int
+let kw_char     = char
+let kw_void     = void
+let kw_float    = float
+let kw_double   = double
+let kw_if       = if
+let kw_else     = else
+let kw_while    = while
+let kw_for      = for
+let kw_return   = return
+let kw_break    = break
+let kw_continue = continue
+let kw_static   = static
+let kw_const    = const
+
+rule tokens =
+    ws+              {}
+
+  | kw_int           { "INT" }
+  | kw_char          { "CHAR" }
+  | kw_void          { "VOID" }
+  | kw_float         { "FLOAT" }
+  | kw_double        { "DOUBLE" }
+  | kw_if            { "IF" }
+  | kw_else          { "ELSE" }
+  | kw_while         { "WHILE" }
+  | kw_for           { "FOR" }
+  | kw_return        { "RETURN" }
+  | kw_break         { "BREAK" }
+  | kw_continue      { "CONTINUE" }
+  | kw_static        { "STATIC" }
+  | kw_const         { "CONST" }
+
+  | id               { "ID" }
+
+  | float_num        { "FLOAT_LIT" }
+  | integer          { "INT_LIT" }
+
+  | eq               { "EQUALS" }
+  | neq              { "NEQ" }
+  | lte              { "LTE" }
+  | gte              { "GTE" }
+  | log_and          { "AND" }
+  | log_or           { "OR" }
+  | plus_assign      { "PLUS_ASSIGN" }
+  | minus_assign     { "MINUS_ASSIGN" }
+  | inc              { "INC" }
+  | dec              { "DEC" }
+  | arrow            { "ARROW" }
+
+  | '='              { "ASSIGN" }
+  | '+'              { "PLUS" }
+  | '-'              { "MINUS" }
+  | '*'              { "STAR" }
+  | '/'              { "SLASH" }
+  | '%'              { "MOD" }
+  | '<'              { "LT" }
+  | '>'              { "GT" }
+  | '!'              { "NOT" }
+
+  | '('              { "LPAREN" }
+  | ')'              { "RPAREN" }
+  | '{'              { "LBRACE" }
+  | '}'              { "RBRACE" }
+  | '['              { "LBRACKET" }
+  | ']'              { "RBRACKET" }
+  | ';'              { "SEMICOLON" }
+  | ','              { "COMMA" }
+  | '.'              { "DOT" }

@@ -1,0 +1,41 @@
+# ── Stage 1: compilar el binario ─────────────────────────────────────────────
+FROM rust:1.82-slim AS builder
+WORKDIR /app
+
+# Copiar manifiestos primero para aprovechar cache de capas Docker
+COPY Cargo.toml Cargo.lock ./
+
+# Compilar solo las dependencias externas contra fuentes dummy, para que esta capa
+# quede cacheada mientras Cargo.toml/Cargo.lock no cambien. El bin dummy toca las
+# mismas dependencias externas (axum/tokio/tower-http/serde) que el real "api", así
+# el compilador las compila de verdad aquí en vez de solo descargarlas. A diferencia
+# de la versión anterior, los errores de esta etapa YA NO se ocultan: si falla,
+# el build debe fallar aquí y no 3-5 minutos después con menos contexto.
+RUN mkdir -p src/bin && \
+    echo "" > src/lib.rs && \
+    printf '%s\n' \
+      'use axum::{routing::get, Router};' \
+      'use serde::Serialize;' \
+      'use tower_http::cors::{Any, CorsLayer};' \
+      '#[derive(Serialize)]' \
+      'struct Dummy { ok: bool }' \
+      '#[tokio::main]' \
+      'async fn main() {' \
+      '    let _ = serde_json::json!(Dummy { ok: true });' \
+      '    let _ = CorsLayer::new().allow_origin(Any);' \
+      '    let _: Router = Router::new().route("/health", get(|| async { "" }));' \
+      '}' > src/bin/api.rs && \
+    cargo build --release --bin api && \
+    rm -rf src/
+
+# Copiar el código real y compilar el binario api (único bin que empaqueta la imagen)
+COPY src/ ./src/
+RUN touch src/lib.rs src/bin/api.rs && cargo build --release --bin api
+
+# ── Stage 2: imagen mínima de ejecución ──────────────────────────────────────
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=builder /app/target/release/api /usr/local/bin/api
+EXPOSE 8080
+CMD ["api"]

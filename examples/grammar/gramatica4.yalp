@@ -1,0 +1,14 @@
+/* Laboratorio: Gramatica 4 */
+/* S -> S+S | SS | (S) | S* | a */
+
+%token a + * ( )
+
+%%
+
+S:
+    S + S
+  | S S
+  | ( S )
+  | S *
+  | a
+;

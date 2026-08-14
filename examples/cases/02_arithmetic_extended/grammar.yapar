@@ -1,0 +1,8 @@
+/* Grammar 2 — Aritmética extendida */
+%token ID NUMBER PLUS MINUS TIMES DIV LPAREN RPAREN WHITESPACE
+%start E
+%%
+E : E PLUS T | E MINUS T | T ;
+T : T TIMES F | T DIV F | F ;
+F : LPAREN E RPAREN | ID | NUMBER ;
+%%

@@ -3,5 +3,14 @@ name = "lexer-generator"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "lexer_generator"
+path = "src/lib.rs"
+
 [dependencies]
-thiserror = "1.0"
+thiserror  = "1.0"
+axum       = "0.7"
+tokio      = { version = "1", features = ["full"] }
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+tower-http = { version = "0.5", features = ["cors", "catch-panic"] }
