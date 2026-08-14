@@ -56,6 +56,11 @@ fn walk(node: &ParseNode, spec: &SemanticSpec, table: &mut SymbolTable, errors: 
     let scope_rule = spec.scopes.iter().find(|r| r.production == node.symbol);
 
     let mut consumed_index: Option<usize> = None;
+    // Nombre recién declarado por ESTE nodo, si lo hubo — se usa después de
+    // cerrar un scope nuevo para adjuntarle sus símbolos como `members`
+    // (p.ej. func_decl declara "foo" Y abre el scope de su cuerpo; al
+    // cerrarlo, los parámetros/locales de "foo" quedan colgados de "foo").
+    let mut declared_name: Option<String> = None;
 
     if let Some(rule) = decl_rule {
         if let Some((idx, name_node)) = find_identifier_child(node, &spec.identifier_token, rule.name_child) {
@@ -70,6 +75,7 @@ fn walk(node: &ParseNode, spec: &SemanticSpec, table: &mut SymbolTable, errors: 
                     errors.push(e);
                 }
             }
+            declared_name = Some(name);
         }
     }
 
@@ -102,9 +108,31 @@ fn walk(node: &ParseNode, spec: &SemanticSpec, table: &mut SymbolTable, errors: 
     if entered_scope {
         // El scope que se cierra es el que este mismo `walk` acaba de
         // abrir arriba — nunca puede ser el Global, así que esto no falla.
-        table
+        let closed = table
             .exit_scope()
             .expect("el scope recién abierto por este walk debe poder cerrarse");
+
+        // Si esta misma producción también declaró un símbolo (func_decl,
+        // class_decl), lo que se declaró DIRECTAMENTE en el scope que abrió
+        // queda disponible como `members` sin volver a recorrer el árbol.
+        //
+        // Límite conocido, no arreglado a propósito: si el cuerpo tiene un
+        // scope anónimo anidado adentro (p.ej. un `bloque` que no declara
+        // nada por sí mismo, solo abre Block), lo declarado ahí adentro NO
+        // se aplana hacia arriba — un local declarado dos niveles adentro
+        // de una función no aparece en `members` de la función, solo lo que
+        // cuelga directo de su propio scope (sus parámetros). Aplanarlo
+        // "hacia arriba a través de scopes anónimos" es viable pero corre
+        // el riesgo real de filtrar la visibilidad de ese nombre más allá
+        // de su bloque si se hace reinsertándolo en la tabla viva (rompería
+        // el lookup con scoping correcto que ya está bien probado) — se
+        // deja pendiente para cuando haga falta de verdad, con un
+        // mecanismo de acumulación aparte de la tabla de lookup.
+        if let Some(name) = &declared_name {
+            if let Some(sym) = table.lookup_mut(name) {
+                sym.members = Some(closed.symbols().cloned().collect());
+            }
+        }
     }
 }
 

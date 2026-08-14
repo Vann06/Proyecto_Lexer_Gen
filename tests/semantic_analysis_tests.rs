@@ -111,9 +111,24 @@ fn miniprog_symbol_table_from_real_grammar() {
     let suma = result.table.lookup("suma").expect("suma se declaró");
     assert_eq!(suma.kind, SymbolKind::Function);
 
-    // "a"/"b"/"resultado" eran locales a la función — no visibles desde afuera.
+    // "a"/"b"/"resultado" eran locales a la función — no visibles desde afuera...
     assert_eq!(result.table.lookup("a"), None);
     assert_eq!(result.table.lookup("resultado"), None);
+    // ...y los parámetros (declarados DIRECTO en el scope Function que abrió
+    // func_decl) siguen consultables colgados de "suma" sin recorrer el
+    // árbol de nuevo. "resultado" NO aparece acá — vive un nivel más adentro
+    // (dentro del `bloque` del cuerpo, un scope Block anidado que func_decl
+    // no declaró) — ver el comentario sobre este límite en analyzer::walk.
+    let member_names: Vec<&str> = suma
+        .members
+        .as_ref()
+        .expect("func_decl abrió un scope, debe haber quedado members")
+        .iter()
+        .map(|m| m.name.as_str())
+        .collect();
+    assert!(member_names.contains(&"a"));
+    assert!(member_names.contains(&"b"));
+    assert!(!member_names.contains(&"resultado"), "resultado vive en el bloque anidado, no directo en Function");
 }
 
 #[test]
@@ -224,4 +239,60 @@ fn classes_functions_reassigning_a_parameter_is_not_a_redeclaration() {
     let result = analyze(&tree, &spec);
 
     assert!(result.errors.is_empty(), "no debería haber errores: {:?}", result.errors);
+}
+
+/// `members` no se queda en un solo nivel: una clase con un método adentro
+/// debe poder consultarse en cascada (MyClass -> bar -> a) sin volver a
+/// tocar el árbol — es justo el caso que el libro del dragón pide poder
+/// resolver para acceso a miembros / cálculo de activation records.
+#[test]
+fn classes_functions_class_members_are_queryable_after_the_walk() {
+    let yal = fs::read_to_string("examples/cases/05_classes_functions/lexer.yal")
+        .expect("existe 05_classes_functions/lexer.yal");
+    let yalp = fs::read_to_string("examples/cases/05_classes_functions/grammar.yapar")
+        .expect("existe 05_classes_functions/grammar.yapar");
+
+    let source = "class MyClass { def bar ( a ) { return a ; } }";
+
+    let spec = SemanticSpec {
+        identifier_token: "ID".to_string(),
+        declarations: vec![
+            DeclarationRule {
+                production: "class_decl".to_string(),
+                kind: SymbolKind::Class,
+                name_child: None,
+                implicit: false,
+            },
+            DeclarationRule {
+                production: "func_decl".to_string(),
+                kind: SymbolKind::Function,
+                name_child: None,
+                implicit: false,
+            },
+            DeclarationRule {
+                production: "param_list".to_string(),
+                kind: SymbolKind::Parameter,
+                name_child: None,
+                implicit: false,
+            },
+        ],
+        scopes: vec![
+            ScopeRule { production: "class_decl".to_string(), kind: ScopeKind::Class, with_label: true },
+            ScopeRule { production: "func_decl".to_string(), kind: ScopeKind::Function, with_label: true },
+        ],
+    };
+
+    let tree = real_parse_tree(&yal, &yalp, source);
+    let result = analyze(&tree, &spec);
+    assert!(result.errors.is_empty(), "no debería haber errores: {:?}", result.errors);
+
+    let my_class = result.table.lookup("MyClass").expect("MyClass se declaró");
+    assert_eq!(my_class.kind, SymbolKind::Class);
+    let class_members = my_class.members.as_ref().expect("class_decl abrió un scope");
+    let bar = class_members.iter().find(|m| m.name == "bar").expect("bar es método de MyClass");
+    assert_eq!(bar.kind, SymbolKind::Function);
+
+    // Un nivel más abajo: los parámetros de "bar" cuelgan de "bar", no de "MyClass".
+    let bar_members = bar.members.as_ref().expect("func_decl abrió un scope");
+    assert!(bar_members.iter().any(|m| m.name == "a" && m.kind == SymbolKind::Parameter));
 }

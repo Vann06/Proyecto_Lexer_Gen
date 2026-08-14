@@ -50,6 +50,11 @@ impl Scope {
         self.symbols.get(name)
     }
 
+    /// Igual que `get_own`, mutable — para `SymbolTable::lookup_mut`.
+    pub fn get_own_mut(&mut self, name: &str) -> Option<&mut Symbol> {
+        self.symbols.get_mut(name)
+    }
+
     pub fn contains_own(&self, name: &str) -> bool {
         self.symbols.contains_key(name)
     }
@@ -114,6 +119,11 @@ impl ScopeStack {
     /// símbolo más cercano (el que hace shadowing) gane.
     pub fn iter_innermost_first(&self) -> impl Iterator<Item = &Scope> {
         self.scopes.iter().rev()
+    }
+
+    /// Igual que `iter_innermost_first`, mutable — para `lookup_mut`.
+    pub fn iter_innermost_first_mut(&mut self) -> impl Iterator<Item = &mut Scope> {
+        self.scopes.iter_mut().rev()
     }
 
     /// De afuera hacia adentro — el orden natural para mostrar en `dump()`.
