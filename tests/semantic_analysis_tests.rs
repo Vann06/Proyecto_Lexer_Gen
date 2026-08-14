@@ -1,7 +1,7 @@
 // Prueba de que src/semantico/analyzer::analyze es genuinamente agnóstico a
 // la gramática: dos gramáticas REALES y distintas (compiladas, lexeadas y
 // parseadas de verdad — no árboles armados a mano), cada una con su propio
-// SemanticSpec chico, corridas por el MISMO `analyze()`.
+// SemanticSpec chico, corridas por el MISMO `analyze() `.
 use lexer_generator::api;
 use lexer_generator::lexico::runtime::simulator::{LexResult, Simulator};
 use lexer_generator::semantico::analyzer::analyze;
