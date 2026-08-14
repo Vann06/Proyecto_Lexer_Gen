@@ -15,6 +15,11 @@ mod sintactico;
 pub use codegen::build_codegen_response;
 pub use pipeline::build_pipeline_response;
 pub use sintactico::{build_compile_response, build_parse_response};
+// Re-exportada porque tests/semantic_analysis_tests.rs la necesita para
+// construir un árbol real (parse .yal → expandir → NFA → DFA → tabla) sin
+// duplicar ese pipeline una cuarta vez (ya está triplicado entre main.rs,
+// test_pipeline.rs y este módulo — ver ORGANIZACION.md § "Fases futuras").
+pub use lexico::build_lexer_artifacts;
 
 use serde::Serialize;
 use serde_json::Value;
