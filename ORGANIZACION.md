@@ -33,7 +33,7 @@ Es el punto de entrada del proyecto.
 
 ### Fase 1. Leer y entender la especificación YALex
 
-**Ubicación:** `src/spec/parser.rs`
+**Ubicación:** `src/lexico/spec/parser.rs`
 
 ### Qué hace
 
@@ -64,7 +64,7 @@ El archivo ya no se ve como texto bruto, sino como datos organizados.
 
 ### Fase 2. Representar internamente la especificación
 
-**Ubicación:** `src/spec/ast.rs`
+**Ubicación:** `src/lexico/spec/ast.rs`
 
 ### Qué hace
 
@@ -91,7 +91,7 @@ Define las estructuras de datos para guardar la especificación.
 
 ### Fase 3. Expandir definiciones y macros
 
-**Ubicación:** `src/spec/expand.rs`
+**Ubicación:** `src/lexico/spec/expand.rs`
 
 ### Qué hace
 
@@ -120,7 +120,7 @@ Transforma expresiones abreviadas en expresiones completas.
 
 ### Fase 4. Convertir regex a árbol
 
-**Ubicación:** `src/regex/parser.rs`
+**Ubicación:** `src/lexico/regex/parser.rs`
 
 ### Qué hace
 
@@ -147,7 +147,7 @@ Toma una expresión regular expandida y la convierte en una estructura de árbol
 
 ### Fase 5. Definir la estructura del AST de regex
 
-**Ubicación:** `src/regex/ast.rs`
+**Ubicación:** `src/lexico/regex/ast.rs`
 
 ### Qué hace
 
@@ -180,7 +180,7 @@ Es la plantilla de cómo se verá el árbol de expresiones regulares.
 
 ### Fase 6. Graficar el árbol
 
-**Ubicación:** `src/graph/dot.rs`
+**Ubicación:** `src/lexico/graph/dot.rs`
 
 ### Qué hace
 
@@ -205,7 +205,7 @@ Convierte el AST a un formato graficable.
 
 ### Fase 7. Construcción de AFN
 
-**Ubicación:** `src/automata/nfa.rs`
+**Ubicación:** `src/lexico/automata/nfa.rs`
 
 ### Qué hace
 
@@ -234,7 +234,7 @@ Convierte cada AST en un AFN usando Thompson.
 
 ### Fase 8. Unir todos los AFN y convertir a AFD
 
-**Ubicación:** `src/automata/subset.rs`
+**Ubicación:** `src/lexico/automata/subset.rs`
 
 ### Qué hace
 
@@ -261,7 +261,7 @@ Construye el AFD a partir del AFN usando el algoritmo de subconjuntos.
 
 ### Fase 9. Representar el AFD
 
-**Ubicación:** `src/automata/dfa.rs`
+**Ubicación:** `src/lexico/automata/dfa.rs`
 
 ### Qué hace
 
@@ -288,7 +288,7 @@ Guarda la estructura del AFD.
 
 ### Fase 10. Minimización del AFD
 
-**Ubicación:** `src/automata/minimize.rs`
+**Ubicación:** `src/lexico/automata/minimize.rs`
 
 ### Qué hace
 
@@ -313,7 +313,7 @@ Reduce el AFD sin cambiar el lenguaje reconocido.
 
 ### Fase 11. Construcción de tabla de transiciones
 
-**Ubicación:** `src/table/transition_table.rs`
+**Ubicación:** `src/lexico/table/transition_table.rs`
 
 ### Qué hace
 
@@ -341,7 +341,7 @@ En vez de recorrer estructuras complejas, el lexer luego solo consulta la tabla.
 
 ### Fase 12. Simulación del analizador léxico
 
-**Ubicación:** `src/runtime/simulator.rs`
+**Ubicación:** `src/lexico/runtime/simulator.rs`
 
 ### Qué hace
 
@@ -372,7 +372,7 @@ Usa la tabla para analizar texto real.
 
 ### Fase 13. Generación de código del lexer
 
-**Ubicación:** `src/codegen/rust_codegen.rs`
+**Ubicación:** `src/lexico/codegen/rust_codegen.rs`
 
 ### Qué hace
 
@@ -424,27 +424,27 @@ Centraliza errores del proyecto.
 ```text
 archivo .yal
    ↓
-spec/parser.rs
+lexico/spec/parser.rs
    ↓
-spec/ast.rs
+lexico/spec/ast.rs
    ↓
-spec/expand.rs
+lexico/spec/expand.rs
    ↓
-regex/parser.rs + regex/ast.rs
+lexico/regex/parser.rs + lexico/regex/ast.rs
    ↓
-graph/dot.rs
+lexico/graph/dot.rs
    ↓
-automata/nfa.rs
+lexico/automata/nfa.rs
    ↓
-automata/subset.rs + automata/dfa.rs
+lexico/automata/subset.rs + lexico/automata/dfa.rs
    ↓
-automata/minimize.rs
+lexico/automata/minimize.rs
    ↓
-table/transition_table.rs
+lexico/table/transition_table.rs
    ↓
-runtime/simulator.rs
+lexico/runtime/simulator.rs
    ↓
-codegen/rust_codegen.rs
+lexico/codegen/rust_codegen.rs
    ↓
 lexer generado
    ↓

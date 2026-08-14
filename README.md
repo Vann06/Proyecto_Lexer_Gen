@@ -40,18 +40,23 @@ lexer-generator/
 ├── generated/            # salida de `cargo run` — crate standalone con el lexer generado
 ├── tests/                # tests de integración (cargo test)
 └── src/
-    ├── lib.rs            # raíz del crate — declara todos los módulos de abajo
-    ├── main.rs            # CLI del generador de lexers standalone
+    ├── lib.rs                # raíz del crate — declara lexico, sintactico, api, error
+    ├── main.rs                # CLI del generador de lexers standalone
     ├── error.rs
-    ├── spec/              # parseo de .yal (header, definiciones, reglas, trailer)
-    ├── regex/              # parseo de expresiones regulares a AST
-    ├── automata/            # Thompson (NFA), subset construction (DFA), minimización
-    ├── table/                # tabla de transiciones del DFA
-    ├── runtime/               # simulador del lexer (maximal munch)
-    ├── codegen/                # emite el lexer.rs standalone
-    ├── graph/                   # exporta AST/DFA a Graphviz DOT
-    ├── analizador_sintactico/    # gramática YAPar, FIRST/FOLLOW, LR(0)/LR(1)/LALR/SLR/LL(1)
-    ├── api/                       # lógica compartida por el servidor HTTP y los tests
+    ├── lexico/                # ── ANÁLISIS LÉXICO ──
+    │   ├── spec/              #   parseo de .yal (header, definiciones, reglas, trailer)
+    │   ├── regex/              #   parseo de expresiones regulares a AST
+    │   ├── automata/            #   Thompson (NFA), subset construction (DFA), minimización
+    │   ├── table/                #   tabla de transiciones del DFA
+    │   ├── runtime/               #   simulador del lexer (maximal munch) + síntesis INDENT/DEDENT
+    │   ├── codegen/                #   emite el lexer.rs standalone
+    │   └── graph/                   #   exporta AST/DFA a Graphviz DOT
+    ├── sintactico/            # ── ANÁLISIS SINTÁCTICO ──
+    │   ├── gramatica/          #   gramática YAPar (.yalp → Grammar), FIRST/FOLLOW
+    │   ├── automatas/           #   LR(0)/LR(1)/LALR
+    │   ├── tablas.rs             #   tabla ACTION/GOTO, conflictos
+    │   └── runtime/               #   parser LR dirigido por tabla, LL(1), árbol de derivación
+    ├── api/                   # ── CAPA HTTP COMPARTIDA ── (lógica del servidor y los tests)
     └── bin/
         ├── api.rs                 # servidor HTTP (Axum) — expone api:: al IDE
         ├── test_lalr.rs            # REPL de consola para LALR(1)/LR(1)
