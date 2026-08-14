@@ -115,6 +115,11 @@ const PROBLEMS = [
 window.IDE_DATA = {
   FILES, STATES, ACTION, GOTO, TERMINALS, NONTERMINALS,
   FIRST, FOLLOW, PRODS, TRACE, TOKENS, PROBLEMS,
+  // Llenado por handleParse (ver app.jsx) con accepted/error reales del
+  // backend — antes el PARSE CONSOLE los ignoraba y re-derivaba "aceptado"
+  // mirando si el último paso de la traza mock era "acc".
+  PARSE_ACCEPTED: null,
+  PARSE_ERROR: null,
   // Llenado por /api/codegen (ver handleRun en app.jsx) — antes era un mock
   // hardcodeado que nunca reflejaba el .yal cargado.
   GEN_CODE: "",

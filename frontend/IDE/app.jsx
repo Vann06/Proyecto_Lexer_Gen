@@ -773,7 +773,14 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
   const [isDraggingResize, setIsDraggingResize] = useState(false);
 
   const cur = D.TRACE[stepIdx] || D.TRACE[0];
-  const isAccepted = cur && cur.action === "acc";
+  // Antes se re-derivaba mirando si el último paso de la traza era "acc" —
+  // frágil (y ni siquiera correcto para un rechazo: la traza de un intento
+  // fallido simplemente no tiene ese paso, pero tampoco hay señal explícita
+  // de que falló). D.PARSE_ACCEPTED/D.PARSE_ERROR vienen del backend real
+  // (ver handleParse). null = todavía no se ha parseado nada.
+  const hasParsed  = D.PARSE_ACCEPTED !== null && D.PARSE_ACCEPTED !== undefined;
+  const isAccepted = D.PARSE_ACCEPTED === true;
+  const isRejected = hasParsed && D.PARSE_ACCEPTED === false;
   const rawContent = D.FILES.test.rawContent || "";
   const tokenCount = rawContent.trim().split(/\s+/).filter(Boolean).length;
 
@@ -785,6 +792,12 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
       .map(line => line.trim())
       .filter(line => line.length > 0);
   })();
+
+  // Si se carga un .txt distinto, no dejar selectedTestIdx apuntando más
+  // allá del final de una lista de test cases más corta.
+  useEffect(() => {
+    setSelectedTestIdx(0);
+  }, [D.FILES.test.rawContent]);
 
   // Handler para resize
   useEffect(() => {
@@ -833,11 +846,19 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
           </span>
           <span className="dim" style={{marginLeft:8, whiteSpace:"nowrap", fontSize:12}}>{tokenCount} tokens</span>
         </div>
-        <button className="cbtn green" onClick={()=>onParse(rawContent)}>▶ PARSEAR</button>
+        <button className="cbtn green" onClick={()=>{
+          // Antes siempre mandaba rawContent completo (el .txt entero), sin
+          // importar qué test case estuviera resaltado en el panel de la
+          // izquierda — seleccionar el caso #3 y dar PARSEAR parseaba TODAS
+          // las líneas concatenadas, no la #3.
+          const toParse = (testCases.length > 0 && testCases[selectedTestIdx] != null)
+            ? testCases[selectedTestIdx] : rawContent;
+          onParse(toParse);
+        }}>▶ PARSEAR</button>
         <button className="cbtn icon cyan" onClick={()=>setStep(0)}>⏮</button>
         <button className="cbtn icon cyan" onClick={()=>setStep(Math.max(0,stepIdx-1))}>◀ PASO</button>
         <button className="cbtn icon cyan" onClick={()=>setStep(Math.min(D.TRACE.length-1,stepIdx+1))}>PASO ▶</button>
-        <button className="cbtn icon" onClick={()=>setStep(D.TRACE.length-1)}>⏭</button>
+        <button className="cbtn icon" onClick={()=>setStep(Math.max(0,D.TRACE.length-1))}>⏭</button>
       </div>
       {testCases.length > 0 ? (
       <div className="test-cases-resize-wrap" style={{display:'flex', gap:0, height:'100%', minHeight:0}}>
@@ -872,7 +893,7 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
 
           {/* Resize Handle */}
           <div
-            onMouseDown={() => setIsDraggingResize(true)}
+            onMouseDown={(e) => { e.preventDefault(); setIsDraggingResize(true); }}
             style={{
               width: '4px',
               backgroundColor: 'var(--line)',
@@ -890,12 +911,23 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
               <div style={{display:'flex', flexDirection:'column', gap:0}}>
                 {D.TRACE.map((s,i)=>{
                   const a = (s && typeof s.action === "string") ? s.action : "";
-                  const cls = a==="acc"?"a-ac":a.startsWith("s")?"a-sh":a.startsWith("r")?"a-re":"a-er";
+                  // Reconoce match/predict (LL(1)) además de s.../r... (LR) — antes
+                  // todo paso de LL(1) caía en "a-er" (rojo, estilo de error) sin
+                  // importar si el parseo era exitoso (StackView de abajo ya
+                  // distinguía esto — ver el mismo patrón ahí).
+                  const cls = a==="acc" ? "a-ac"
+                    : (a==="match" || a.startsWith("s")) ? "a-sh"
+                    : (a==="predict" || a.startsWith("r")) ? "a-re"
+                    : "a-er";
+                  const top = (s && s.stack && s.stack.length) ? s.stack[s.stack.length-1] : "";
+                  // "I" es prefijo de estado LR (I0, I3...); en LL(1) el tope de
+                  // pila es un símbolo de gramática, no un estado numérico.
+                  const topLabel = typeof top === "number" ? `I${top}` : top;
                   return (
                     <div key={i} className={"step " + (i===stepIdx?"cur":"")} onClick={()=>setStep(i)} style={{cursor:'pointer', padding:'4px 0'}}>
                       <div className="n" style={{display:'inline-block', minWidth:'30px'}}>{String(i+1).padStart(2,"0")}</div>
                       <div style={{display:'inline'}}>
-                        <span className="dim">I{(s && s.stack && s.stack.length) ? s.stack[s.stack.length-1] : ""}</span>{' '}
+                        <span className="dim">{topLabel}</span>{' '}
                         <span className="dim">·</span>{' '}
                         <span style={{color:"var(--coral)"}}>'{(s && s.remaining && s.remaining[0]) ? s.remaining[0] : ""}'</span>{' '}
                         <span className="dim">→</span>{' '}
@@ -915,7 +947,13 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
               {isAccepted &&
                 <div className="accept-banner">
                   <span>✓</span><span>CADENA ACEPTADA</span>
-                  <span className="dim" style={{fontFamily:"VT323", fontSize:14}}>· {D.TRACE.length} pasos · 0 errores</span>
+                  <span className="dim" style={{fontFamily:"VT323", fontSize:14}}>· {D.TRACE.length} pasos</span>
+                </div>
+              }
+              {isRejected &&
+                <div className="accept-banner" style={{borderColor:"var(--red)", color:"var(--red)"}}>
+                  <span>✗</span><span>CADENA RECHAZADA</span>
+                  <span className="dim" style={{fontFamily:"VT323", fontSize:14}}>· {D.PARSE_ERROR || "error de sintaxis"}</span>
                 </div>
               }
             </div>
@@ -928,12 +966,18 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
             <h4>▍ TRAZA DE EJECUCIÓN</h4>
             {D.TRACE.map((s,i)=>{
               const a = (s && typeof s.action === "string") ? s.action : "";
-              const cls = a==="acc"?"a-ac":a.startsWith("s")?"a-sh":a.startsWith("r")?"a-re":"a-er";
+              // Ver comentario del mismo cálculo más arriba (layout con test cases).
+              const cls = a==="acc" ? "a-ac"
+                : (a==="match" || a.startsWith("s")) ? "a-sh"
+                : (a==="predict" || a.startsWith("r")) ? "a-re"
+                : "a-er";
+              const top = (s && s.stack && s.stack.length) ? s.stack[s.stack.length-1] : "";
+              const topLabel = typeof top === "number" ? `I${top}` : top;
               return (
                 <div key={i} className={"step " + (i===stepIdx?"cur":"")} onClick={()=>setStep(i)}>
                   <div className="n">{String(i+1).padStart(2,"0")}</div>
                   <div>
-                    <span className="dim">I{(s && s.stack && s.stack.length) ? s.stack[s.stack.length-1] : ""}</span>{' '}
+                    <span className="dim">{topLabel}</span>{' '}
                     <span className="dim">·</span>{' '}
                     <span style={{color:"var(--coral)"}}>'{(s && s.remaining && s.remaining[0]) ? s.remaining[0] : ""}'</span>{' '}
                     <span className="dim">→</span>{' '}
@@ -950,7 +994,13 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
             {isAccepted &&
               <div className="accept-banner">
                 <span>✓</span><span>CADENA ACEPTADA</span>
-                <span className="dim" style={{fontFamily:"VT323", fontSize:14}}>· {D.TRACE.length} pasos · 0 errores</span>
+                <span className="dim" style={{fontFamily:"VT323", fontSize:14}}>· {D.TRACE.length} pasos</span>
+              </div>
+            }
+            {isRejected &&
+              <div className="accept-banner" style={{borderColor:"var(--red)", color:"var(--red)"}}>
+                <span>✗</span><span>CADENA RECHAZADA</span>
+                <span className="dim" style={{fontFamily:"VT323", fontSize:14}}>· {D.PARSE_ERROR || "error de sintaxis"}</span>
               </div>
             }
           </div>
@@ -1089,7 +1139,7 @@ function App(){
   const [activeFile,     setFile]          = useState("yalp");
   const [activeTab,      setTab]           = useState("action");
   const [activeState,    setState]         = useState(3);
-  const [stepIdx,        setStep]          = useState(3);
+  const [stepIdx,        setStep]          = useState(0);
   const [loading,        setLoading]       = useState(false);
   const [mode,           setMode]          = useState("lalr");
   const [renderKey,      bump]             = useState(0); // re-render global
@@ -1337,12 +1387,22 @@ function App(){
       D.TRACE = Array.isArray(data.trace) ? data.trace : [];
       const treeRoot = buildParseTree(D.TRACE, mode);
       D.PARSE_TREE_DOT = treeRoot ? buildTreeDot(treeRoot) : "";
+      // El backend ya manda accepted/error — antes se ignoraban por completo
+      // y la UI re-derivaba "aceptado" mirando si el último paso de la traza
+      // era "acc", lo cual además tiraba el mensaje de error real del backend.
+      D.PARSE_ACCEPTED = !!data.accepted;
+      D.PARSE_ERROR = data.error || null;
       // Mostrar problemas léxicos/sintácticos con posición si los hay
       if (data.problems && data.problems.length) {
         D.PROBLEMS = data.problems;
+      } else if (!data.accepted && data.error) {
+        // Camino legado (/api/parser/parse): esa respuesta trae `error` pero
+        // nunca llena `problems` — sin esto, un rechazo ahí no aparecía en
+        // ningún lado (ni el PARSE CONSOLE ni la pestaña PROBLEMAS).
+        D.PROBLEMS = [{ level:"err", code:"P001", msg: data.error, loc:`pipeline ${mode.toUpperCase()}` }];
       }
       setStep(0);
-      if (data.problems && data.problems.some(p => p.level === "err")) {
+      if (!data.accepted || (data.problems && data.problems.some(p => p.level === "err"))) {
         setTab("problems");
       } else {
         setTab("tree");
@@ -1352,7 +1412,15 @@ function App(){
       console.error("API /parse:", e);
       let msg = String(e);
       try { const j = JSON.parse(msg.replace(/^Error:\s*/,"")); if (j.error) msg = j.error; } catch(_){}
+      // Limpiar la traza del intento anterior — antes se dejaba intacta, así
+      // que un fetch fallido seguía mostrando el resultado del intento previo
+      // como si perteneciera al actual.
+      D.TRACE = [];
+      D.PARSE_TREE_DOT = "";
+      D.PARSE_ACCEPTED = null;
+      D.PARSE_ERROR = msg;
       D.PROBLEMS = [{ level:"err", code:"E002", msg, loc:`pipeline ${mode.toUpperCase()}` }];
+      setStep(0);
       setTab("problems");
       rerender();
     }
