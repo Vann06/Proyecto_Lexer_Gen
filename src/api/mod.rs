@@ -16,12 +16,6 @@ pub use codegen::build_codegen_response;
 pub use pipeline::build_pipeline_response;
 pub use sintactico::{build_compile_response, build_parse_response};
 
-// Nada fuera de este módulo la llama hoy, pero ya era pública antes del split
-// (era la única forma de correr el pipeline léxico completo — parse .yal →
-// expandir → NFA → DFA → tabla — sin descartar `spec`/`expanded` como hacía
-// la versión vieja que solo devolvía la tabla), así que se conserva.
-pub use lexico::build_lexer_artifacts;
-
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;

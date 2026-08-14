@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use crate::sintactico::gramatica::grammar::{body_to_string, Associativity, Grammar, Symbol};
-use crate::sintactico::automatas::lalr::{LALRAutomaton, LALRItem};
+use crate::sintactico::automatas::lalr::LALRAutomaton;
 use crate::sintactico::automatas::lr0::LR0Automaton;
 use crate::sintactico::gramatica::follow::FollowSets;
 
@@ -450,7 +450,3 @@ pub fn print_productions(grammar: &Grammar) {
         }
     }
 }
-
-// Silencia el warning de LALRItem importado pero no usado directamente aquí
-#[allow(dead_code)]
-fn _use_lalr_item(_: &LALRItem) {}

@@ -108,7 +108,7 @@ produccion_A:
 | Archivo | Lexer que usar | Gramática que usar |
 |---|---|---|
 | `examples/source/test_c.c` | `hardtest_sim.yal` | `hardtest_sim.yalp` |
-| `examples/source/hardtest.py` | `hardtest.yal` | `hardtest.yalp` |
+| `examples/source/hardtest.txt` | `hardtest.yal` | `hardtest.yalp` |
 | `examples/source/expr.txt` | `expr.yal` | `expr_left_recursive.yalp` |
 
 ---
@@ -407,6 +407,6 @@ La salida incluye:
 | `.yal` | `.yalp` | Fuente | Modo |
 |---|---|---|---|
 | `hardtest_sim.yal` | `hardtest_sim.yalp` | `test_c.c` | `--lalr` |
-| `hardtest.yal` | `hardtest.yalp` | `hardtest.py` | `--lalr` |
+| `hardtest.yal` | `hardtest.yalp` | `hardtest.txt` | `--lalr` |
 | `expr.yal` | `expr_left_recursive.yalp` | `expr.txt` | `--lalr` o `--slr` |
 | `expr.yal` | `expr_ll1.yalp` | `expr.txt` | `--ll1` |

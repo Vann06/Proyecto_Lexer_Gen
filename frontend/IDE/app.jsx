@@ -1,5 +1,5 @@
 /* eslint-disable */
-const { useState, useEffect, useRef, useCallback } = React;
+const { useState, useEffect, useRef } = React;
 const D = window.IDE_DATA;
 
 const API = "http://localhost:8080";
@@ -289,7 +289,7 @@ function StatesView({ active, onPick }){
               <div style={{fontSize: 11, color: 'var(--tx-mute)', fontWeight: 500, marginBottom: 6, textTransform: 'uppercase'}}>Producciones</div>
               {s.items.map((it,i)=> (
                 <div key={i} style={{fontSize: 12, color: 'var(--tx-soft)', marginBottom: 4, fontFamily: 'monospace'}}>
-                  {it.replace("·",  /·/.test(it)?"·":"·")}
+                  {it}
                 </div>
               ))}
             </div>
@@ -791,7 +791,11 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
     if (!isDraggingResize) return;
 
     const handleMouseMove = (e) => {
-      const traceWrap = document.querySelector('.trace-wrap');
+      // Antes apuntaba a '.trace-wrap', que solo existe en el layout SIN
+      // test cases (el else de más abajo) — exactamente cuando este handle
+      // no se renderiza. El resize nunca funcionaba: '.trace-wrap' no
+      // estaba en el DOM mientras el handle era arrastrable.
+      const traceWrap = document.querySelector('.test-cases-resize-wrap');
       if (!traceWrap) return;
       const rect = traceWrap.getBoundingClientRect();
       const newWidth = (e.clientX - rect.left) / rect.width;
@@ -836,7 +840,7 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
         <button className="cbtn icon" onClick={()=>setStep(D.TRACE.length-1)}>⏭</button>
       </div>
       {testCases.length > 0 ? (
-      <div style={{display:'flex', gap:0, height:'100%', minHeight:0}}>
+      <div className="test-cases-resize-wrap" style={{display:'flex', gap:0, height:'100%', minHeight:0}}>
           {/* Columna izquierda: Test Cases */}
           <div style={{width: `${testCasesPanelWidth*100}%`, minWidth:'150px', maxWidth:'80%', borderRight:'1px solid var(--line)', overflowY:'auto', padding:'8px', display:'flex', flexDirection:'column'}}>
             <h4 style={{margin:'0 0 8px 0', fontSize:11, color:'var(--tx-mute)', fontWeight:500}}>TEST CASES</h4>

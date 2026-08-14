@@ -124,33 +124,6 @@ pub fn build(dfa: &Dfa) -> TransitionTable {
     }
 }
 
-/// Imprime la tabla para depuración (consola).
-#[allow(dead_code)]
-pub fn print_table(tt: &TransitionTable) {
-    print!("{:>8}", "Estado");
-    for &c in &tt.alphabet {
-        print!("{:>6}", c);
-    }
-    println!();
-    for s in 0..tt.n_states {
-        let marker = if tt.is_accepting(s) {
-            format!("*{}", tt.token_at(s).unwrap_or(""))
-        } else {
-            s.to_string()
-        };
-        print!("{:>8}", marker);
-        for &c in &tt.alphabet {
-            let v = tt.next(s, c);
-            if v == DEAD {
-                print!("{:>6}", "-");
-            } else {
-                print!("{:>6}", v);
-            }
-        }
-        println!();
-    }
-}
-
 /// DFA dummy para tests: acepta uno o más dígitos como "NUM".
 #[cfg(test)]
 pub(crate) fn make_dummy_dfa_num() -> Dfa {

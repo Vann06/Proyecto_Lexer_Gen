@@ -33,7 +33,10 @@ cargo run --bin api
 python3 -m http.server 5500 --directory frontend/IDE
 ```
 
-Luego abrir [http://localhost:5500](http://localhost:5500) en el navegador.
+Luego abrir [http://localhost:5500/IDE%20Analizador%20Sintactico.html](http://localhost:5500/IDE%20Analizador%20Sintactico.html)
+en el navegador — la raíz del sitio (`/`) sirve un listado de directorio en
+vez del IDE, porque nginx es quien renombra ese archivo a `index.html` al
+construir la imagen Docker; `http.server` no lo hace.
 
 ---
 
