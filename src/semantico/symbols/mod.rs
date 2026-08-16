@@ -6,6 +6,9 @@
 use thiserror::Error;
 
 use super::scopes::{PopGlobalScope, Scope, ScopeKind, ScopeStack};
+use super::types::{resolve_assignment, Coercion};
+
+pub use super::types::Type;
 
 /// Qué clase de cosa es un símbolo declarado. Cuatro variantes fijas para
 /// los casos obvios (coinciden con lo que un `ScopeKind::Function`/`Class`
@@ -27,18 +30,6 @@ pub enum SymbolKind {
 /// el usuario (una clase, un alias) — misma idea que `SymbolKind::Other`.
 /// `Unknown` es el estado antes de que una futura fase de inferencia lo
 /// resuelva; no es "sin tipo", es "todavía no lo sabemos".
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Type {
-    Int,
-    Float,
-    Bool,
-    Str,
-    Void,
-    Named(String),
-    Array(Box<Type>),
-    Unknown,
-}
-
 /// Firma de una función: tipos de los parámetros, en orden, y tipo de
 /// retorno — lo que hace falta para chequear una llamada (aridad y tipos)
 /// contra su declaración.
@@ -74,6 +65,7 @@ pub struct Symbol {
     pub col: usize,
     pub ty: Option<Type>,
     pub mutable: bool,
+    pub initialized: bool,
     pub used: bool,
     pub signature: Option<Signature>,
     pub storage: Option<StorageInfo>,
@@ -106,6 +98,29 @@ pub enum SemanticError {
 
     #[error("no se puede cerrar el ámbito global")]
     PopGlobalScope,
+
+    #[error("la constante '{name}' debe inicializarse al declararse")]
+    ConstRequiresInitializer {
+        name: String,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("no se puede asignar a la constante '{name}'")]
+    AssignmentToConst {
+        name: String,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("asignación incompatible para '{name}': se esperaba {expected}, se encontró {found}")]
+    AssignmentTypeMismatch {
+        name: String,
+        expected: Type,
+        found: Type,
+        line: usize,
+        col: usize,
+    },
 }
 
 impl From<PopGlobalScope> for SemanticError {
@@ -170,12 +185,85 @@ impl SymbolTable {
             col,
             ty: None,
             mutable: true,
+            initialized: false,
             used: false,
             signature: None,
             storage: None,
             members: None,
         });
         Ok(())
+    }
+
+    /// Declara un símbolo con tipo y mutabilidad conocidos. Una constante
+    /// siempre debe incluir inicializador, y el inicializador se valida con
+    /// la misma tabla de coerciones usada por `assign`.
+    pub fn declare_typed(
+        &mut self,
+        name: &str,
+        kind: SymbolKind,
+        ty: Type,
+        mutable: bool,
+        initializer_type: Option<Type>,
+        line: usize,
+        col: usize,
+    ) -> Result<(), SemanticError> {
+        if !mutable && initializer_type.is_none() {
+            return Err(SemanticError::ConstRequiresInitializer {
+                name: name.to_string(),
+                line,
+                col,
+            });
+        }
+        if let Some(found) = &initializer_type {
+            resolve_assignment(&ty, found).map_err(|_| SemanticError::AssignmentTypeMismatch {
+                name: name.to_string(),
+                expected: ty.clone(),
+                found: found.clone(),
+                line,
+                col,
+            })?;
+        }
+
+        self.declare(name, kind, line, col)?;
+        let symbol = self
+            .lookup_mut(name)
+            .expect("el símbolo acaba de declararse");
+        symbol.ty = Some(ty);
+        symbol.mutable = mutable;
+        symbol.initialized = initializer_type.is_some();
+        Ok(())
+    }
+
+    /// Verifica y registra una asignación contra el tipo declarado.
+    pub fn assign(
+        &mut self,
+        name: &str,
+        value_type: &Type,
+        line: usize,
+        col: usize,
+    ) -> Result<Coercion, SemanticError> {
+        let symbol = self.lookup_or_err(name, line, col)?;
+        if !symbol.mutable {
+            return Err(SemanticError::AssignmentToConst {
+                name: name.to_string(),
+                line,
+                col,
+            });
+        }
+        let expected = symbol.ty.clone().unwrap_or(Type::Unknown);
+        let coercion = resolve_assignment(&expected, value_type).map_err(|_| {
+            SemanticError::AssignmentTypeMismatch {
+                name: name.to_string(),
+                expected: expected.clone(),
+                found: value_type.clone(),
+                line,
+                col,
+            }
+        })?;
+        self.lookup_mut(name)
+            .expect("el símbolo ya fue encontrado")
+            .initialized = true;
+        Ok(coercion)
     }
 
     /// Busca `name` empezando por el scope actual y subiendo hacia el
@@ -424,6 +512,7 @@ mod tests {
                 col: 1,
                 ty: None,
                 mutable: true,
+                initialized: false,
                 used: false,
                 signature: None,
                 storage: None,
@@ -439,6 +528,7 @@ mod tests {
                 col: 1,
                 ty: Some(Type::Int),
                 mutable: false,
+                initialized: true,
                 used: true,
                 signature: None,
                 storage: None,

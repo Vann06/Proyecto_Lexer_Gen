@@ -11,9 +11,11 @@
 // producción — ver sus propios doc-comments para el diseño completo,
 // incluido el porqué de `DeclarationRule::implicit`.
 //
-// Lo que sigue AÚN NO IMPLEMENTADO: el chequeo de tipos, y conectar esto a
-// la API HTTP (ver ORGANIZACION.md § "Fases futuras" para el roadmap
-// completo).
+// El submódulo `types` concentra el enum de tipos, la tabla de compatibilidad
+// y las coerciones para aritmética/asignaciones. `symbols` usa esas reglas al
+// declarar y asignar símbolos tipados, incluida la inicialización obligatoria
+// de constantes. Sigue pendiente conectar esta fase a la API HTTP (ver
+// ORGANIZACION.md § "Fases futuras" para el roadmap completo).
 //
 // Restricción de diseño, no negociable: el generador es agnóstico a la
 // gramática (cualquier .yal/.yalp/.txt que se reciba, no un lenguaje fijo
@@ -37,3 +39,4 @@ pub mod analyzer;
 pub mod scopes;
 pub mod spec;
 pub mod symbols;
+pub mod types;

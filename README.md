@@ -4,9 +4,11 @@ Generador de analizadores léxicos (YALex) y sintácticos LR/LL (YAPar), con una
 API HTTP y un IDE web (`frontend/IDE/`) para compilar gramáticas y ver la
 traza de parseo paso a paso. Ver [GUIA_USO.md](GUIA_USO.md) para levantar el
 IDE + API, o seguir leyendo para el generador de lexers standalone (CLI).
-Cubre léxico y sintáctico (Fases 0–14 del libro del dragón); semántica,
-código intermedio y código objetivo están planeados pero no implementados —
-ver [ORGANIZACION.md](ORGANIZACION.md#fases-futuras-no-implementadas).
+Cubre léxico y sintáctico (Fases 0–14 del libro del dragón) y ya inició la
+Fase 15 de semántica con tabla de símbolos, scopes y sistema de tipos. Código
+intermedio, código objetivo y la conexión de semántica con la API HTTP siguen
+en el roadmap — ver
+[ORGANIZACION.md](ORGANIZACION.md#fases-futuras-no-implementadas).
 
 ## Objetivo
 Leer un archivo `.yal`, procesar sus definiciones y reglas, construir internamente los autómatas necesarios y generar un analizador léxico funcional.
@@ -59,6 +61,12 @@ lexer-generator/
     │   ├── automatas/           #   LR(0)/LR(1)/LALR
     │   ├── tablas.rs             #   tabla ACTION/GOTO, conflictos
     │   └── runtime/               #   parser LR dirigido por tabla, LL(1), árbol de derivación
+    ├── semantico/             # ── ANÁLISIS SEMÁNTICO (FASE 15, EN PROGRESO) ──
+    │   ├── analyzer/          #   walker genérico sobre ParseNode
+    │   ├── scopes/            #   entornos global/función/clase/bloque
+    │   ├── symbols/           #   tabla de símbolos y validación de asignaciones/const
+    │   ├── types/             #   Type, tabla de compatibilidad y coerciones
+    │   └── spec/              #   reglas declarativas por gramática
     ├── api/                   # ── CAPA HTTP COMPARTIDA ── (lógica del servidor y los tests)
     └── bin/
         ├── api.rs                 # servidor HTTP (Axum) — expone api:: al IDE
@@ -66,6 +74,42 @@ lexer-generator/
         ├── test_ll1.rs              # REPL de consola para LL(1)
         └── test_pipeline.rs          # pipeline completo por CLI: .yal + .yalp + fuente → árbol
 ```
+
+---
+
+## Avance del análisis semántico
+
+El módulo `src/semantico/types/` concentra las reglas de tipado para evitar
+que el walker, la tabla de símbolos y las futuras fases reimplementen la misma
+política. Actualmente incluye:
+
+- `Type`: `Int`, `Float`, `Bool`, `Str`, `Void`, tipos nominales, arreglos y
+  `Unknown`.
+- `CompatibilityTable`: resolución central de operaciones y asignaciones.
+- Verificación de `+`, `-`, `*` y `/` para operandos `integer`/`float`.
+- Coerción implícita segura `integer -> float`; no se permite
+  `float -> integer`.
+- Validación del valor inicial y de cada asignación contra el tipo declarado.
+- Inicializador obligatorio para constantes y rechazo de su reasignación.
+
+La tabla numérica compartida por los cuatro operadores es:
+
+| Izquierda | Derecha | Resultado | Coerción |
+|---|---|---|---|
+| `integer` | `integer` | `integer` | ninguna |
+| `integer` | `float` | `float` | izquierda a `float` |
+| `float` | `integer` | `float` | derecha a `float` |
+| `float` | `float` | `float` | ninguna |
+
+Las pruebas de integración están en `tests/type_system_tests.rs` y se pueden
+ejecutar de forma aislada con:
+
+```bash
+cargo test --test type_system_tests
+```
+
+La infraestructura semántica todavía no forma parte de la respuesta del
+pipeline HTTP; por ahora se consume como API Rust desde `semantico`.
 
 ---
 
