@@ -39,6 +39,11 @@ struct PipelineRequest {
     source:       String,
     #[serde(default = "default_mode")]
     mode: String,
+    // Nombre real del archivo cargado en el IDE (p. ej. "ejemplo.cps") — usado
+    // para ubicar cada diagnóstico (`loc: "{source_name}:L:C"`). Opcional para
+    // no romper llamadores viejos que todavía no lo mandan.
+    #[serde(default = "default_source_name")]
+    source_name: String,
 }
 
 #[derive(Deserialize)]
@@ -49,6 +54,7 @@ struct CodegenRequest {
 }
 
 fn default_mode() -> String { "lalr".to_string() }
+fn default_source_name() -> String { "input.txt".to_string() }
 
 #[derive(Serialize)]
 struct WsFile { name: String, kind: String }
@@ -58,7 +64,7 @@ struct WsFile { name: String, kind: String }
 fn workspace_dir() -> PathBuf { PathBuf::from("workspace") }
 
 fn sanitize_filename(name: &str) -> Option<String> {
-    let allowed = [".yal", ".yalex", ".yalp", ".yapar", ".txt"];
+    let allowed = [".yal", ".yalex", ".yalp", ".yapar", ".txt", ".cps"];
     if name.contains('/') || name.contains('\\') || name.contains("..") { return None; }
     if !allowed.iter().any(|ext| name.ends_with(ext)) { return None; }
     Some(name.to_string())
@@ -125,7 +131,7 @@ async fn parse_tokens(
 async fn run_pipeline(
     Json(req): Json<PipelineRequest>,
 ) -> Result<Json<api::ParseResponse>, (StatusCode, Json<Value>)> {
-    api::build_pipeline_response(&req.yal_content, &req.yalp_content, &req.source, &req.mode)
+    api::build_pipeline_response_named(&req.yal_content, &req.yalp_content, &req.source, &req.mode, &req.source_name)
         .map(Json)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))
 }

@@ -15,6 +15,11 @@
 /output/*
 !/output/.gitkeep
 
+# Contexto local para Claude Code — no se versiona.
+# La documentación del proyecto para humanos vive en README.md, ORGANIZACION.md,
+# PIPELINE_GUIDE.md, GUIA_USO.md y API_REFERENCE.md, que sí están versionados.
+/CLAUDE.md
+
 # OS / Editor
 .DS_Store
 Thumbs.db

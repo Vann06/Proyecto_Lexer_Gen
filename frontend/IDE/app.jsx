@@ -20,8 +20,8 @@ function FileTree({ active, onPick, onLoadFile }){
           <input type="file" accept=".yalp,.yapar" hidden onChange={e => e.target.files[0] && onLoadFile("yalp", e.target.files[0])}/>
         </label>
         <label className="load-btn">
-          ↑ input.txt
-          <input type="file" accept=".txt,text/plain" hidden onChange={e => e.target.files[0] && onLoadFile("test", e.target.files[0])}/>
+          ↑ input.txt / .cps
+          <input type="file" accept=".txt,.cps,text/plain" hidden onChange={e => e.target.files[0] && onLoadFile("test", e.target.files[0])}/>
         </label>
       </div>
 
@@ -58,13 +58,33 @@ const HL_RULES = {
   yalp: [
     { re: /\/\*[\s\S]*?\*\//y, cls: "com" },
     { re: /%%/y, cls: "kw" },
-    { re: /%(token|start|left|right|nonassoc|ignore)\b/y, cls: "kw" },
+    { re: /%(token|start|left|right|nonassoc|ignore|ident|declare|scope)\b/y, cls: "kw" },
     { re: /[A-Z][A-Z0-9_]*/y, cls: "term" },
     { re: /[a-z_][a-z0-9_]*/y, cls: "nonterm" },
     { re: /[|:;]/y, cls: "op" },
   ],
+  cps: [
+    { re: /\/\/[^\n]*/y, cls: "com" },
+    { re: /\/\*[\s\S]*?\*\//y, cls: "com" },
+    { re: /"(\\.|[^"\\])*"/y, cls: "str" },
+    { re: /\b(let|var|const|function|class|if|else|while|do|for|foreach|in|break|continue|return|try|catch|switch|case|default|print|new|this|null|true|false)\b/y, cls: "kw" },
+    { re: /\b(boolean|integer|string)\b/y, cls: "term" },
+    { re: /[A-Za-z_][A-Za-z0-9_]*/y, cls: "fn" },
+    { re: /[0-9]+/y, cls: "num" },
+    { re: /[{}()\[\];,.:=+\-*/%<>!&|?]+/y, cls: "op" },
+  ],
   txt: [],
 };
+
+/* Extensión real del archivo cargado, no el slot fijo — así un .cps se
+   resalta como Compiscript y un input.txt plano sigue sin resaltado. */
+function langForFile(f){
+  const name = (f && f.name) || "";
+  if (name.endsWith(".yal") || name.endsWith(".yalex")) return "yal";
+  if (name.endsWith(".yalp") || name.endsWith(".yapar")) return "yalp";
+  if (name.endsWith(".cps")) return "cps";
+  return "txt";
+}
 
 function tokenize(text, lang){
   const rules = HL_RULES[lang] || [];
@@ -95,7 +115,7 @@ function Editor({ file, onEdit, contentVersion }){
   const taRef  = useRef();
   const gutRef = useRef();
   const hlRef  = useRef();
-  const lang = file === "yal" ? "yal" : file === "yalp" ? "yalp" : "txt";
+  const lang = langForFile(f);
   const [lineCount,   setLineCount]   = useState(() => f.rawContent.split('\n').length);
   const [highlighted, setHighlighted] = useState(() => tokenize(f.rawContent, lang));
 
@@ -154,7 +174,7 @@ function Editor({ file, onEdit, contentVersion }){
         <span className="b">src</span><span className="sep">›</span>
         <span className="b">{f.name}</span>
         <div className="right">
-          <span className="pill">{file==="yal"?"YALex":file==="yalp"?"YACC":"text"}</span>
+          <span className="pill">{lang==="yal"?"YALex":lang==="yalp"?"YACC":lang==="cps"?"Compiscript":"text"}</span>
           {f.dirty && <span style={{color:"var(--yellow)"}}>● modificado</span>}
           <span>UTF-8</span>
         </div>
@@ -529,6 +549,33 @@ function GeneratedCode(){
   );
 }
 
+/* Volcado de SymbolTable::dump() — un entorno por línea (Global/Function/
+   Class/Block), con sus símbolos y línea:columna real. Vacío si el .yalp
+   activo no trae la directiva %ident (sin análisis semántico para él). */
+function SymbolTableView(){
+  const dump = D.SYMBOL_TABLE;
+  if (!dump) {
+    return (
+      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
+        ▍ TABLA DE SÍMBOLOS
+        <span className="dim" style={{marginLeft:10}}>
+          · ejecuta PARSEAR sobre una gramática con %ident
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
+        ▍ TABLA DE SÍMBOLOS
+      </div>
+      <div className="gen">
+        {dump.split("\n").map((ln, i) => <div key={i}>{ln || <>&nbsp;</>}</div>)}
+      </div>
+    </div>
+  );
+}
+
 function ProblemsList(){
   const counts = { err:D.PROBLEMS.filter(p=>p.level==="err").length,
                    warn:D.PROBLEMS.filter(p=>p.level==="warn").length,
@@ -570,94 +617,10 @@ function ProblemsList(){
 }
 
 /* ============================== Parse Tree ============================== */
-
-function _buildTreeLR(trace) {
-  const treeStack = [];
-  for (const step of trace) {
-    const a = step.action;
-    if (a === "acc") break;
-    if (a.startsWith("s")) {
-      const tok = step.remaining[0];
-      treeStack.push({ symbol: tok, lexeme: tok, children: [] });
-    } else if (a === "r" || a.startsWith("r")) {
-      const m = step.desc.match(/^(\S+)\s*→\s*(.+)$/);
-      if (!m) continue;
-      const head = m[1].trim();
-      const rhs  = m[2].trim();
-      const bodySyms = rhs === "ε" ? [] : rhs.split(/\s+/);
-      const children = treeStack.splice(treeStack.length - bodySyms.length);
-      treeStack.push({
-        symbol: head, lexeme: null,
-        children: children.length ? children : [{ symbol: "ε", lexeme: "ε", children: [] }],
-      });
-    }
-  }
-  return treeStack[0] || null;
-}
-
-function _buildTreeLL1(trace) {
-  const firstPred = trace.find(s => s.action === "predict");
-  if (!firstPred) return null;
-  const startMatch = firstPred.desc.match(/Predicción:\s+(\S+)/);
-  const startSym   = startMatch ? startMatch[1] : "S";
-
-  const root      = { symbol: startSym, lexeme: null, children: [] };
-  const nodeQueue = [root];
-
-  for (const step of trace) {
-    if (step.action === "acc") break;
-    if (step.action === "predict") {
-      const node = nodeQueue.shift();
-      if (!node) continue;
-      const rhsMatch = step.desc.match(/→\s*(.+)$/);
-      const rhsStr   = rhsMatch ? rhsMatch[1].trim() : "ε";
-      const rhs      = rhsStr === "ε" ? [] : rhsStr.split(/\s+/);
-      const children = rhs.length > 0
-        ? rhs.map(s => ({ symbol: s, lexeme: null, children: [] }))
-        : [{ symbol: "ε", lexeme: "ε", children: [] }];
-      node.children = children;
-      if (rhs.length > 0) nodeQueue.unshift(...children);
-    } else if (step.action === "match") {
-      const node = nodeQueue.shift();
-      if (node) node.lexeme = step.remaining[0];
-    }
-  }
-  return root;
-}
-
-function buildParseTree(trace, mode) {
-  if (!trace || !trace.length) return null;
-  if (mode === "ll1") return _buildTreeLL1(trace);
-  return _buildTreeLR(trace);
-}
-
-function buildTreeDot(root) {
-  if (!root) return "";
-  let counter = 0;
-  const lines = [
-    "digraph ParseTree {",
-    "  rankdir=TB;",
-    '  bgcolor="#0d0613";',
-    '  node [fontname="Courier" fontsize=10 style=filled shape=rect];',
-    '  edge [color="#c026d3" arrowsize=0.6];',
-  ];
-  function visit(node, parentId) {
-    const id = `n${counter++}`;
-    const isLeaf = node.children.length === 0;
-    const rawLabel = node.lexeme && node.lexeme !== node.symbol
-      ? `${node.symbol}\\n"${node.lexeme}"`
-      : node.symbol;
-    const label     = rawLabel.replace(/"/g, '\\"');
-    const nodeColor = isLeaf ? '"#22d3ee"' : '"#c026d3"';
-    const fillColor = isLeaf ? '"#0a2530"' : '"#1a0f24"';
-    lines.push(`  ${id} [label="${label}" color=${nodeColor} fillcolor=${fillColor} fontcolor="#e8d6f0"];`);
-    if (parentId) lines.push(`  ${parentId} -> ${id};`);
-    for (const child of node.children) visit(child, id);
-  }
-  visit(root, null);
-  lines.push("}");
-  return lines.join("\n");
-}
+// El árbol viene del backend YA renderizado a DOT (D.PARSE_TREE_DOT, campo
+// `parse_tree_dot` de /api/pipeline) — construido a partir del ParseNode real
+// que arma LRParser::parse_tree/LL1Parser::parse_tree, no reconstruido acá
+// adivinando el formato de texto de cada paso del trace.
 
 function ParseTreeView({ renderKey }) {
   const containerRef = useRef();
@@ -1022,6 +985,7 @@ function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActive
     {id:"tokens",    label:"TOKENS", badge: D.TOKENS.length},
     {id:"dfa",       label:"LR(0)"},
     {id:"tree",      label:"ÁRBOL"},
+    {id:"symbols",   label:"SÍMBOLOS"},
     {id:"gen",       label:"CÓD.GEN"},
     {id:"problems",  label:"PROBLEMAS", badge: D.PROBLEMS.length},
   ];
@@ -1053,6 +1017,7 @@ function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActive
           {activeTab==="tokens"   && <TokensView/>}
           {activeTab==="dfa"      && <LR0Graph renderKey={renderKey}/>}
           {activeTab==="tree"     && <ParseTreeView renderKey={renderKey}/>}
+          {activeTab==="symbols"  && <SymbolTableView/>}
           {activeTab==="gen"      && <GeneratedCode/>}
           {activeTab==="problems" && <ProblemsList/>}
         </div>
@@ -1359,6 +1324,7 @@ function App(){
             yal_content:  D.FILES.yal.rawContent,
             yalp_content: D.FILES.yalp.rawContent,
             source:       inputStr,
+            source_name:  D.FILES.test.name,
             mode,
           }),
         });
@@ -1385,8 +1351,11 @@ function App(){
         syncTokens(inputStr);
       }
       D.TRACE = Array.isArray(data.trace) ? data.trace : [];
-      const treeRoot = buildParseTree(D.TRACE, mode);
-      D.PARSE_TREE_DOT = treeRoot ? buildTreeDot(treeRoot) : "";
+      // Árbol y tabla de símbolos REALES del backend (ParseNode de verdad,
+      // no reconstruido en el cliente) — solo el pipeline completo (.yal +
+      // .yalp) los produce; el modo legado /api/parser/parse no los trae.
+      D.PARSE_TREE_DOT = data.parse_tree_dot || "";
+      D.SYMBOL_TABLE = data.symbol_table || "";
       // El backend ya manda accepted/error — antes se ignoraban por completo
       // y la UI re-derivaba "aceptado" mirando si el último paso de la traza
       // era "acc", lo cual además tiraba el mensaje de error real del backend.
@@ -1417,6 +1386,7 @@ function App(){
       // como si perteneciera al actual.
       D.TRACE = [];
       D.PARSE_TREE_DOT = "";
+      D.SYMBOL_TABLE = "";
       D.PARSE_ACCEPTED = null;
       D.PARSE_ERROR = msg;
       D.PROBLEMS = [{ level:"err", code:"E002", msg, loc:`pipeline ${mode.toUpperCase()}` }];

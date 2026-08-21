@@ -7,11 +7,11 @@ pub struct ParseNode {
     pub symbol: String,            // nombre del NT o del token
     pub lexeme: Option<String>,    // Some sólo en hojas (terminales)
     pub children: Vec<ParseNode>,  // vacío en hojas
-    // Posición en el fuente — solo tiene sentido en hojas reales (línea/columna
-    // del token que originó el nodo); en nodos internos y en epsilon_leaf() queda
-    // en 0. Preparado para que una futura fase de análisis semántico pueda ubicar
-    // sus errores ("variable X no declarada en línea N") sin tener que recorrer
-    // el árbol buscando la hoja más cercana — nada la lee todavía.
+    // Posición en el fuente: en hojas reales es la línea/columna del token que
+    // originó el nodo; en nodos internos (`internal()`) se hereda del primer
+    // hijo con posición real, para que un error anclado a una producción (una
+    // expresión, una llamada) también pueda ubicarse. En `epsilon_leaf()` queda
+    // en 0 — no hay ningún token del que heredar.
     pub line: usize,
     pub col: usize,
 }
@@ -55,8 +55,16 @@ impl ParseNode {
         }
     }
 
+    /// Hereda `line`/`col` del primer hijo con posición real (no 0/0) — así un
+    /// error anclado a este nodo (no a una hoja) sigue ubicando una línea
+    /// concreta del fuente en vez de reportar 0:0.
     pub fn internal(symbol: String, children: Vec<ParseNode>) -> Self {
-        ParseNode { symbol, lexeme: None, children, line: 0, col: 0 }
+        let (line, col) = children
+            .iter()
+            .find(|c| c.line != 0 || c.col != 0)
+            .map(|c| (c.line, c.col))
+            .unwrap_or((0, 0));
+        ParseNode { symbol, lexeme: None, children, line, col }
     }
 }
 
@@ -118,4 +126,30 @@ fn to_dot_rec(node: &ParseNode, out: &mut String, next_id: &mut usize) -> usize 
 
 fn escape_dot(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn internal_node_inherits_position_from_first_positioned_child() {
+        let leaf = ParseNode::leaf(&ParseToken { kind: "ID".into(), lexeme: "x".into(), line: 3, col: 7 });
+        let node = ParseNode::internal("expr".into(), vec![leaf]);
+        assert_eq!((node.line, node.col), (3, 7));
+    }
+
+    #[test]
+    fn internal_node_skips_epsilon_child_to_find_position() {
+        let eps = ParseNode::epsilon_leaf();
+        let leaf = ParseNode::leaf(&ParseToken { kind: "ID".into(), lexeme: "y".into(), line: 5, col: 2 });
+        let node = ParseNode::internal("stmt".into(), vec![eps, leaf]);
+        assert_eq!((node.line, node.col), (5, 2));
+    }
+
+    #[test]
+    fn internal_node_with_all_positionless_children_stays_zero() {
+        let node = ParseNode::internal("empty".into(), vec![ParseNode::epsilon_leaf()]);
+        assert_eq!((node.line, node.col), (0, 0));
+    }
 }

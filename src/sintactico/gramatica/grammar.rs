@@ -71,12 +71,30 @@ pub struct Production {
 /// Contenedor principal de toda la información del archivo .yalp
 #[derive(Debug, Clone)]
 pub struct Grammar {
-    pub tokens: HashSet<String>,      
-    pub ignores: HashSet<String>,    
-    pub productions: Vec<Production>, 
-    pub start_symbol: String,        
-    pub transformation_log: Vec<String>, 
+    pub tokens: HashSet<String>,
+    pub ignores: HashSet<String>,
+    pub productions: Vec<Production>,
+    pub start_symbol: String,
+    pub transformation_log: Vec<String>,
     pub precedence: Vec<(Associativity, Vec<String>)>,
+    /// Directivas opcionales de análisis semántico (Fase 15) — declaradas por
+    /// el propio `.yalp`, no hardcodeadas para ninguna gramática concreta:
+    ///
+    /// ```text
+    /// %ident   ID
+    /// %declare var_decl    variable
+    /// %scope   func_decl   function
+    /// ```
+    ///
+    /// `sintactico` no sabe qué es un `SymbolKind` o un `ScopeKind` — guarda
+    /// los nombres tal como aparecen en el archivo y deja que
+    /// `semantico::spec::SemanticSpec::from_grammar` los traduzca. Mantiene
+    /// la dirección de dependencia semantico → sintactico, nunca al revés.
+    pub ident_token: Option<String>,
+    /// `(producción, kind)`, uno por línea `%declare`.
+    pub declare_directives: Vec<(String, String)>,
+    /// `(producción, kind)`, uno por línea `%scope`.
+    pub scope_directives: Vec<(String, String)>,
 }
 
 impl Grammar {
@@ -152,6 +170,9 @@ impl Grammar {
             start_symbol: String::new(),
             transformation_log: Vec::new(),
             precedence: Vec::new(),
+            ident_token: None,
+            declare_directives: Vec::new(),
+            scope_directives: Vec::new(),
         };
 
         grammar.parse_tokens_section(sections[0]);
@@ -706,6 +727,20 @@ impl Grammar {
                 let ignore_decl: Vec<&str> = line[6..].split_whitespace().collect();
                 for i in ignore_decl {
                     self.ignores.insert(i.to_string());
+                }
+            } else if line.starts_with("%ident") {
+                if let Some(tok) = line[6..].split_whitespace().next() {
+                    self.ident_token = Some(tok.to_string());
+                }
+            } else if line.starts_with("%declare") {
+                let mut parts = line[8..].split_whitespace();
+                if let (Some(production), Some(kind)) = (parts.next(), parts.next()) {
+                    self.declare_directives.push((production.to_string(), kind.to_string()));
+                }
+            } else if line.starts_with("%scope") {
+                let mut parts = line[6..].split_whitespace();
+                if let (Some(production), Some(kind)) = (parts.next(), parts.next()) {
+                    self.scope_directives.push((production.to_string(), kind.to_string()));
                 }
             }
         }

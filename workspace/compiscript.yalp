@@ -1,0 +1,286 @@
+/* ============================================================
+ * compiscript.yalp  -  Gramatica LALR para Compiscript (subconjunto)
+ *
+ * Traduccion ejecutable del subconjunto elegido de Compiscript.g4
+ * (raiz del repo, gramatica ANTLR del Proyecto 2): let/var/const,
+ * funciones con parametros y tipo de retorno, clases, bloques,
+ * if/while/return/print y la jerarquia completa de expresiones con
+ * precedencia ( ||  &&  ==/!=  </<=/>/>=  +/-  * / %  unario - ! ).
+ *
+ * Fuera de este subconjunto (siguiente iteracion): switch, try/catch,
+ * foreach, ternario, new/this, listas/arreglos, acceso a propiedades.
+ *
+ * Dos ambiguedades de la .g4 original resueltas al traducir:
+ *  - 'assignment' (Identifier '=' expr) duplicaba lo que ya cubre
+ *    'assignmentExpr' via 'expressionStatement' — se conserva SOLO
+ *    assign_stmt, igual que miniprog.yalp.
+ *  - El dangling-else de ifStatement se resuelve con las 3
+ *    alternativas explicitas de if_stmt (igual que miniprog.yalp),
+ *    sin ambiguedad porque bloque siempre exige llaves.
+ * ============================================================ */
+
+%token LET VAR CONST FUNCTION CLASS IF ELSE WHILE RETURN PRINT
+%token TRUE FALSE NULL_KW BOOL_T INT_T STR_T
+%token ID INT_LIT STR_LIT COMMENT
+%token EQ NEQ LTE GTE AND OR
+%token ASSIGN PLUS MINUS TIMES DIV MOD LT GT NOT
+%token LPAREN RPAREN LBRACE RBRACE SEMI COMMA COLON
+
+/* Comentarios ignorados: el parser nunca los ve */
+IGNORE COMMENT
+
+/* ============================================================
+ * Directivas de analisis semantico (Fase 15) — declarativas, no
+ * hardcodeadas: cualquier .yalp puede traer las suyas propias.
+ * Ver semantico::spec::SemanticSpec::from_grammar.
+ * ============================================================ */
+%ident   ID
+%declare var_decl    variable
+%declare const_decl  variable
+%declare param       parameter
+%declare func_decl   function
+%declare class_decl  class
+%scope   func_decl   function
+%scope   class_decl  class
+%scope   bloque      block
+
+%%
+
+/* ============================================================
+ * Punto de entrada: lista de sentencias de nivel superior
+ * (Compiscript.g4 permite function/class declaration en cualquier
+ * lugar donde vale un statement, no solo al tope — stmt_list se
+ * reusa igual dentro de bloque)
+ * ============================================================ */
+
+programa:
+    stmt_list
+;
+
+stmt_list:
+    stmt_list stmt
+  | stmt
+;
+
+stmt:
+    var_decl SEMI
+  | const_decl SEMI
+  | assign_stmt SEMI
+  | func_decl
+  | class_decl
+  | print_stmt SEMI
+  | bloque
+  | if_stmt
+  | while_stmt
+  | return_stmt SEMI
+  | expr SEMI
+;
+
+/* ============================================================
+ * Tipos
+ * ============================================================ */
+
+tipo:
+    BOOL_T
+  | INT_T
+  | STR_T
+  | ID
+;
+
+/* ============================================================
+ * let / var — ambas mutables, mismo tratamiento semantico
+ * ============================================================ */
+
+let_or_var:
+    LET
+  | VAR
+;
+
+var_decl:
+    let_or_var ID
+  | let_or_var ID COLON tipo
+  | let_or_var ID ASSIGN expr
+  | let_or_var ID COLON tipo ASSIGN expr
+;
+
+/* ============================================================
+ * const — inicializador siempre obligatorio en la gramatica
+ * ============================================================ */
+
+const_decl:
+    CONST ID ASSIGN expr
+  | CONST ID COLON tipo ASSIGN expr
+;
+
+/* ============================================================
+ * Asignacion simple
+ * ============================================================ */
+
+assign_stmt:
+    ID ASSIGN expr
+;
+
+/* ============================================================
+ * print / bloque / if / while / return
+ * ============================================================ */
+
+print_stmt:
+    PRINT LPAREN expr RPAREN
+;
+
+bloque:
+    LBRACE stmt_list RBRACE
+  | LBRACE RBRACE
+;
+
+if_stmt:
+    IF LPAREN expr RPAREN bloque
+  | IF LPAREN expr RPAREN bloque ELSE bloque
+  | IF LPAREN expr RPAREN bloque ELSE if_stmt
+;
+
+while_stmt:
+    WHILE LPAREN expr RPAREN bloque
+;
+
+return_stmt:
+    RETURN expr
+  | RETURN
+;
+
+/* ============================================================
+ * Declaracion de funcion, con tipo de retorno opcional
+ *   function nombre(param, ...) [: tipo] { ... }
+ * ============================================================ */
+
+func_decl:
+    FUNCTION ID LPAREN param_list RPAREN bloque
+  | FUNCTION ID LPAREN param_list RPAREN COLON tipo bloque
+;
+
+param_list:
+    params
+  | /* vacio */
+;
+
+params:
+    params COMMA param
+  | param
+;
+
+param:
+    ID
+  | ID COLON tipo
+;
+
+/* ============================================================
+ * Declaracion de clase, con herencia opcional
+ *   class Nombre [: Padre] { miembro* }
+ * ============================================================ */
+
+class_decl:
+    CLASS ID LBRACE class_members RBRACE
+  | CLASS ID COLON ID LBRACE class_members RBRACE
+;
+
+class_members:
+    class_members class_member
+  | /* vacio */
+;
+
+class_member:
+    func_decl
+  | var_decl SEMI
+  | const_decl SEMI
+;
+
+/* ============================================================
+ * Jerarquia de expresiones (menor a mayor precedencia), calcada de
+ * la seccion "Expression Rules" de Compiscript.g4:
+ *
+ *  or_expr          ||
+ *    and_expr         &&
+ *      equality_expr    ==  !=
+ *        relational_expr  <  <=  >  >=
+ *          additive_expr    +  -
+ *            term             *  /  %
+ *              unary            - unario, !
+ *                primary
+ *                  atom
+ * ============================================================ */
+
+expr:
+    or_expr
+;
+
+or_expr:
+    or_expr OR and_expr
+  | and_expr
+;
+
+and_expr:
+    and_expr AND equality_expr
+  | equality_expr
+;
+
+equality_expr:
+    equality_expr EQ  relational_expr
+  | equality_expr NEQ relational_expr
+  | relational_expr
+;
+
+relational_expr:
+    relational_expr LT  additive_expr
+  | relational_expr LTE additive_expr
+  | relational_expr GT  additive_expr
+  | relational_expr GTE additive_expr
+  | additive_expr
+;
+
+additive_expr:
+    additive_expr PLUS  term
+  | additive_expr MINUS term
+  | term
+;
+
+term:
+    term TIMES unary
+  | term DIV   unary
+  | term MOD   unary
+  | unary
+;
+
+unary:
+    MINUS unary
+  | NOT unary
+  | primary
+;
+
+/* ============================================================
+ * Primary: atom con sufijo de llamada a funcion
+ * ============================================================ */
+
+primary:
+    atom
+  | primary LPAREN arg_list RPAREN
+;
+
+atom:
+    ID
+  | INT_LIT
+  | STR_LIT
+  | TRUE
+  | FALSE
+  | NULL_KW
+  | LPAREN expr RPAREN
+;
+
+arg_list:
+    args
+  | /* vacio */
+;
+
+args:
+    args COMMA expr
+  | expr
+;

@@ -1,34 +1,161 @@
-// Walker genérico (Fase 15): recorre un `ParseNode` real y llama a
-// `symbols::SymbolTable` según lo que diga un `spec::SemanticSpec` — este
-// archivo NUNCA menciona el nombre de una producción concreta (ni
-// "var_decl" ni "func_decl" ni nada por el estilo). Toda la especificidad
-// de una gramática dada vive en el `SemanticSpec` que se le pasa a
-// `analyze`, no acá.
+// Walker genérico (Fase 15), ahora como `impl Visitor for Analyzer` sobre el
+// driver de `super::visitor` — este archivo NUNCA menciona el nombre de una
+// producción concreta (ni "var_decl" ni "func_decl" ni nada por el estilo).
+// Toda la especificidad de una gramática dada vive en el `SemanticSpec` que
+// se le pasa a `analyze`, no acá.
+use crate::semantico::errors::ErrorCollector;
 use crate::semantico::spec::SemanticSpec;
-use crate::semantico::symbols::{SemanticError, SymbolTable};
+use crate::semantico::symbols::SymbolTable;
+use crate::semantico::visitor::{self, Flow, Visitor};
 use crate::sintactico::runtime::parse_tree::ParseNode;
 
 pub struct AnalysisResult {
     pub table: SymbolTable,
-    pub errors: Vec<SemanticError>,
+    pub errors: ErrorCollector,
 }
 
 /// Punto de entrada: recorre `tree` según `spec` y devuelve la tabla de
-/// símbolos resultante junto con todos los errores semánticos encontrados
-/// (no se detiene en el primero — sigue recorriendo para reportar todos,
-/// mismo espíritu que el modo pánico del parser LR).
+/// símbolos resultante junto con todos los diagnósticos encontrados (no se
+/// detiene en el primero — sigue recorriendo para reportar todos, mismo
+/// espíritu que el modo pánico del parser LR).
 pub fn analyze(tree: &ParseNode, spec: &SemanticSpec) -> AnalysisResult {
-    let mut table = SymbolTable::new();
-    let mut errors = Vec::new();
-    walk(tree, spec, &mut table, &mut errors);
-    AnalysisResult { table, errors }
+    let mut analyzer = Analyzer::new(spec);
+    visitor::walk(tree, &mut analyzer);
+    AnalysisResult { table: analyzer.table, errors: analyzer.errors }
+}
+
+/// Estado que `enter` deja para que el `exit` del MISMO nodo lo recoja — un
+/// scope solo se cierra si este nodo lo abrió, y `members` solo se adjunta si
+/// este nodo también declaró un nombre. Se apila un frame por cada nodo
+/// visitado (incluidas las hojas) para que `exit` siempre tenga exactamente
+/// uno que desapilar, sin tener que volver a inspeccionar el `ParseNode`.
+#[derive(Default)]
+struct Frame {
+    entered_scope: bool,
+    declared_name: Option<String>,
+}
+
+struct Analyzer<'a> {
+    spec: &'a SemanticSpec,
+    table: SymbolTable,
+    errors: ErrorCollector,
+    frames: Vec<Frame>,
+}
+
+impl<'a> Analyzer<'a> {
+    fn new(spec: &'a SemanticSpec) -> Self {
+        Analyzer { spec, table: SymbolTable::new(), errors: ErrorCollector::new(), frames: Vec::new() }
+    }
+}
+
+impl<'a> Visitor for Analyzer<'a> {
+    fn enter(&mut self, node: &ParseNode) -> Flow {
+        // Una hoja de identificador solo llega hasta acá si su padre NO la
+        // consumió como nombre de una declaración (esos hijos se saltan con
+        // `Flow::SkipChild`, ver abajo) — así que es un uso real.
+        if node.children.is_empty() && node.symbol == self.spec.identifier_token {
+            let name = node.lexeme.as_deref().unwrap_or(&node.symbol);
+            if let Err(e) = self.table.lookup_or_err(name, node.line, node.col) {
+                self.errors.push_semantic(&e);
+            }
+            self.frames.push(Frame::default());
+            return Flow::SkipChildren;
+        }
+
+        let decl_rule = self.spec.declarations.iter().find(|r| r.production == node.symbol);
+        let scope_rule = self.spec.scopes.iter().find(|r| r.production == node.symbol);
+
+        let mut consumed_index: Option<usize> = None;
+        // Nombre recién declarado por ESTE nodo, si lo hubo — se usa en `exit`
+        // para adjuntarle a ese símbolo los suyos propios como `members` una
+        // vez cerrado el scope que este mismo nodo abrió (p.ej. func_decl
+        // declara "foo" Y abre el scope de su cuerpo; al cerrarlo, los
+        // parámetros/locales de "foo" quedan colgados de "foo").
+        let mut declared_name: Option<String> = None;
+
+        if let Some(rule) = decl_rule {
+            if let Some((idx, name_node)) =
+                find_identifier_child(node, &self.spec.identifier_token, rule.name_child)
+            {
+                consumed_index = Some(idx);
+                let name = name_node.lexeme.as_deref().unwrap_or(&name_node.symbol).to_string();
+
+                // `implicit`: si ya es visible en algún scope, esto es una
+                // reasignación, no una declaración nueva — no tocar la tabla.
+                let should_declare = !rule.implicit || self.table.lookup(&name).is_none();
+                if should_declare {
+                    if let Err(e) = self.table.declare(&name, rule.kind.clone(), name_node.line, name_node.col) {
+                        self.errors.push_semantic(&e);
+                    }
+                }
+                declared_name = Some(name);
+            }
+        }
+
+        let entered_scope = if let Some(rule) = scope_rule {
+            let label = if rule.with_label {
+                // Mismo auto-hallazgo que la declaración — si esta producción
+                // también declaraba (p.ej. func_decl), reusa el índice para no
+                // buscarlo dos veces; si no, busca desde cero.
+                find_identifier_child(node, &self.spec.identifier_token, decl_rule.and_then(|d| d.name_child))
+                    .and_then(|(_, n)| n.lexeme.clone())
+            } else {
+                None
+            };
+            match label {
+                Some(l) => self.table.enter_scope_named(rule.kind, l),
+                None => self.table.enter_scope(rule.kind),
+            }
+            true
+        } else {
+            false
+        };
+
+        self.frames.push(Frame { entered_scope, declared_name });
+
+        match consumed_index {
+            Some(idx) => Flow::SkipChild(idx),
+            None => Flow::Continue,
+        }
+    }
+
+    fn exit(&mut self, _node: &ParseNode) {
+        let frame = self.frames.pop().expect("enter empujó un frame para cada nodo visitado");
+        if frame.entered_scope {
+            // El scope que se cierra es el que este mismo `enter` acaba de
+            // abrir arriba — nunca puede ser el Global, así que esto no falla.
+            let closed = self
+                .table
+                .exit_scope()
+                .expect("el scope recién abierto por este nodo debe poder cerrarse");
+
+            // Límite conocido, no arreglado a propósito: si el cuerpo tiene un
+            // scope anónimo anidado adentro (p.ej. un `bloque` que no declara
+            // nada por sí mismo, solo abre Block), lo declarado ahí adentro NO
+            // se aplana hacia arriba — un local declarado dos niveles adentro
+            // de una función no aparece en `members` de la función, solo lo
+            // que cuelga directo de su propio scope (sus parámetros).
+            // Aplanarlo "hacia arriba a través de scopes anónimos" es viable
+            // pero corre el riesgo real de filtrar la visibilidad de ese
+            // nombre más allá de su bloque si se hace reinsertándolo en la
+            // tabla viva (rompería el lookup con scoping correcto que ya está
+            // bien probado) — se deja pendiente para cuando haga falta de
+            // verdad, con un mecanismo de acumulación aparte de la tabla de
+            // lookup.
+            if let Some(name) = &frame.declared_name {
+                if let Some(sym) = self.table.lookup_mut(name) {
+                    sym.members = Some(closed.symbols().cloned().collect());
+                }
+            }
+        }
+    }
 }
 
 /// Busca, entre los hijos DIRECTOS de `node`, el que representa el nombre
 /// declarado: en el índice explícito si se dio uno, o si no el primer hijo
-/// cuyo `symbol` sea `identifier_token`. Devuelve también su índice, para
-/// que el llamador pueda excluirlo de la recursión genérica (ya fue
-/// consumido como declaración, no debe procesarse de nuevo como uso).
+/// cuyo `symbol` sea `identifier_token`. Devuelve también su índice, para que
+/// el llamador pueda excluirlo de la recursión genérica (ya fue consumido
+/// como declaración, no debe procesarse de nuevo como uso).
 fn find_identifier_child<'a>(
     node: &'a ParseNode,
     identifier_token: &str,
@@ -40,105 +167,10 @@ fn find_identifier_child<'a>(
     }
 }
 
-fn walk(node: &ParseNode, spec: &SemanticSpec, table: &mut SymbolTable, errors: &mut Vec<SemanticError>) {
-    // Una hoja de identificador solo llega hasta acá si su padre NO la
-    // consumió como nombre de una declaración (esos hijos se saltan antes
-    // de recursar, ver el bucle de abajo) — así que es un uso real.
-    if node.children.is_empty() && node.symbol == spec.identifier_token {
-        let name = node.lexeme.as_deref().unwrap_or(&node.symbol);
-        if let Err(e) = table.lookup_or_err(name, node.line, node.col) {
-            errors.push(e);
-        }
-        return;
-    }
-
-    let decl_rule = spec.declarations.iter().find(|r| r.production == node.symbol);
-    let scope_rule = spec.scopes.iter().find(|r| r.production == node.symbol);
-
-    let mut consumed_index: Option<usize> = None;
-    // Nombre recién declarado por ESTE nodo, si lo hubo — se usa después de
-    // cerrar un scope nuevo para adjuntarle sus símbolos como `members`
-    // (p.ej. func_decl declara "foo" Y abre el scope de su cuerpo; al
-    // cerrarlo, los parámetros/locales de "foo" quedan colgados de "foo").
-    let mut declared_name: Option<String> = None;
-
-    if let Some(rule) = decl_rule {
-        if let Some((idx, name_node)) = find_identifier_child(node, &spec.identifier_token, rule.name_child) {
-            consumed_index = Some(idx);
-            let name = name_node.lexeme.as_deref().unwrap_or(&name_node.symbol).to_string();
-
-            // `implicit`: si ya es visible en algún scope, esto es una
-            // reasignación, no una declaración nueva — no tocar la tabla.
-            let should_declare = !rule.implicit || table.lookup(&name).is_none();
-            if should_declare {
-                if let Err(e) = table.declare(&name, rule.kind.clone(), name_node.line, name_node.col) {
-                    errors.push(e);
-                }
-            }
-            declared_name = Some(name);
-        }
-    }
-
-    let entered_scope = if let Some(rule) = scope_rule {
-        let label = if rule.with_label {
-            // Mismo auto-hallazgo que la declaración — si esta producción
-            // también declaraba (p.ej. func_decl), reusa el índice para no
-            // buscarlo dos veces; si no, busca desde cero.
-            find_identifier_child(node, &spec.identifier_token, decl_rule.and_then(|d| d.name_child))
-                .and_then(|(_, n)| n.lexeme.clone())
-        } else {
-            None
-        };
-        match label {
-            Some(l) => table.enter_scope_named(rule.kind, l),
-            None => table.enter_scope(rule.kind),
-        }
-        true
-    } else {
-        false
-    };
-
-    for (i, child) in node.children.iter().enumerate() {
-        if Some(i) == consumed_index {
-            continue;
-        }
-        walk(child, spec, table, errors);
-    }
-
-    if entered_scope {
-        // El scope que se cierra es el que este mismo `walk` acaba de
-        // abrir arriba — nunca puede ser el Global, así que esto no falla.
-        let closed = table
-            .exit_scope()
-            .expect("el scope recién abierto por este walk debe poder cerrarse");
-
-        // Si esta misma producción también declaró un símbolo (func_decl,
-        // class_decl), lo que se declaró DIRECTAMENTE en el scope que abrió
-        // queda disponible como `members` sin volver a recorrer el árbol.
-        //
-        // Límite conocido, no arreglado a propósito: si el cuerpo tiene un
-        // scope anónimo anidado adentro (p.ej. un `bloque` que no declara
-        // nada por sí mismo, solo abre Block), lo declarado ahí adentro NO
-        // se aplana hacia arriba — un local declarado dos niveles adentro
-        // de una función no aparece en `members` de la función, solo lo que
-        // cuelga directo de su propio scope (sus parámetros). Aplanarlo
-        // "hacia arriba a través de scopes anónimos" es viable pero corre
-        // el riesgo real de filtrar la visibilidad de ese nombre más allá
-        // de su bloque si se hace reinsertándolo en la tabla viva (rompería
-        // el lookup con scoping correcto que ya está bien probado) — se
-        // deja pendiente para cuando haga falta de verdad, con un
-        // mecanismo de acumulación aparte de la tabla de lookup.
-        if let Some(name) = &declared_name {
-            if let Some(sym) = table.lookup_mut(name) {
-                sym.members = Some(closed.symbols().cloned().collect());
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::semantico::errors::ErrorKind;
     use crate::semantico::scopes::ScopeKind;
     use crate::semantico::spec::{DeclarationRule, ScopeRule};
     use crate::semantico::symbols::SymbolKind;
@@ -148,6 +180,9 @@ mod tests {
     }
 
     fn internal(symbol: &str, children: Vec<ParseNode>) -> ParseNode {
+        // Ojo: a diferencia de ParseNode::internal, los tests usan 0/0 fijo
+        // para no acoplar las aserciones de posición del walker a la herencia
+        // de posición de nodos internos (probada aparte en parse_tree.rs).
         ParseNode { symbol: symbol.to_string(), lexeme: None, children, line: 0, col: 0 }
     }
 
@@ -272,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn undeclared_identifier_leaf_produces_error() {
+    fn undeclared_identifier_leaf_produces_one_ambito_diagnostic() {
         let expr = internal("expr", vec![leaf("ID", "z", 3, 9)]);
         let spec = SemanticSpec {
             identifier_token: "ID".to_string(),
@@ -282,13 +317,11 @@ mod tests {
 
         let result = analyze(&expr, &spec);
         assert_eq!(result.errors.len(), 1);
-        match &result.errors[0] {
-            SemanticError::Undeclared { name, line, col } => {
-                assert_eq!(name, "z");
-                assert_eq!((*line, *col), (3, 9));
-            }
-            other => panic!("se esperaba Undeclared, salió {other:?}"),
-        }
+        let diag = result.errors.iter().next().unwrap();
+        assert_eq!(diag.kind, ErrorKind::Ambito);
+        assert_eq!(diag.code, "S002");
+        assert_eq!((diag.line, diag.col), (3, 9));
+        assert!(diag.message.contains('z'));
     }
 
     #[test]
@@ -347,6 +380,8 @@ mod tests {
         // como uso normal y debe fallar por no-declarada.
         let result = analyze(&stmt, &spec);
         assert_eq!(result.errors.len(), 1);
-        assert!(matches!(&result.errors[0], SemanticError::Undeclared { name, .. } if name == "x"));
+        let diag = result.errors.iter().next().unwrap();
+        assert_eq!(diag.kind, ErrorKind::Ambito);
+        assert!(diag.message.contains('x'));
     }
 }

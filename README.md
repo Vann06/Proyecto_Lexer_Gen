@@ -10,6 +10,11 @@ intermedio, código objetivo y la conexión de semántica con la API HTTP siguen
 en el roadmap — ver
 [ORGANIZACION.md](ORGANIZACION.md#fases-futuras-no-implementadas).
 
+**¿Vas a escribir código?** Revisa primero
+[API_REFERENCE.md](API_REFERENCE.md) — índice de cada función y método del
+proyecto (backend y frontend) con `archivo:línea`, para no reimplementar lo que
+ya existe.
+
 ## Objetivo
 Leer un archivo `.yal`, procesar sus definiciones y reglas, construir internamente los autómatas necesarios y generar un analizador léxico funcional.
 

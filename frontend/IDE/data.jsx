@@ -125,4 +125,7 @@ window.IDE_DATA = {
   GEN_CODE: "",
   LR0_DOT: "",
   PARSE_TREE_DOT: "",
+  // Llenado por /api/pipeline (campo `symbol_table`) cuando el .yalp trae
+  // %ident — SymbolTable::dump() del análisis semántico real.
+  SYMBOL_TABLE: "",
 };

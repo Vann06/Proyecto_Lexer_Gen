@@ -1,0 +1,128 @@
+(* ============================================================ *)
+(*  compiscript.yal  -  Especificacion lexica para Compiscript  *)
+(*                                                                *)
+(*  Subconjunto ejecutable derivado de Compiscript.g4 (raiz del  *)
+(*  repo, Proyecto 2): let/var/const, funciones tipadas, clases, *)
+(*  if/while/return/print y la jerarquia completa de expresiones *)
+(*  con precedencia (||  &&  ==/!=  </<=/>/>=  +/-  * / %  unario)*)
+(* ============================================================ *)
+
+(* --- Caracteres base --- *)
+let digit  = ['0'-'9']
+let lower  = ['a'-'z']
+let upper  = ['A'-'Z']
+let letter = lower | upper
+let alnum  = letter | digit
+
+(* --- Blancos --- *)
+let ws = [' ''\t''\n''\r']+
+
+(* --- Identificadores --- *)
+let id = (letter | '_')(alnum | '_')*
+
+(* --- Literales numericos (solo enteros: Compiscript.g4 no tiene float) ---
+   OJO: llamar a esta macro "integer" chocaría con el texto literal de la
+   palabra reservada "integer" (kw_integer más abajo) — expand.rs sustituye
+   CUALQUIER referencia bare a un nombre de macro ya definido, así que
+   "kw_integer = integer" heredaría este patrón (digit+) en vez del texto
+   literal i-n-t-e-g-e-r. *)
+let num_lit = digit+
+
+(* --- Strings: caracteres seguros entre comillas dobles --- *)
+let str_safe = alnum | [' ''.''!''?'','':'';''-''_']
+let string_l = '"' str_safe* '"'
+
+(* --- Comentario de una linea: inicia con // --- *)
+let cmt_char    = alnum | [' ''.''!''?'','':'';''_''=''-']
+let line_comment = '/''/' cmt_char*
+
+(* --- Operadores compuestos --- *)
+let eq  = '=''='
+let neq = '!''='
+let lte = '<''='
+let gte = '>''='
+let and_op = '&''&'
+let or_op  = '|''|'
+
+(* --- Palabras reservadas --- *)
+let kw_let      = let
+let kw_var      = var
+let kw_const    = const
+let kw_function = function
+let kw_class    = class
+let kw_if       = if
+let kw_else     = else
+let kw_while    = while
+let kw_return   = return
+let kw_print    = print
+let kw_true     = true
+let kw_false    = false
+let kw_null     = null
+let kw_boolean  = boolean
+let kw_integer  = integer
+let kw_string   = string
+
+(* ============================================================ *)
+(*  REGLAS LEXICAS                                               *)
+(*  Prioridad: keywords > id > numeros > ops compuestos >        *)
+(*             ops simples > delimitadores                       *)
+(* ============================================================ *)
+rule tokens =
+    (* 1. Palabras reservadas - deben ir ANTES que id *)
+    kw_let      { "LET" }
+  | kw_var      { "VAR" }
+  | kw_const    { "CONST" }
+  | kw_function { "FUNCTION" }
+  | kw_class    { "CLASS" }
+  | kw_if       { "IF" }
+  | kw_else     { "ELSE" }
+  | kw_while    { "WHILE" }
+  | kw_return   { "RETURN" }
+  | kw_print    { "PRINT" }
+  | kw_true     { "TRUE" }
+  | kw_false    { "FALSE" }
+  | kw_null     { "NULL_KW" }
+  | kw_boolean  { "BOOL_T" }
+  | kw_integer  { "INT_T" }
+  | kw_string   { "STR_T" }
+
+    (* 2. Identificadores *)
+  | id          { "ID" }
+
+    (* 3. Literales *)
+  | num_lit     { "INT_LIT" }
+  | string_l    { "STR_LIT" }
+
+    (* 4. Comentarios *)
+  | line_comment { "COMMENT" }
+
+    (* 5. Operadores compuestos - DEBEN ir antes que los simples *)
+  | eq          { "EQ" }
+  | neq         { "NEQ" }
+  | lte         { "LTE" }
+  | gte         { "GTE" }
+  | and_op      { "AND" }
+  | or_op       { "OR" }
+
+    (* 6. Operadores simples *)
+  | '='         { "ASSIGN" }
+  | '+'         { "PLUS" }
+  | '-'         { "MINUS" }
+  | '*'         { "TIMES" }
+  | '/'         { "DIV" }
+  | '%'         { "MOD" }
+  | '<'         { "LT" }
+  | '>'         { "GT" }
+  | '!'         { "NOT" }
+
+    (* 7. Delimitadores *)
+  | '('         { "LPAREN" }
+  | ')'         { "RPAREN" }
+  | '{'         { "LBRACE" }
+  | '}'         { "RBRACE" }
+  | ';'         { "SEMI" }
+  | ','         { "COMMA" }
+  | ':'         { "COLON" }
+
+    (* 8. Blancos: ignorados silenciosamente *)
+  | ws          {}

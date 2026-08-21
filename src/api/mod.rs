@@ -13,7 +13,7 @@ mod pipeline;
 mod sintactico;
 
 pub use codegen::build_codegen_response;
-pub use pipeline::build_pipeline_response;
+pub use pipeline::{build_pipeline_response, build_pipeline_response_named};
 pub use sintactico::{build_compile_response, build_parse_response};
 // Re-exportada porque tests/semantic_analysis_tests.rs la necesita para
 // construir un árbol real (parse .yal → expandir → NFA → DFA → tabla) sin
@@ -53,6 +53,16 @@ pub struct ParseResponse {
     pub error: Option<String>,
     pub problems: Vec<Value>,
     pub token_map: Vec<Value>,
+    /// DOT del árbol de derivación REAL (`sintactico::runtime::parse_tree::
+    /// ParseNode`, construido con `LRParser::parse_tree`/`LL1Parser::parse_tree`
+    /// sobre el `token_map` de esta misma respuesta) — no la reconstrucción por
+    /// string-matching que hacía antes el frontend sobre `trace[].desc`. Vacío
+    /// si la entrada fue rechazada o el árbol no se pudo construir.
+    pub parse_tree_dot: String,
+    /// `SymbolTable::dump()` tras correr `semantico::analyzer::analyze` sobre
+    /// ese mismo árbol — solo si el `.yalp` trae la directiva `%ident` (ver
+    /// `semantico::spec::SemanticSpec::from_grammar`). Vacío si no.
+    pub symbol_table: String,
 }
 
 #[derive(Serialize)]

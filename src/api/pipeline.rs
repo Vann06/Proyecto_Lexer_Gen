@@ -5,17 +5,39 @@
 use crate::sintactico::gramatica::grammar::Grammar;
 use crate::lexico::runtime::indent;
 use crate::lexico::runtime::simulator::{LexResult, Simulator};
+use crate::semantico::analyzer::analyze;
+use crate::semantico::spec::SemanticSpec;
+use crate::sintactico::runtime::parse_tree::to_dot;
 use serde_json::{json, Value};
 
 use super::lexico::{build_lexer_table_from_str, lex_is_ignored, lex_normalize_kind};
-use super::sintactico::{build_parse_response, collect_lr_syntax_errors, push_syntax_problem};
+use super::sintactico::{build_parse_response, build_real_parse_tree, collect_lr_syntax_errors, push_syntax_problem};
 use super::ParseResponse;
 
+/// Punto de entrada usado por los binarios/tests existentes: mismo contrato
+/// que antes, con `source_name` fijo en `"input.txt"` (el nombre que el
+/// workspace por defecto siembra) — así ningún llamador previo tiene que
+/// cambiar. `/api/pipeline` (bin/api.rs) usa la variante `_named` de abajo con
+/// el nombre real del archivo cargado en el IDE.
 pub fn build_pipeline_response(
     yal: &str,
     yalp: &str,
     source: &str,
     mode: &str,
+) -> Result<ParseResponse, String> {
+    build_pipeline_response_named(yal, yalp, source, mode, "input.txt")
+}
+
+/// Igual que `build_pipeline_response`, pero con el nombre real del archivo
+/// fuente — se usa para ubicar cada diagnóstico (`loc: "{source_name}:L:C"`)
+/// en vez del `"input.txt"` fijo que antes rompía el resaltado del gutter en
+/// cuanto el archivo cargado no se llamaba así (p. ej. un `.cps`).
+pub fn build_pipeline_response_named(
+    yal: &str,
+    yalp: &str,
+    source: &str,
+    mode: &str,
+    source_name: &str,
 ) -> Result<ParseResponse, String> {
     let lexer_table = build_lexer_table_from_str(yal)?;
 
@@ -40,7 +62,7 @@ pub fn build_pipeline_response(
                     "level": "err",
                     "code": "L001",
                     "msg": format!("Carácter no reconocido: '{}'", lexeme),
-                    "loc": format!("input.txt:{}:{}", line, col),
+                    "loc": format!("{}:{}:{}", source_name, line, col),
                     "line": line,
                     "col": col
                 }));
@@ -63,7 +85,7 @@ pub fn build_pipeline_response(
                     "level": "err",
                     "code": "L002",
                     "msg": msg,
-                    "loc": "input.txt",
+                    "loc": source_name,
                 }));
             }
         }
@@ -122,7 +144,7 @@ pub fn build_pipeline_response(
             let recovered = collect_lr_syntax_errors(yalp, &token_map, mode);
             if !recovered.is_empty() {
                 for (kind, lexeme, line, col, msg) in &recovered {
-                    push_syntax_problem(&mut lex_problems, kind, lexeme, *line, *col, msg, &grammar_for_filter.tokens);
+                    push_syntax_problem(&mut lex_problems, kind, lexeme, *line, *col, msg, &grammar_for_filter.tokens, source_name);
                 }
             } else {
                 // Compute which token was consumed according to the trace's remaining length
@@ -145,7 +167,25 @@ pub fn build_pipeline_response(
                 let loc_entry = token_map.get(consumed).or_else(|| token_map.last());
                 if let Some((kind, lexeme, line, col)) = loc_entry {
                     let base_msg = resp.error.clone().unwrap_or_else(|| "Error sintáctico".to_string());
-                    push_syntax_problem(&mut lex_problems, kind, lexeme, *line, *col, &base_msg, &grammar_for_filter.tokens);
+                    push_syntax_problem(&mut lex_problems, kind, lexeme, *line, *col, &base_msg, &grammar_for_filter.tokens, source_name);
+                }
+            }
+        } else {
+            // Aceptada: construir el árbol REAL (no el trace JSON) para
+            // `parse_tree_dot`, y si el `.yalp` trae `%ident`, correr el
+            // analizador semántico sobre ese mismo árbol. Solo para LALR/SLR:
+            // `parse_for_ll1_from_str` aplica eliminación de recursión
+            // izquierda y factorización, que renombra producciones — un
+            // `SemanticSpec` escrito contra los nombres originales del .yalp
+            // dejaría de encontrarlas y generaría diagnósticos falsos.
+            if let Some((grammar, tree)) = build_real_parse_tree(yalp, &token_map, mode) {
+                response.parse_tree_dot = to_dot(&tree);
+                if mode != "ll1" {
+                    if let Some(spec) = SemanticSpec::from_grammar(&grammar) {
+                        let analysis = analyze(&tree, &spec);
+                        response.symbol_table = analysis.table.dump();
+                        lex_problems.extend(analysis.errors.to_problems(source_name));
+                    }
                 }
             }
         }

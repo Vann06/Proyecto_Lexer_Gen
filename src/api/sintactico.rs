@@ -9,7 +9,7 @@ use crate::sintactico::automatas::lalr::{merge_by_core, LALRItem};
 use crate::sintactico::runtime::ll1::LL1Parser;
 use crate::sintactico::automatas::lr0::{LR0Automaton, LR0Item};
 use crate::sintactico::automatas::lr1::LR1Automaton;
-use crate::sintactico::runtime::parse_tree::ParseToken;
+use crate::sintactico::runtime::parse_tree::{ParseNode, ParseToken};
 use crate::sintactico::runtime::parser_lr::LRParser;
 use crate::sintactico::tablas::{format_expected_tokens, Action, Conflict, LRTable};
 use serde_json::{json, Value};
@@ -318,6 +318,7 @@ pub(crate) fn push_syntax_problem(
     col: usize,
     base_msg: &str,
     tokens: &HashSet<String>,
+    source_name: &str,
 ) {
     let suggestion = suggest_similar_token(lexeme, tokens);
     if let Some(s) = suggestion {
@@ -326,7 +327,7 @@ pub(crate) fn push_syntax_problem(
                 "level": "err",
                 "code": "L001",
                 "msg": format!("Lexema posiblemente mal escrito: '{}' (¿quiso '{}'?)", lexeme, s),
-                "loc": format!("input.txt:{}:{}", line, col),
+                "loc": format!("{}:{}:{}", source_name, line, col),
                 "line": line,
                 "col": col,
                 "token": kind,
@@ -337,7 +338,7 @@ pub(crate) fn push_syntax_problem(
                 "level": "err",
                 "code": "P001",
                 "msg": msg,
-                "loc": format!("input.txt:{}:{}", line, col),
+                "loc": format!("{}:{}:{}", source_name, line, col),
                 "line": line,
                 "col": col,
                 "token": kind,
@@ -348,11 +349,52 @@ pub(crate) fn push_syntax_problem(
             "level": "err",
             "code": "P001",
             "msg": format!("{} · lexema \"{}\"", base_msg, lexeme),
-            "loc": format!("input.txt:{}:{}", line, col),
+            "loc": format!("{}:{}:{}", source_name, line, col),
             "line": line,
             "col": col,
             "token": kind,
         }));
+    }
+}
+
+/// Construye el árbol de derivación REAL (no el trace JSON de
+/// `parse_with_trace_lr`) para el mismo `token_map` ya usado para parsear —
+/// usado por el pipeline para poblar `parse_tree_dot`/`symbol_table` en la
+/// respuesta HTTP. Devuelve también la `Grammar` ya parseada (con las
+/// directivas `%ident`/`%declare`/`%scope`, si las trae) para que el llamador
+/// pueda decidir si corre análisis semántico. `None` si la gramática o el
+/// árbol no se pueden construir — el llamador simplemente no llena esos campos.
+pub(crate) fn build_real_parse_tree(
+    yalp: &str,
+    token_map: &[(String, String, usize, usize)],
+    mode: &str,
+) -> Option<(Grammar, ParseNode)> {
+    let parse_tokens: Vec<ParseToken> = token_map
+        .iter()
+        .map(|(k, lx, line, col)| ParseToken { kind: k.clone(), lexeme: lx.clone(), line: *line, col: *col })
+        .collect();
+
+    if mode == "ll1" {
+        let grammar = Grammar::parse_for_ll1_from_str(yalp).ok()?;
+        let first_sets = calculate_first(&grammar);
+        let follow_sets = calculate_follow(&grammar, &first_sets);
+        let parser = LL1Parser::build(&grammar, &first_sets, &follow_sets).ok()?;
+        let tree = parser.parse_tree(parse_tokens).ok()?;
+        Some((grammar, tree))
+    } else {
+        let grammar = Grammar::parse_for_lr_from_str(yalp).ok()?;
+        let first_sets = calculate_first(&grammar);
+        let table = if mode == "slr" {
+            let follow_sets = calculate_follow(&grammar, &first_sets);
+            let lr0 = LR0Automaton::build(&grammar);
+            LRTable::build_from_slr(&lr0, &grammar, &follow_sets)
+        } else {
+            let lr1 = LR1Automaton::build(&grammar, &first_sets);
+            let lalr = merge_by_core(lr1);
+            LRTable::build_from_lalr(&lalr, &grammar)
+        };
+        let tree = LRParser::new(&table).parse_tree(parse_tokens).ok()?;
+        Some((grammar, tree))
     }
 }
 

@@ -6,8 +6,9 @@ use lexer_generator::api;
 use lexer_generator::lexico::runtime::simulator::{LexResult, Simulator};
 use lexer_generator::semantico::analyzer::analyze;
 use lexer_generator::semantico::scopes::ScopeKind;
+use lexer_generator::semantico::errors::ErrorKind;
 use lexer_generator::semantico::spec::{DeclarationRule, ScopeRule, SemanticSpec};
-use lexer_generator::semantico::symbols::{SemanticError, SymbolKind};
+use lexer_generator::semantico::symbols::SymbolKind;
 use lexer_generator::sintactico::automatas::lalr::merge_by_core;
 use lexer_generator::sintactico::automatas::lr1::LR1Automaton;
 use lexer_generator::sintactico::gramatica::first::calculate_first;
@@ -101,10 +102,9 @@ fn miniprog_symbol_table_from_real_grammar() {
 
     // Un solo error real: "faltante" nunca se declaró.
     assert_eq!(result.errors.len(), 1, "errores: {:?}", result.errors);
-    assert!(matches!(
-        &result.errors[0],
-        SemanticError::Undeclared { name, .. } if name == "faltante"
-    ));
+    let diag = result.errors.iter().next().unwrap();
+    assert_eq!(diag.kind, ErrorKind::Ambito);
+    assert!(diag.message.contains("faltante"));
 
     // La función quedó declarada en Global, con los scopes ya cerrados.
     assert_eq!(result.table.depth(), 1);
@@ -181,10 +181,9 @@ fn classes_functions_symbol_table_from_real_grammar() {
     let result = analyze(&tree, &spec);
 
     assert_eq!(result.errors.len(), 1, "errores: {:?}", result.errors);
-    assert!(matches!(
-        &result.errors[0],
-        SemanticError::Undeclared { name, .. } if name == "z"
-    ));
+    let diag = result.errors.iter().next().unwrap();
+    assert_eq!(diag.kind, ErrorKind::Ambito);
+    assert!(diag.message.contains('z'));
 
     assert_eq!(result.table.depth(), 1);
     assert_eq!(result.table.lookup("foo").expect("foo se declaró").kind, SymbolKind::Function);
