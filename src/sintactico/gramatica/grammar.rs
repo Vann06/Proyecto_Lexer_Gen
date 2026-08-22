@@ -106,6 +106,19 @@ pub struct Grammar {
     /// `(token terminal, nombre de tipo)`, uno por línea `%type_token` —
     /// p.ej. `%type_token INT_T integer`.
     pub type_token_directives: Vec<(String, String)>,
+    /// `(producción, símbolo del hijo que es la expresión inicializadora)`,
+    /// uno por línea `%init_of` — p.ej. `%init_of var_decl expr`.
+    pub init_of_directives: Vec<(String, String)>,
+    /// Producciones cuyas declaraciones son CONSTANTES (inmutables), una por
+    /// línea `%immutable` — p.ej. `%immutable const_decl`.
+    pub immutable_directives: Vec<String>,
+    /// `(producción, índice del destino, índice del valor)`, de la única
+    /// línea `%assign` — p.ej. `%assign assign_stmt 0 2` para
+    /// `assign_stmt: ID ASSIGN expr`.
+    pub assign: Option<(String, usize, usize)>,
+    /// `(token del operador, nombre de la operación)`, uno por línea
+    /// `%arith` — p.ej. `%arith PLUS add`.
+    pub arith_directives: Vec<(String, String)>,
     /// Token de `this`, de la única línea `%this` (p.ej. `%this THIS`).
     pub this_token: Option<String>,
     /// `(producción, token de `.`)`, una por línea `%member_access` — puede
@@ -208,6 +221,10 @@ impl Grammar {
             scope_directives: Vec::new(),
             type_of_directives: Vec::new(),
             type_token_directives: Vec::new(),
+            init_of_directives: Vec::new(),
+            immutable_directives: Vec::new(),
+            assign: None,
+            arith_directives: Vec::new(),
             this_token: None,
             member_access_directives: Vec::new(),
             instantiation: None,
@@ -810,6 +827,27 @@ impl Grammar {
                     if let (Ok(class_idx), Ok(args_idx)) = (class_idx.parse::<usize>(), args_idx.parse::<usize>()) {
                         self.instantiation = Some((production.to_string(), new_token.to_string(), class_idx, args_idx));
                     }
+                }
+            } else if line.starts_with("%init_of") {
+                let mut parts = line[8..].split_whitespace();
+                if let (Some(production), Some(symbol)) = (parts.next(), parts.next()) {
+                    self.init_of_directives.push((production.to_string(), symbol.to_string()));
+                }
+            } else if line.starts_with("%immutable") {
+                if let Some(production) = line[10..].split_whitespace().next() {
+                    self.immutable_directives.push(production.to_string());
+                }
+            } else if line.starts_with("%assign") {
+                let mut parts = line[7..].split_whitespace();
+                if let (Some(production), Some(target), Some(value)) = (parts.next(), parts.next(), parts.next()) {
+                    if let (Ok(target), Ok(value)) = (target.parse::<usize>(), value.parse::<usize>()) {
+                        self.assign = Some((production.to_string(), target, value));
+                    }
+                }
+            } else if line.starts_with("%arith") {
+                let mut parts = line[6..].split_whitespace();
+                if let (Some(token), Some(op)) = (parts.next(), parts.next()) {
+                    self.arith_directives.push((token.to_string(), op.to_string()));
                 }
             } else if line.starts_with("%call") {
                 let mut parts = line[5..].split_whitespace();

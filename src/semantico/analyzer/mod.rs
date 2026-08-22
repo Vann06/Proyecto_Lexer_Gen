@@ -10,9 +10,9 @@
 use crate::semantico::classes;
 use crate::semantico::errors::ErrorCollector;
 use crate::semantico::scopes::ScopeKind;
-use crate::semantico::spec::{SemanticSpec, TypeChildLocator};
+use crate::semantico::spec::{SemanticSpec, ChildLocator};
 use crate::semantico::symbols::{SemanticError, Signature, SymbolKind, SymbolTable};
-use crate::semantico::types::{resolve_assignment, Type};
+use crate::semantico::types::{resolve_arithmetic, resolve_assignment, Type};
 use crate::semantico::visitor::{self, Flow, Visitor};
 use crate::sintactico::runtime::parse_tree::ParseNode;
 use std::collections::HashSet;
@@ -183,6 +183,52 @@ impl<'a> Visitor for Analyzer<'a> {
             return Flow::SkipChildIndices(vec![member_idx]);
         }
 
+        // 2b. Operación aritmética (`izq OP der`, según `spec.arith_tokens`):
+        // valida los operandos con la tabla de compatibilidad de `types`.
+        // No hace early-return — los operandos siguen recorriéndose normal, y
+        // si alguno es a su vez una operación inválida también se reporta.
+        // Un operando cuyo tipo no sabemos resolver no se chequea.
+        if let Some((op, left, right)) = classes::find_arithmetic(node, self.spec) {
+            let left_ty = classes::resolve_expr_type(left, &self.table, self.spec);
+            let right_ty = classes::resolve_expr_type(right, &self.table, self.spec);
+            if let (Some(l), Some(r)) = (left_ty, right_ty) {
+                if resolve_arithmetic(op, &l, &r).is_err() {
+                    self.errors.push_semantic(&SemanticError::InvalidArithmetic {
+                        operator: op.to_string(),
+                        left: l,
+                        right: r,
+                        line: node.children[1].line,
+                        col: node.children[1].col,
+                    });
+                }
+            }
+        }
+
+        // 3a. Asignación a una variable suelta (`assign_stmt: ID ASSIGN expr`,
+        // según `spec.assign`). Solo dispara si el destino es una HOJA
+        // identificador: la otra alternativa del mismo head
+        // (`primary DOT ID ASSIGN expr`) ya la manejó el bloque de acceso a
+        // miembro de arriba, que devuelve antes de llegar acá.
+        if let Some(rule) = &self.spec.assign {
+            if node.symbol == rule.production {
+                let target = node.children.get(rule.target_index).filter(|c| {
+                    c.children.is_empty() && c.symbol == self.spec.identifier_token
+                });
+                if let (Some(target), Some(value_node)) = (target, node.children.get(rule.value_index)) {
+                    let name = target.lexeme.as_deref().unwrap_or(&target.symbol).to_string();
+                    let value_type = classes::resolve_expr_type(value_node, &self.table, self.spec);
+                    if let Err(e) = self.table.assign(&name, value_type.as_ref(), target.line, target.col) {
+                        self.errors.push_semantic(&e);
+                    }
+                    // El destino ya se consumió acá (y `assign` ya reportó si
+                    // no existía): excluirlo del recorrido evita un segundo
+                    // diagnóstico "no declarada" por el mismo identificador.
+                    self.frames.push(Frame::default());
+                    return Flow::SkipChildIndices(vec![rule.target_index]);
+                }
+            }
+        }
+
         // 3b. Invocación (`primary: primary LPAREN arg_list RPAREN`, según
         // `spec.call`) — cubre por igual `f(args)` y `obj.metodo(args)`,
         // porque lo invocado es simplemente la subexpresión de la izquierda.
@@ -278,7 +324,19 @@ impl<'a> Visitor for Analyzer<'a> {
                     // ese hijo de la recursión genérica, para no re-visitarlo
                     // como uso) — si no, sigue siendo el `declare` de
                     // siempre, sin tipo.
-                    let type_idx = rule.type_child.as_ref().and_then(|locator| find_type_child_index(node, locator));
+                    let type_idx = rule.type_child.as_ref().and_then(|locator| find_child_index(node, locator));
+
+                    // El inicializador (`= expr`), si esta alternativa lo
+                    // trae. NO se agrega a `skip_indices`: es una expresión
+                    // real, y los identificadores que use tienen que seguir
+                    // validándose por el recorrido normal.
+                    let init_node = rule
+                        .init_child
+                        .as_ref()
+                        .and_then(|locator| find_child_index(node, locator))
+                        .map(|i| &node.children[i]);
+                    let init_type = init_node.and_then(|n| classes::resolve_expr_type(n, &self.table, self.spec));
+
                     let decl_result = match type_idx {
                         Some(i) => {
                             skip_indices.push(i);
@@ -291,17 +349,45 @@ impl<'a> Visitor for Analyzer<'a> {
                                 let type_node = &node.children[i];
                                 self.pending_named_types.push((class_name.clone(), type_node.line, type_node.col));
                             }
-                            // Sin inferencia de tipos de expresiones todavía:
-                            // no hay forma de saber acá el tipo de un posible
-                            // inicializador (`tipo ID ASSIGN expr`), así que
-                            // se declara sin uno — `initialized` queda en
-                            // `false` aunque la fuente traiga `= expr`. Basta
-                            // para el objetivo de esta fase (poblar `ty`), no
-                            // finge un chequeo de inicializador que el walker
-                            // genérico todavía no hace.
-                            self.table.declare_typed(&name, rule.kind.clone(), ty, true, None, name_node.line, name_node.col)
+                            self.table.declare_typed(
+                                &name,
+                                rule.kind.clone(),
+                                ty,
+                                !rule.immutable,
+                                init_node.is_some(),
+                                init_type,
+                                name_node.line,
+                                name_node.col,
+                            )
                         }
-                        None => self.table.declare(&name, rule.kind.clone(), name_node.line, name_node.col),
+                        // Sin tipo declarado: si hay inicializador y su tipo
+                        // se pudo resolver, se INFIERE de él (`let x = 5`
+                        // hace `x: integer`, y entonces `x = "texto"` sí se
+                        // detecta más adelante). Si no, declaración sin tipo,
+                        // igual que siempre.
+                        None => match &init_type {
+                            Some(inferred) => self.table.declare_typed(
+                                &name,
+                                rule.kind.clone(),
+                                inferred.clone(),
+                                !rule.immutable,
+                                true,
+                                None,
+                                name_node.line,
+                                name_node.col,
+                            ),
+                            None if rule.immutable => self.table.declare_typed(
+                                &name,
+                                rule.kind.clone(),
+                                Type::Unknown,
+                                false,
+                                init_node.is_some(),
+                                None,
+                                name_node.line,
+                                name_node.col,
+                            ),
+                            None => self.table.declare(&name, rule.kind.clone(), name_node.line, name_node.col),
+                        },
                     };
                     match decl_result {
                         Ok(()) => {
@@ -480,10 +566,10 @@ fn resolve_declared_type(node: &ParseNode, spec: &SemanticSpec) -> Type {
 /// `BySymbol(s)` busca el primer hijo directo cuyo `symbol` sea `s` — para
 /// producciones con el nodo de tipo en posiciones distintas según la
 /// alternativa (o ausente en algunas), como `var_decl` en Compiscript.
-fn find_type_child_index(node: &ParseNode, locator: &TypeChildLocator) -> Option<usize> {
+fn find_child_index(node: &ParseNode, locator: &ChildLocator) -> Option<usize> {
     match locator {
-        TypeChildLocator::Index(i) => node.children.get(*i).map(|_| *i),
-        TypeChildLocator::BySymbol(symbol) => node.children.iter().position(|c| &c.symbol == symbol),
+        ChildLocator::Index(i) => node.children.get(*i).map(|_| *i),
+        ChildLocator::BySymbol(symbol) => node.children.iter().position(|c| &c.symbol == symbol),
     }
 }
 
@@ -537,6 +623,8 @@ mod tests {
             call: None,
             args_list_symbol: None,
             constructor_name: None,
+            assign: None,
+            arith_tokens: Default::default(),
         }
     }
 
@@ -554,6 +642,8 @@ mod tests {
                 name_child: None,
                 implicit: false,
                 type_child: None,
+                init_child: None,
+                immutable: false,
             }],
             vec![],
             HashMap::new(),
@@ -582,7 +672,9 @@ mod tests {
                 kind: SymbolKind::Variable,
                 name_child: None,
                 implicit: false,
-                type_child: Some(TypeChildLocator::Index(0)),
+                type_child: Some(ChildLocator::Index(0)),
+                init_child: None,
+                immutable: false,
             }],
             vec![],
             type_tokens,
@@ -607,7 +699,9 @@ mod tests {
             kind: SymbolKind::Variable,
             name_child: None,
             implicit: false,
-            type_child: Some(TypeChildLocator::BySymbol("tipo".to_string())),
+            type_child: Some(ChildLocator::BySymbol("tipo".to_string())),
+            init_child: None,
+            immutable: false,
         };
 
         let sin_tipo = internal("var_decl", vec![leaf("ID", "a", 1, 1)]);
@@ -621,7 +715,9 @@ mod tests {
             kind: SymbolKind::Variable,
             name_child: None,
             implicit: false,
-            type_child: Some(TypeChildLocator::BySymbol("tipo".to_string())),
+            type_child: Some(ChildLocator::BySymbol("tipo".to_string())),
+            init_child: None,
+            immutable: false,
         };
         let con_tipo = internal("var_decl", vec![
             leaf("ID", "b", 2, 1),
@@ -648,7 +744,9 @@ mod tests {
                 kind: SymbolKind::Variable,
                 name_child: None,
                 implicit: false,
-                type_child: Some(TypeChildLocator::Index(0)),
+                type_child: Some(ChildLocator::Index(0)),
+                init_child: None,
+                immutable: false,
             }],
             vec![],
             HashMap::new(),
@@ -675,7 +773,9 @@ mod tests {
                 kind: SymbolKind::Variable,
                 name_child: Some(1),
                 implicit: false,
-                type_child: Some(TypeChildLocator::Index(0)),
+                type_child: Some(ChildLocator::Index(0)),
+                init_child: None,
+                immutable: false,
             }],
             vec![],
             HashMap::new(),
@@ -713,6 +813,8 @@ mod tests {
                     name_child: None,
                     implicit: false,
                     type_child: None,
+                    init_child: None,
+                    immutable: false,
                 },
                 DeclarationRule {
                     production: "var_decl".to_string(),
@@ -720,6 +822,8 @@ mod tests {
                     name_child: None,
                     implicit: false,
                     type_child: None,
+                    init_child: None,
+                    immutable: false,
                 },
             ],
             vec![
@@ -757,6 +861,8 @@ mod tests {
                     name_child: None,
                     implicit: false,
                     type_child: None,
+                    init_child: None,
+                    immutable: false,
                 },
                 DeclarationRule {
                     production: "stmt".to_string(),
@@ -764,6 +870,8 @@ mod tests {
                     name_child: None,
                     implicit: true,
                     type_child: None,
+                    init_child: None,
+                    immutable: false,
                 },
             ],
             vec![],
@@ -786,6 +894,8 @@ mod tests {
                 name_child: None,
                 implicit: true,
                 type_child: None,
+                init_child: None,
+                immutable: false,
             }],
             vec![],
             HashMap::new(),
@@ -827,6 +937,8 @@ mod tests {
                 name_child: None,
                 implicit: false,
                 type_child: None,
+                init_child: None,
+                immutable: false,
             }],
             vec![],
             HashMap::new(),
@@ -858,6 +970,8 @@ mod tests {
                 name_child: None,
                 implicit: true,
                 type_child: None,
+                init_child: None,
+                immutable: false,
             }],
             vec![],
             HashMap::new(),
@@ -892,6 +1006,8 @@ mod tests {
                     name_child: None,
                     implicit: false,
                     type_child: None,
+                    init_child: None,
+                    immutable: false,
                 },
                 DeclarationRule {
                     production: "func_decl".to_string(),
@@ -899,20 +1015,26 @@ mod tests {
                     name_child: None,
                     implicit: false,
                     type_child: None,
+                    init_child: None,
+                    immutable: false,
                 },
                 DeclarationRule {
                     production: "param".to_string(),
                     kind: SymbolKind::Parameter,
                     name_child: None,
                     implicit: false,
-                    type_child: Some(TypeChildLocator::BySymbol("tipo".to_string())),
+                    type_child: Some(ChildLocator::BySymbol("tipo".to_string())),
+                    init_child: None,
+                    immutable: false,
                 },
                 DeclarationRule {
                     production: "var_decl".to_string(),
                     kind: SymbolKind::Variable,
                     name_child: None,
                     implicit: false,
-                    type_child: Some(TypeChildLocator::BySymbol("tipo".to_string())),
+                    type_child: Some(ChildLocator::BySymbol("tipo".to_string())),
+                    init_child: None,
+                    immutable: false,
                 },
             ],
             scopes: vec![
@@ -931,6 +1053,8 @@ mod tests {
             }),
             args_list_symbol: Some("args".to_string()),
             constructor_name: None,
+            assign: None,
+            arith_tokens: Default::default(),
         }
     }
 

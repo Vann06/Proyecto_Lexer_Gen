@@ -21,10 +21,20 @@ print(this.area);
 c.noExisteTampoco = 3;
 
 // Anotacion de tipo que nombra una clase que nunca se declaro.
-let fantasma: ClaseInexistente = 1;
+let fantasma: ClaseInexistente;
 
 // Invocacion: aridad y tipo, sobre metodo y sobre funcion libre.
 function duplicar(n: integer): integer { return n + n; }
 print(c.escalar(1, 2, 3));
 print(c.escalar("texto"));
 print(duplicar(1, 2));
+
+// Sistema de tipos conectado al recorrido: inicializador, asignacion,
+// aritmetica y const.
+let malTipada: integer = "no soy entero";
+let entera: integer = 1;
+entera = "tampoco";
+let texto: string = "x";
+print(entera + texto);
+const FIJA: integer = 10;
+FIJA = 11;

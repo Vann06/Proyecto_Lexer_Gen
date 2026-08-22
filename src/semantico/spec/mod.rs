@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::semantico::scopes::ScopeKind;
 use crate::semantico::symbols::SymbolKind;
-use crate::semantico::types::Type;
+use crate::semantico::types::{ArithmeticOperator, Type};
 use crate::sintactico::gramatica::grammar::Grammar;
 
 pub struct SemanticSpec {
@@ -53,6 +53,32 @@ pub struct SemanticSpec {
     /// palabra reservada de la gramática). `None`: ninguna clase tiene
     /// constructor explícito, todas usan el implícito de aridad 0.
     pub constructor_name: Option<String>,
+    /// Configuración de asignación a una variable suelta (`x = expr`).
+    /// `None`: el walker no chequea tipo ni mutabilidad en asignaciones.
+    /// (La asignación a una PROPIEDAD, `obj.attr = expr`, se configura
+    /// aparte con `member_access` — es otra producción.)
+    pub assign: Option<AssignRule>,
+    /// Mapea el token de un operador aritmético binario (p.ej. "PLUS") a la
+    /// operación que representa. Un nodo de tres hijos cuyo hijo del medio
+    /// sea uno de estos tokens se trata como `izq OP der` y se le calcula el
+    /// tipo con `types::resolve_arithmetic`. Vacío: no se tipa ni se valida
+    /// ninguna expresión aritmética.
+    pub arith_tokens: HashMap<String, ArithmeticOperator>,
+}
+
+/// "La producción `production` asigna el valor de `value_index` a la
+/// variable nombrada por el identificador en `target_index`" — p.ej.
+/// `assign_stmt: ID ASSIGN expr` con `target_index: 0`, `value_index: 2`.
+///
+/// Igual que las demás reglas, la alternativa concreta se reconoce por la
+/// FORMA: solo dispara si el hijo en `target_index` es una HOJA con el
+/// `identifier_token`. Así, la alternativa de asignación a propiedad del
+/// mismo head (`assign_stmt: primary DOT ID ASSIGN expr`, cuyo hijo 0 es un
+/// nodo interno) no la toma — esa la maneja `member_access`.
+pub struct AssignRule {
+    pub production: String,
+    pub target_index: usize,
+    pub value_index: usize,
 }
 
 /// Dónde está el nodo de tipo dentro de los hijos DIRECTOS de una
@@ -63,7 +89,7 @@ pub struct SemanticSpec {
 /// `var_decl: let_or_var ID | let_or_var ID COLON tipo | ...` — un índice
 /// fijo sería incorrecto para más de una alternativa a la vez).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TypeChildLocator {
+pub enum ChildLocator {
     Index(usize),
     BySymbol(String),
 }
@@ -146,7 +172,19 @@ pub struct DeclarationRule {
     /// clase como tipo (`resolve_declared_type` lo resuelve a
     /// `Type::Named`), porque el walker excluye ese hijo de la recursión
     /// genérica vía `Flow::SkipChildIndices` (ya no se re-visita como uso).
-    pub type_child: Option<TypeChildLocator>,
+    pub type_child: Option<ChildLocator>,
+    /// Dónde está el nodo de la expresión INICIALIZADORA (`let x: T = expr`,
+    /// el `expr`). `None`: no se chequea el inicializador contra el tipo
+    /// declarado. `Some(locator)`: el walker resuelve su tipo con
+    /// `classes::resolve_expr_type` y se lo pasa a `declare_typed`, que lo
+    /// valida con la misma tabla de coerciones de siempre. A diferencia de
+    /// `type_child`, este hijo NO se excluye del recorrido: es una expresión
+    /// real, y los identificadores que use tienen que seguir validándose.
+    pub init_child: Option<ChildLocator>,
+    /// `true` para una declaración de CONSTANTE (`const`): el símbolo se
+    /// declara con `mutable: false`, lo que hace que `declare_typed` exija
+    /// inicializador y que cualquier asignación posterior sea un error.
+    pub immutable: bool,
 }
 
 /// "La producción `production` abre un scope nuevo mientras se recorren
@@ -191,7 +229,13 @@ impl SemanticSpec {
                     .type_of_directives
                     .iter()
                     .find(|(p, _)| p == production)
-                    .map(|(_, symbol)| TypeChildLocator::BySymbol(symbol.clone()));
+                    .map(|(_, symbol)| ChildLocator::BySymbol(symbol.clone()));
+
+                let init_child = grammar
+                    .init_of_directives
+                    .iter()
+                    .find(|(p, _)| p == production)
+                    .map(|(_, symbol)| ChildLocator::BySymbol(symbol.clone()));
 
                 DeclarationRule {
                     production: production.clone(),
@@ -199,6 +243,8 @@ impl SemanticSpec {
                     name_child: None,
                     implicit: false,
                     type_child,
+                    init_child,
+                    immutable: grammar.immutable_directives.iter().any(|p| p == production),
                 }
             })
             .collect();
@@ -251,6 +297,16 @@ impl SemanticSpec {
             call,
             args_list_symbol: grammar.arg_list_symbol.clone(),
             constructor_name: grammar.constructor_name.clone(),
+            assign: grammar.assign.clone().map(|(production, target_index, value_index)| AssignRule {
+                production,
+                target_index,
+                value_index,
+            }),
+            arith_tokens: grammar
+                .arith_directives
+                .iter()
+                .filter_map(|(token, op)| arith_operator_from_directive(op).map(|o| (token.clone(), o)))
+                .collect(),
         })
     }
 }
@@ -262,6 +318,20 @@ fn symbol_kind_from_directive(kind: &str) -> SymbolKind {
         "function" => SymbolKind::Function,
         "class" => SymbolKind::Class,
         other => SymbolKind::Other(other.to_string()),
+    }
+}
+
+/// A diferencia de las demás traducciones de directiva, esta devuelve
+/// `Option`: un operador no reconocido NO se mapea a un default arbitrario
+/// (no existe uno razonable), simplemente esa línea `%arith` se ignora y ese
+/// token no se trata como aritmético.
+fn arith_operator_from_directive(op: &str) -> Option<ArithmeticOperator> {
+    match op {
+        "add" => Some(ArithmeticOperator::Add),
+        "subtract" => Some(ArithmeticOperator::Subtract),
+        "multiply" => Some(ArithmeticOperator::Multiply),
+        "divide" => Some(ArithmeticOperator::Divide),
+        _ => None,
     }
 }
 
@@ -314,6 +384,10 @@ mod tests {
             call: None,
             arg_list_symbol: None,
             constructor_name: None,
+            init_of_directives: Vec::new(),
+            immutable_directives: Vec::new(),
+            assign: None,
+            arith_directives: Vec::new(),
         }
     }
 

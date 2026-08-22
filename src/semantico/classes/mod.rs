@@ -14,7 +14,7 @@ use std::collections::HashSet;
 
 use crate::semantico::spec::SemanticSpec;
 use crate::semantico::symbols::{SemanticError, Signature, Symbol, SymbolKind, SymbolTable};
-use crate::semantico::types::{resolve_assignment, Type};
+use crate::semantico::types::{resolve_arithmetic, resolve_assignment, ArithmeticOperator, Type};
 use crate::sintactico::gramatica::first::EPSILON;
 use crate::sintactico::runtime::parse_tree::ParseNode;
 
@@ -160,7 +160,33 @@ pub fn resolve_expr_type(node: &ParseNode, table: &SymbolTable, spec: &SemanticS
         return resolve_expr_type(&node.children[0], table, spec);
     }
 
+    if let Some((op, left, right)) = find_arithmetic(node, spec) {
+        let left_ty = resolve_expr_type(left, table, spec)?;
+        let right_ty = resolve_expr_type(right, table, spec)?;
+        // Operandos incompatibles: `None`, igual que cualquier otra forma que
+        // no sabemos tipar. El diagnóstico lo emite `analyzer::enter` al
+        // visitar este nodo, no esta función (que es silenciosa por diseño).
+        return resolve_arithmetic(op, &left_ty, &right_ty).ok().map(|r| r.result);
+    }
+
     None
+}
+
+/// Si `node` tiene la forma `izquierda OP derecha` con `OP` entre los
+/// operadores aritméticos configurados en `spec.arith_tokens`, devuelve la
+/// operación y los dos operandos. Se reconoce por la FORMA (tres hijos, el
+/// del medio es un token aritmético) en vez de por el nombre de la
+/// producción, así una gramática no tiene que enumerar `additive_expr`,
+/// `term`, etc. — le alcanza con declarar qué tokens son operadores.
+pub fn find_arithmetic<'a>(
+    node: &'a ParseNode,
+    spec: &SemanticSpec,
+) -> Option<(ArithmeticOperator, &'a ParseNode, &'a ParseNode)> {
+    if node.children.len() != 3 {
+        return None;
+    }
+    let op = *spec.arith_tokens.get(&node.children[1].symbol)?;
+    Some((op, &node.children[0], &node.children[2]))
 }
 
 /// Aplana `arg_list: args | ε` / `args: args COMMA expr | expr` a los
@@ -535,6 +561,8 @@ mod tests {
             call: None,
             args_list_symbol: None,
             constructor_name: Some("constructor".to_string()),
+            assign: None,
+            arith_tokens: Default::default(),
         };
         let sig = constructor_signature(&class, &spec);
         assert!(sig.params.is_empty());
@@ -569,6 +597,8 @@ mod tests {
             call: None,
             args_list_symbol: None,
             constructor_name: Some("constructor".to_string()),
+            assign: None,
+            arith_tokens: Default::default(),
         };
 
         // Cero argumentos, se esperaba 1.
@@ -610,6 +640,8 @@ mod tests {
             call: None,
             args_list_symbol: None,
             constructor_name: Some("constructor".to_string()),
+            assign: None,
+            arith_tokens: Default::default(),
         };
 
         let arg = leaf("STR_LIT", "\"texto\"");
@@ -628,7 +660,7 @@ mod tests {
     #[test]
     fn resolve_expr_type_resolves_bare_identifier_through_passthrough_chain() {
         let mut t = SymbolTable::new();
-        t.declare_typed("x", SymbolKind::Variable, Type::Int, true, Some(Type::Int), 1, 1).unwrap();
+        t.declare_typed("x", SymbolKind::Variable, Type::Int, true, true, Some(Type::Int), 1, 1).unwrap();
         let spec = SemanticSpec {
             identifier_token: "ID".to_string(),
             declarations: vec![],
@@ -643,6 +675,8 @@ mod tests {
             call: None,
             args_list_symbol: None,
             constructor_name: None,
+            assign: None,
+            arith_tokens: Default::default(),
         };
         // primary -> atom -> ID(x) : cadena de un solo hijo, "primary" es
         // TAMBIÉN el nombre de la producción de member_access, pero esta

@@ -186,6 +186,15 @@ pub enum SemanticError {
         line: usize,
         col: usize,
     },
+
+    #[error("el operador '{operator}' no acepta operandos {left} y {right}")]
+    InvalidArithmetic {
+        operator: String,
+        left: Type,
+        right: Type,
+        line: usize,
+        col: usize,
+    },
 }
 
 impl From<PopGlobalScope> for SemanticError {
@@ -263,17 +272,28 @@ impl SymbolTable {
     /// Declara un símbolo con tipo y mutabilidad conocidos. Una constante
     /// siempre debe incluir inicializador, y el inicializador se valida con
     /// la misma tabla de coerciones usada por `assign`.
+    ///
+    /// `has_initializer` y `initializer_type` son dos cosas DISTINTAS a
+    /// propósito: la primera dice si la fuente traía un `= expr`, la segunda
+    /// de qué tipo es ese valor. Un inicializador presente pero de tipo no
+    /// resoluble (una expresión compuesta que el analizador todavía no sabe
+    /// tipar) es `(true, None)`: satisface el requisito de inicialización de
+    /// una constante, pero no se compara contra nada. Colapsar ambos en un
+    /// solo `Option` haría que ese caso reportara un
+    /// `ConstRequiresInitializer` falso.
+    #[allow(clippy::too_many_arguments)]
     pub fn declare_typed(
         &mut self,
         name: &str,
         kind: SymbolKind,
         ty: Type,
         mutable: bool,
+        has_initializer: bool,
         initializer_type: Option<Type>,
         line: usize,
         col: usize,
     ) -> Result<(), SemanticError> {
-        if !mutable && initializer_type.is_none() {
+        if !mutable && !has_initializer {
             return Err(SemanticError::ConstRequiresInitializer {
                 name: name.to_string(),
                 line,
@@ -296,18 +316,27 @@ impl SymbolTable {
             .expect("el símbolo acaba de declararse");
         symbol.ty = Some(ty);
         symbol.mutable = mutable;
-        symbol.initialized = initializer_type.is_some();
+        symbol.initialized = has_initializer;
         Ok(())
     }
 
-    /// Verifica y registra una asignación contra el tipo declarado.
+    /// Verifica y registra una asignación: que el destino exista, que sea
+    /// mutable, y que el valor sea compatible con su tipo declarado.
+    ///
+    /// `value_type` es `Option` porque el analizador no siempre puede tipar
+    /// la expresión de la derecha (una composición que todavía no sabe
+    /// resolver). En ese caso se validan igual la existencia y la
+    /// mutabilidad —que no dependen del valor— y se omite solo la
+    /// comparación de tipos, devolviendo `None` en vez de una `Coercion`.
+    /// El símbolo queda marcado como inicializado en cualquiera de los dos
+    /// casos: se le asignó algo, sepamos o no de qué tipo.
     pub fn assign(
         &mut self,
         name: &str,
-        value_type: &Type,
+        value_type: Option<&Type>,
         line: usize,
         col: usize,
-    ) -> Result<Coercion, SemanticError> {
+    ) -> Result<Option<Coercion>, SemanticError> {
         let symbol = self.lookup_or_err(name, line, col)?;
         if !symbol.mutable {
             return Err(SemanticError::AssignmentToConst {
@@ -317,15 +346,18 @@ impl SymbolTable {
             });
         }
         let expected = symbol.ty.clone().unwrap_or(Type::Unknown);
-        let coercion = resolve_assignment(&expected, value_type).map_err(|_| {
-            SemanticError::AssignmentTypeMismatch {
-                name: name.to_string(),
-                expected: expected.clone(),
-                found: value_type.clone(),
-                line,
-                col,
-            }
-        })?;
+        let coercion = match value_type {
+            Some(found) => Some(resolve_assignment(&expected, found).map_err(|_| {
+                SemanticError::AssignmentTypeMismatch {
+                    name: name.to_string(),
+                    expected: expected.clone(),
+                    found: found.clone(),
+                    line,
+                    col,
+                }
+            })?),
+            None => None,
+        };
         self.lookup_mut(name)
             .expect("el símbolo ya fue encontrado")
             .initialized = true;

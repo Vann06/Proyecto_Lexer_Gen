@@ -43,8 +43,12 @@ fn clases_errores_cps_reports_expected_codes() {
 
     let count = |c: &str| codes.iter().filter(|x| **x == c).count();
 
-    // S006 AssignmentTypeMismatch — asignar un string a `this.radio: integer`.
-    assert_eq!(count("S006"), 1, "esperaba 1 tipo incompatible en asignación a propiedad: {codes:?}");
+    // S005 AssignmentToConst — FIJA = 11
+    assert_eq!(count("S005"), 1, "esperaba 1 asignación a constante: {codes:?}");
+    // S006 AssignmentTypeMismatch — `this.radio = "..."` (propiedad),
+    // `let malTipada: integer = "..."` (inicializador) y `entera = "..."`
+    // (asignación a variable suelta).
+    assert_eq!(count("S006"), 3, "esperaba 3 tipos incompatibles en asignación: {codes:?}");
     // S007 UnknownClass — `new NoDeclarada()` y la anotación de tipo
     // `let fantasma: ClaseInexistente` (esta última se valida al terminar el
     // recorrido, porque una clase puede declararse más abajo en el archivo).
@@ -63,8 +67,10 @@ fn clases_errores_cps_reports_expected_codes() {
     assert_eq!(count("S013"), 2, "esperaba 2 aridades incorrectas de llamada: {codes:?}");
     // S014 CallArgTypeMismatch — c.escalar("texto")
     assert_eq!(count("S014"), 1, "esperaba 1 tipo de argumento incorrecto en llamada: {codes:?}");
+    // S015 InvalidArithmetic — entera + texto
+    assert_eq!(count("S015"), 1, "esperaba 1 operación aritmética inválida: {codes:?}");
 
-    assert_eq!(codes.len(), 12, "no debería haber diagnósticos de más: {:#?}", resp.problems);
+    assert_eq!(codes.len(), 16, "no debería haber diagnósticos de más: {:#?}", resp.problems);
 
     // Todos con línea/columna reales y el nombre real del archivo.
     for p in &resp.problems {

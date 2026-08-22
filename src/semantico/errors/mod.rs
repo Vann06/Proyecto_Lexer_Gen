@@ -102,6 +102,7 @@ impl From<&SemanticError> for Diagnostic {
             SemanticError::ConstructorArgTypeMismatch { line, col, .. } => (ErrorKind::Clases, "S012", *line, *col),
             SemanticError::CallArityMismatch { line, col, .. } => (ErrorKind::Funciones, "S013", *line, *col),
             SemanticError::CallArgTypeMismatch { line, col, .. } => (ErrorKind::Funciones, "S014", *line, *col),
+            SemanticError::InvalidArithmetic { line, col, .. } => (ErrorKind::Tipos, "S015", *line, *col),
         };
         Diagnostic { kind, code: code.to_string(), message, line, col, severity: Severity::Error }
     }

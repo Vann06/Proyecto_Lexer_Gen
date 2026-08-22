@@ -79,6 +79,8 @@ fn miniprog_symbol_table_from_real_grammar() {
                 name_child: None,
                 implicit: false,
                 type_child: None,
+                init_child: None,
+                immutable: false,
             },
             DeclarationRule {
                 production: "param".to_string(),
@@ -86,6 +88,8 @@ fn miniprog_symbol_table_from_real_grammar() {
                 name_child: None,
                 implicit: false,
                 type_child: None,
+                init_child: None,
+                immutable: false,
             },
             DeclarationRule {
                 production: "var_decl".to_string(),
@@ -93,6 +97,8 @@ fn miniprog_symbol_table_from_real_grammar() {
                 name_child: None,
                 implicit: false,
                 type_child: None,
+                init_child: None,
+                immutable: false,
             },
         ],
         scopes: vec![
@@ -106,6 +112,8 @@ fn miniprog_symbol_table_from_real_grammar() {
         call: None,
         args_list_symbol: None,
         constructor_name: None,
+        assign: None,
+        arith_tokens: Default::default(),
     };
 
     let tree = real_parse_tree(&yal, &yalp, source);
@@ -161,6 +169,8 @@ fn classes_functions_symbol_table_from_real_grammar() {
                 name_child: None,
                 implicit: false,
                 type_child: None,
+                init_child: None,
+                immutable: false,
             },
             DeclarationRule {
                 production: "class_decl".to_string(),
@@ -168,6 +178,8 @@ fn classes_functions_symbol_table_from_real_grammar() {
                 name_child: None,
                 implicit: false,
                 type_child: None,
+                init_child: None,
+                immutable: false,
             },
             DeclarationRule {
                 production: "param_list".to_string(),
@@ -175,6 +187,8 @@ fn classes_functions_symbol_table_from_real_grammar() {
                 name_child: None,
                 implicit: false,
                 type_child: None,
+                init_child: None,
+                immutable: false,
             },
             // Sin var_decl separado en esta gramática — declarar es
             // implícito en la primera asignación (ID ASSIGN expr).
@@ -184,6 +198,8 @@ fn classes_functions_symbol_table_from_real_grammar() {
                 name_child: None,
                 implicit: true,
                 type_child: None,
+                init_child: None,
+                immutable: false,
             },
         ],
         scopes: vec![
@@ -197,6 +213,8 @@ fn classes_functions_symbol_table_from_real_grammar() {
         call: None,
         args_list_symbol: None,
         constructor_name: None,
+        assign: None,
+        arith_tokens: Default::default(),
     };
 
     let tree = real_parse_tree(&yal, &yalp, source);
@@ -236,6 +254,8 @@ fn classes_functions_reassigning_a_parameter_is_not_a_redeclaration() {
                 name_child: None,
                 implicit: false,
                 type_child: None,
+                init_child: None,
+                immutable: false,
             },
             DeclarationRule {
                 production: "param_list".to_string(),
@@ -243,6 +263,8 @@ fn classes_functions_reassigning_a_parameter_is_not_a_redeclaration() {
                 name_child: None,
                 implicit: false,
                 type_child: None,
+                init_child: None,
+                immutable: false,
             },
             DeclarationRule {
                 production: "stmt".to_string(),
@@ -250,6 +272,8 @@ fn classes_functions_reassigning_a_parameter_is_not_a_redeclaration() {
                 name_child: None,
                 implicit: true,
                 type_child: None,
+                init_child: None,
+                immutable: false,
             },
         ],
         scopes: vec![ScopeRule {
@@ -264,6 +288,8 @@ fn classes_functions_reassigning_a_parameter_is_not_a_redeclaration() {
         call: None,
         args_list_symbol: None,
         constructor_name: None,
+        assign: None,
+        arith_tokens: Default::default(),
     };
 
     let tree = real_parse_tree(&yal, &yalp, source);
@@ -294,6 +320,8 @@ fn classes_functions_class_members_are_queryable_after_the_walk() {
                 name_child: None,
                 implicit: false,
                 type_child: None,
+                init_child: None,
+                immutable: false,
             },
             DeclarationRule {
                 production: "func_decl".to_string(),
@@ -301,6 +329,8 @@ fn classes_functions_class_members_are_queryable_after_the_walk() {
                 name_child: None,
                 implicit: false,
                 type_child: None,
+                init_child: None,
+                immutable: false,
             },
             DeclarationRule {
                 production: "param_list".to_string(),
@@ -308,6 +338,8 @@ fn classes_functions_class_members_are_queryable_after_the_walk() {
                 name_child: None,
                 implicit: false,
                 type_child: None,
+                init_child: None,
+                immutable: false,
             },
         ],
         scopes: vec![
@@ -321,6 +353,8 @@ fn classes_functions_class_members_are_queryable_after_the_walk() {
         call: None,
         args_list_symbol: None,
         constructor_name: None,
+        assign: None,
+        arith_tokens: Default::default(),
     };
 
     let tree = real_parse_tree(&yal, &yalp, source);

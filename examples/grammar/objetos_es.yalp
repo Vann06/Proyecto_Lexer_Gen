@@ -52,6 +52,12 @@ IGNORE COMENTARIO
 %type_of parametro          tipo_dato
 %type_of declaracion_metodo tipo_dato
 
+/* Inicializador, asignacion y aritmetica — las mismas directivas que
+ * compiscript.yalp, apuntando a producciones y tokens distintos. */
+%init_of campo expr
+%assign asignacion 0 2
+%arith MAS add
+
 /* OJO — el limite exacto de la agnosticidad: el lado IZQUIERDO de
  * %type_token es un token de ESTA gramatica (ENTERO_T, TEXTO_T...,
  * libre), pero el lado DERECHO pertenece al vocabulario FIJO del

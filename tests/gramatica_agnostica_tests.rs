@@ -78,7 +78,7 @@ fn alternate_grammar_reports_the_same_diagnostic_codes() {
     // Exactamente los mismos códigos que produce la gramática de
     // Compiscript ante los mismos errores conceptuales — con tokens y
     // producciones que no comparten un solo nombre con aquella.
-    assert_eq!(count("S006"), 1, "tipo incompatible al asignar a propiedad: {codes:?}");
+    assert_eq!(count("S006"), 3, "tipos incompatibles: propiedad, inicializador y asignación: {codes:?}");
     assert_eq!(count("S007"), 2, "objeto desconocido en `crear` y como anotación de tipo: {codes:?}");
     assert_eq!(count("S009"), 1, "`propio` fuera de un método: {codes:?}");
     assert_eq!(count("S010"), 3, "miembros inexistentes (1 lectura + 2 asignaciones): {codes:?}");
@@ -86,7 +86,8 @@ fn alternate_grammar_reports_the_same_diagnostic_codes() {
     assert_eq!(count("S012"), 1, "tipo de argumento incorrecto en `crear`: {codes:?}");
     assert_eq!(count("S013"), 2, "aridad incorrecta en llamada a método y a función libre: {codes:?}");
     assert_eq!(count("S014"), 1, "tipo de argumento incorrecto en llamada: {codes:?}");
-    assert_eq!(codes.len(), 12, "sin diagnósticos de más: {:#?}", resp.problems);
+    assert_eq!(count("S015"), 1, "operación aritmética inválida: {codes:?}");
+    assert_eq!(codes.len(), 15, "sin diagnósticos de más: {:#?}", resp.problems);
 
     for p in &resp.problems {
         assert!(p["loc"].as_str().unwrap().starts_with("objetos_es_errores.txt:"));

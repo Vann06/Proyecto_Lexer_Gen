@@ -47,3 +47,11 @@ function duplicar(n: integer): integer {
 c.escalar(3);
 f.escalar(2);
 print(duplicar(21));
+
+// Sistema de tipos: inicializador correcto, tipo inferido, aritmetica
+// valida, asignacion compatible y una const bien usada.
+let entera: integer = 1;
+let inferida = 2;
+entera = entera + inferida * 3 - 1;
+const FIJA: integer = 10;
+print(entera + FIJA);

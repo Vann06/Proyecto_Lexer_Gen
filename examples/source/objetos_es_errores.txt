@@ -27,10 +27,17 @@ imprime(propio.area);
 c.noExisteTampoco = 3;
 
 # Anotacion de tipo que nombra un objeto que nunca se declaro.
-fantasma: ObjetoInexistente = 1;
+fantasma: ObjetoInexistente;
 
 # Invocacion: aridad y tipo, sobre metodo y sobre funcion libre.
 metodo duplicar(n: entero): entero { retorna n + n; }
 imprime(c.escalar(1, 2, 3));
 imprime(c.escalar("texto"));
 imprime(duplicar(1, 2));
+
+# Sistema de tipos: inicializador, asignacion y aritmetica.
+malTipada: entero = "no soy entero";
+entera: entero = 1;
+entera = "tampoco";
+cadena: texto = "x";
+imprime(entera + cadena);

@@ -58,6 +58,23 @@ IGNORE COMMENT
 %type_of param       tipo
 %type_of func_decl   tipo
 
+/* Inicializador (`= expr`) para validarlo contra el tipo declarado; si no
+ * hay tipo declarado, el tipo se infiere del inicializador. Y `const` es
+ * inmutable: exige inicializador y rechaza asignaciones posteriores. */
+%init_of var_decl    expr
+%init_of const_decl  expr
+%immutable const_decl
+
+/* Asignacion a variable suelta, y operadores aritmeticos: con esto el
+ * sistema de tipos (src/semantico/types) queda conectado al recorrido, no
+ * solo disponible como API. MOD queda fuera a proposito: la tabla de
+ * compatibilidad solo cubre + - * / . */
+%assign assign_stmt 0 2
+%arith PLUS  add
+%arith MINUS subtract
+%arith TIMES multiply
+%arith DIV   divide
+
 %type_token BOOL_T  bool
 %type_token INT_T   integer
 %type_token STR_T   string

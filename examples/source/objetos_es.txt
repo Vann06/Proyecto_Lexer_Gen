@@ -50,3 +50,11 @@ metodo duplicar(n: entero): entero {
 c.escalar(3);
 f.escalar(2);
 imprime(duplicar(21));
+
+# Sistema de tipos: inicializador correcto, aritmetica valida y
+# asignacion compatible. Esta gramatica no tiene declaracion sin
+# anotacion de tipo, asi que no aplica la inferencia.
+entera: entero = 1;
+otra: entero = 2;
+entera = entera + otra;
+imprime(entera);
