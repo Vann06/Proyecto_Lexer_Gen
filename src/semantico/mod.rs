@@ -38,6 +38,7 @@
 pub mod analyzer;
 pub mod classes;
 pub mod errors;
+pub mod functions;
 pub mod scopes;
 pub mod spec;
 pub mod symbols;
