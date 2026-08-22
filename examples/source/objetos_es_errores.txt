@@ -1,0 +1,36 @@
+# Cada error produce exactamente un diagnostico, con los MISMOS
+# codigos S006 a S012 que la gramatica de compiscript. Prueba que
+# los diagnosticos no dependen de como se llamen los tokens ni las
+# producciones de la gramatica de entrada.
+
+objeto Figura {
+  area: entero = 0;
+  metodo iniciar(inicial: entero) { propio.area = inicial; }
+  metodo escalar(factor: entero) { propio.area = factor; }
+}
+
+objeto Circulo : Figura {
+  radio: entero = 0;
+  metodo iniciar(r: entero) { propio.radio = r; }
+  metodo romper() {
+    propio.noExisteEnElObjeto = 1;
+    propio.radio = "no es entero";
+  }
+}
+
+c: Circulo = crear Circulo(5);
+imprime(c.noExiste);
+malo1: Circulo = crear Circulo("texto");
+malo2: Circulo = crear Circulo(1, 2);
+malo3: Circulo = crear NoDeclarada();
+imprime(propio.area);
+c.noExisteTampoco = 3;
+
+# Anotacion de tipo que nombra un objeto que nunca se declaro.
+fantasma: ObjetoInexistente = 1;
+
+# Invocacion: aridad y tipo, sobre metodo y sobre funcion libre.
+metodo duplicar(n: entero): entero { retorna n + n; }
+imprime(c.escalar(1, 2, 3));
+imprime(c.escalar("texto"));
+imprime(duplicar(1, 2));

@@ -1,0 +1,52 @@
+# Programa valido: cero diagnosticos semanticos esperados.
+# Mismas capacidades que el ejemplo de clases de compiscript, pero
+# con una gramatica cuyos tokens y producciones se llaman distinto.
+
+objeto Figura {
+  area: entero = 0;
+
+  metodo iniciar(inicial: entero) {
+    propio.area = inicial;
+  }
+
+  metodo obtenerArea(): entero {
+    retorna propio.area;
+  }
+
+  metodo escalar(factor: entero) {
+    propio.area = factor;
+  }
+}
+
+objeto Circulo : Figura {
+  radio: entero = 0;
+
+  metodo iniciar(r: entero) {
+    propio.radio = r;
+    propio.area = r + r;
+  }
+
+  metodo obtenerRadio(): entero {
+    retorna radio;
+  }
+}
+
+f: Figura = crear Figura(10);
+imprime(f.obtenerArea());
+
+c: Circulo = crear Circulo(5);
+imprime(c.obtenerRadio());
+imprime(c.obtenerArea());
+imprime(c.area);
+
+c.radio = 7;
+c.area = 100;
+
+# Invocaciones correctas: metodo propio, metodo heredado y funcion libre.
+metodo duplicar(n: entero): entero {
+  retorna n + n;
+}
+
+c.escalar(3);
+f.escalar(2);
+imprime(duplicar(21));

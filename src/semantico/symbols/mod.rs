@@ -78,6 +78,11 @@ pub struct Symbol {
     /// cuelga directo del scope de la función misma (ver el comentario en
     /// `analyzer::walk` sobre por qué).
     pub members: Option<Vec<Symbol>>,
+    /// Nombre de la clase padre, solo para símbolos `SymbolKind::Class` con
+    /// herencia (`class Hijo : Padre { ... }`). `None` para cualquier otro
+    /// símbolo, y para una clase sin `: Padre`. La resolución de miembros
+    /// heredados (`classes::resolve_member`) sube por esta cadena.
+    pub parent: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -116,6 +121,66 @@ pub enum SemanticError {
     #[error("asignación incompatible para '{name}': se esperaba {expected}, se encontró {found}")]
     AssignmentTypeMismatch {
         name: String,
+        expected: Type,
+        found: Type,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("la clase '{name}' no está declarada")]
+    UnknownClass { name: String, line: usize, col: usize },
+
+    #[error("la clase padre '{parent}' de '{class}' no está declarada")]
+    UnknownParentClass {
+        class: String,
+        parent: String,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("'this' solo puede usarse dentro de un método de clase")]
+    ThisOutsideClass { line: usize, col: usize },
+
+    #[error("'{name}' no es un miembro de la clase '{class_name}'")]
+    UnknownMember {
+        class_name: String,
+        name: String,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("el constructor de '{class_name}' espera {expected} argumento(s), se encontraron {found}")]
+    ConstructorArityMismatch {
+        class_name: String,
+        expected: usize,
+        found: usize,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("argumento {index} del constructor de '{class_name}': se esperaba {expected}, se encontró {found}")]
+    ConstructorArgTypeMismatch {
+        class_name: String,
+        index: usize,
+        expected: Type,
+        found: Type,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("'{callee}' espera {expected} argumento(s), se encontraron {found}")]
+    CallArityMismatch {
+        callee: String,
+        expected: usize,
+        found: usize,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("argumento {index} de '{callee}': se esperaba {expected}, se encontró {found}")]
+    CallArgTypeMismatch {
+        callee: String,
+        index: usize,
         expected: Type,
         found: Type,
         line: usize,
@@ -190,6 +255,7 @@ impl SymbolTable {
             signature: None,
             storage: None,
             members: None,
+            parent: None,
         });
         Ok(())
     }
@@ -295,6 +361,30 @@ impl SymbolTable {
 
     pub fn current_scope_kind(&self) -> ScopeKind {
         self.stack.current().kind()
+    }
+
+    /// Etiqueta del scope actual (p.ej. el nombre de la clase, si el scope
+    /// actual es un `Class` o `Function` con nombre) — la necesita el walker
+    /// para saber en qué clase está parado antes de auto-declarar `this` al
+    /// abrir el scope de un método.
+    pub fn current_scope_label(&self) -> Option<&str> {
+        self.stack.current().label()
+    }
+
+    /// Busca `name` SOLO entre los símbolos declarados directamente en el
+    /// scope `Class` más cercano — sin mirar los scopes intermedios
+    /// (Function/Block) ni seguir subiendo más allá de esa clase. La usa
+    /// `classes::resolve_member` para el auto-acceso a un miembro de la
+    /// propia clase MIENTRAS esa clase todavía se está recorriendo (su
+    /// scope sigue abierto, `Symbol.members` todavía no existe) —
+    /// deliberadamente más restringido que `lookup()`, para no confundir un
+    /// nombre visible en un scope exterior (una función global, por
+    /// ejemplo) con un miembro real de la clase.
+    pub fn lookup_in_enclosing_class(&self, name: &str) -> Option<&Symbol> {
+        self.stack
+            .iter_innermost_first()
+            .find(|scope| scope.kind() == ScopeKind::Class)
+            .and_then(|scope| scope.get_own(name))
     }
 
     /// Vuelca el estado completo de la tabla, un bloque por entorno activo,
@@ -517,6 +607,7 @@ mod tests {
                 signature: None,
                 storage: None,
                 members: None,
+                parent: None,
             }),
             "Variable"
         );
@@ -533,6 +624,7 @@ mod tests {
                 signature: None,
                 storage: None,
                 members: None,
+                parent: None,
             }),
             "Variable, Int, const, usado"
         );

@@ -16,6 +16,7 @@ use lexer_generator::sintactico::gramatica::grammar::Grammar;
 use lexer_generator::sintactico::runtime::parse_tree::{ParseNode, ParseToken};
 use lexer_generator::sintactico::runtime::parser_lr::LRParser;
 use lexer_generator::sintactico::tablas::LRTable;
+use std::collections::HashMap;
 use std::fs;
 
 /// Compila+lexea+parsea `source` de verdad contra el `.yal`/`.yalp` dados y
@@ -77,24 +78,34 @@ fn miniprog_symbol_table_from_real_grammar() {
                 kind: SymbolKind::Function,
                 name_child: None,
                 implicit: false,
+                type_child: None,
             },
             DeclarationRule {
                 production: "param".to_string(),
                 kind: SymbolKind::Parameter,
                 name_child: None,
                 implicit: false,
+                type_child: None,
             },
             DeclarationRule {
                 production: "var_decl".to_string(),
                 kind: SymbolKind::Variable,
                 name_child: None,
                 implicit: false,
+                type_child: None,
             },
         ],
         scopes: vec![
             ScopeRule { production: "func_decl".to_string(), kind: ScopeKind::Function, with_label: true },
             ScopeRule { production: "bloque".to_string(), kind: ScopeKind::Block, with_label: false },
         ],
+        type_tokens: HashMap::new(),
+        this_token: None,
+        member_access: Vec::new(),
+        instantiation: None,
+        call: None,
+        args_list_symbol: None,
+        constructor_name: None,
     };
 
     let tree = real_parse_tree(&yal, &yalp, source);
@@ -149,18 +160,21 @@ fn classes_functions_symbol_table_from_real_grammar() {
                 kind: SymbolKind::Function,
                 name_child: None,
                 implicit: false,
+                type_child: None,
             },
             DeclarationRule {
                 production: "class_decl".to_string(),
                 kind: SymbolKind::Class,
                 name_child: None,
                 implicit: false,
+                type_child: None,
             },
             DeclarationRule {
                 production: "param_list".to_string(),
                 kind: SymbolKind::Parameter,
                 name_child: None,
                 implicit: false,
+                type_child: None,
             },
             // Sin var_decl separado en esta gramática — declarar es
             // implícito en la primera asignación (ID ASSIGN expr).
@@ -169,12 +183,20 @@ fn classes_functions_symbol_table_from_real_grammar() {
                 kind: SymbolKind::Variable,
                 name_child: None,
                 implicit: true,
+                type_child: None,
             },
         ],
         scopes: vec![
             ScopeRule { production: "func_decl".to_string(), kind: ScopeKind::Function, with_label: true },
             ScopeRule { production: "class_decl".to_string(), kind: ScopeKind::Class, with_label: true },
         ],
+        type_tokens: HashMap::new(),
+        this_token: None,
+        member_access: Vec::new(),
+        instantiation: None,
+        call: None,
+        args_list_symbol: None,
+        constructor_name: None,
     };
 
     let tree = real_parse_tree(&yal, &yalp, source);
@@ -213,18 +235,21 @@ fn classes_functions_reassigning_a_parameter_is_not_a_redeclaration() {
                 kind: SymbolKind::Function,
                 name_child: None,
                 implicit: false,
+                type_child: None,
             },
             DeclarationRule {
                 production: "param_list".to_string(),
                 kind: SymbolKind::Parameter,
                 name_child: None,
                 implicit: false,
+                type_child: None,
             },
             DeclarationRule {
                 production: "stmt".to_string(),
                 kind: SymbolKind::Variable,
                 name_child: None,
                 implicit: true,
+                type_child: None,
             },
         ],
         scopes: vec![ScopeRule {
@@ -232,6 +257,13 @@ fn classes_functions_reassigning_a_parameter_is_not_a_redeclaration() {
             kind: ScopeKind::Function,
             with_label: true,
         }],
+        type_tokens: HashMap::new(),
+        this_token: None,
+        member_access: Vec::new(),
+        instantiation: None,
+        call: None,
+        args_list_symbol: None,
+        constructor_name: None,
     };
 
     let tree = real_parse_tree(&yal, &yalp, source);
@@ -261,24 +293,34 @@ fn classes_functions_class_members_are_queryable_after_the_walk() {
                 kind: SymbolKind::Class,
                 name_child: None,
                 implicit: false,
+                type_child: None,
             },
             DeclarationRule {
                 production: "func_decl".to_string(),
                 kind: SymbolKind::Function,
                 name_child: None,
                 implicit: false,
+                type_child: None,
             },
             DeclarationRule {
                 production: "param_list".to_string(),
                 kind: SymbolKind::Parameter,
                 name_child: None,
                 implicit: false,
+                type_child: None,
             },
         ],
         scopes: vec![
             ScopeRule { production: "class_decl".to_string(), kind: ScopeKind::Class, with_label: true },
             ScopeRule { production: "func_decl".to_string(), kind: ScopeKind::Function, with_label: true },
         ],
+        type_tokens: HashMap::new(),
+        this_token: None,
+        member_access: Vec::new(),
+        instantiation: None,
+        call: None,
+        args_list_symbol: None,
+        constructor_name: None,
     };
 
     let tree = real_parse_tree(&yal, &yalp, source);

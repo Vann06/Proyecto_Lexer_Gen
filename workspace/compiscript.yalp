@@ -3,12 +3,14 @@
  *
  * Traduccion ejecutable del subconjunto elegido de Compiscript.g4
  * (raiz del repo, gramatica ANTLR del Proyecto 2): let/var/const,
- * funciones con parametros y tipo de retorno, clases, bloques,
- * if/while/return/print y la jerarquia completa de expresiones con
- * precedencia ( ||  &&  ==/!=  </<=/>/>=  +/-  * / %  unario - ! ).
+ * funciones con parametros y tipo de retorno, clases con herencia
+ * simple/this/acceso a miembros (lectura y asignacion)/
+ * instanciacion con new, bloques, if/while/return/print y la
+ * jerarquia completa de expresiones con precedencia
+ * ( ||  &&  ==/!=  </<=/>/>=  +/-  * / %  unario - ! ).
  *
  * Fuera de este subconjunto (siguiente iteracion): switch, try/catch,
- * foreach, ternario, new/this, listas/arreglos, acceso a propiedades.
+ * foreach, ternario, listas/arreglos.
  *
  * Dos ambiguedades de la .g4 original resueltas al traducir:
  *  - 'assignment' (Identifier '=' expr) duplicaba lo que ya cubre
@@ -20,19 +22,21 @@
  * ============================================================ */
 
 %token LET VAR CONST FUNCTION CLASS IF ELSE WHILE RETURN PRINT
-%token TRUE FALSE NULL_KW BOOL_T INT_T STR_T
+%token TRUE FALSE NULL_KW BOOL_T INT_T STR_T THIS NEW
 %token ID INT_LIT STR_LIT COMMENT
 %token EQ NEQ LTE GTE AND OR
 %token ASSIGN PLUS MINUS TIMES DIV MOD LT GT NOT
-%token LPAREN RPAREN LBRACE RBRACE SEMI COMMA COLON
+%token LPAREN RPAREN LBRACE RBRACE SEMI COMMA COLON DOT
 
 /* Comentarios ignorados: el parser nunca los ve */
 IGNORE COMMENT
 
 /* ============================================================
- * Directivas de analisis semantico (Fase 15) — declarativas, no
- * hardcodeadas: cualquier .yalp puede traer las suyas propias.
+ * Directivas de analisis semantico — declarativas, no hardcodeadas:
+ * cualquier .yalp puede traer las suyas propias.
  * Ver semantico::spec::SemanticSpec::from_grammar.
+ *
+ * Fase 15 (ambito/tipos):
  * ============================================================ */
 %ident   ID
 %declare var_decl    variable
@@ -43,6 +47,38 @@ IGNORE COMMENT
 %scope   func_decl   function
 %scope   class_decl  class
 %scope   bloque      block
+
+/* ------------------------------------------------------------
+ * Fase 15 (tipos, conectados al pipeline real): que hijo directo
+ * de cada produccion es el nodo de tipo, y que Type representa
+ * cada token de tipo primitivo/literal.
+ * ------------------------------------------------------------ */
+%type_of var_decl    tipo
+%type_of const_decl  tipo
+%type_of param       tipo
+%type_of func_decl   tipo
+
+%type_token BOOL_T  bool
+%type_token INT_T   integer
+%type_token STR_T   string
+%type_token TRUE    bool
+%type_token FALSE   bool
+%type_token INT_LIT integer
+%type_token STR_LIT string
+
+/* ------------------------------------------------------------
+ * Fase 16 (clases y objetos): this, acceso a miembros con '.',
+ * instanciacion con 'new', y la convencion de nombre para el
+ * constructor (un metodo normal llamado literalmente "constructor",
+ * igual que Compiscript.g4/JS/TS — no una palabra reservada aparte).
+ * ------------------------------------------------------------ */
+%this THIS
+%member_access primary     DOT
+%member_access assign_stmt DOT
+%new atom NEW 1 3
+%call primary LPAREN 0 2
+%arg_list_symbol args
+%constructor constructor
 
 %%
 
@@ -113,11 +149,15 @@ const_decl:
 ;
 
 /* ============================================================
- * Asignacion simple
+ * Asignacion: a una variable simple, o a una propiedad de un
+ * objeto (this.attr = expr, obj.attr = expr) — calcada de
+ * PropertyAssignExpr de Compiscript.g4
+ * (lhs=leftHandSide '.' Identifier '=' assignmentExpr).
  * ============================================================ */
 
 assign_stmt:
     ID ASSIGN expr
+  | primary DOT ID ASSIGN expr
 ;
 
 /* ============================================================
@@ -257,12 +297,16 @@ unary:
 ;
 
 /* ============================================================
- * Primary: atom con sufijo de llamada a funcion
+ * Primary: atom con sufijos de llamada a funcion y acceso a
+ * miembro (solo LECTURA — obj.attr, obj.metodo(), encadenado
+ * obj.a.b; asignar con obj.attr = expr queda fuera de este
+ * subconjunto, ver comentario de cabecera).
  * ============================================================ */
 
 primary:
     atom
   | primary LPAREN arg_list RPAREN
+  | primary DOT ID
 ;
 
 atom:
@@ -272,6 +316,8 @@ atom:
   | TRUE
   | FALSE
   | NULL_KW
+  | THIS
+  | NEW ID LPAREN arg_list RPAREN
   | LPAREN expr RPAREN
 ;
 

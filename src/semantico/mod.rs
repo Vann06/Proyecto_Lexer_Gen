@@ -36,6 +36,7 @@
 // shift-reduce documentada en ORGANIZACION.md (5 variantes hoy).
 
 pub mod analyzer;
+pub mod classes;
 pub mod errors;
 pub mod scopes;
 pub mod spec;

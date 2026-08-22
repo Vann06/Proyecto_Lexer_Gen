@@ -6,17 +6,23 @@
 use crate::sintactico::runtime::parse_tree::ParseNode;
 
 /// Qué hacer con los hijos de un nodo después de `enter`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Flow {
     /// Recorrer todos los hijos, en orden.
     Continue,
     /// No recorrer ningún hijo (p. ej. una hoja, o un nodo ya totalmente
     /// resuelto por `enter`).
     SkipChildren,
-    /// Recorrer todos los hijos EXCEPTO el de este índice — el caso del
-    /// analizador semántico: el identificador que `enter` ya consumió como
-    /// nombre de una declaración no debe procesarse de nuevo como un uso.
-    SkipChild(usize),
+    /// Recorrer todos los hijos EXCEPTO los de estos índices — el caso del
+    /// analizador semántico: cada hijo que `enter` ya consumió con otro
+    /// significado (el identificador de una declaración, el nombre del
+    /// miembro en `obj.miembro`, el nombre de clase en `new Clase(...)`, el
+    /// nodo de tipo de una declaración, el nombre de la clase padre en una
+    /// herencia) no debe procesarse de nuevo como un uso genérico. Puede
+    /// haber más de uno en el mismo nodo (p. ej. `class_decl` con herencia
+    /// consume DOS identificadores: el propio y el del padre), de ahí el
+    /// `Vec` en vez de un único índice.
+    SkipChildIndices(Vec<usize>),
 }
 
 /// Política de un recorrido concreto. `enter` decide qué hacer al entrar a un
@@ -37,9 +43,9 @@ pub fn walk<V: Visitor + ?Sized>(root: &ParseNode, visitor: &mut V) {
                 walk(child, visitor);
             }
         }
-        Flow::SkipChild(idx) => {
+        Flow::SkipChildIndices(indices) => {
             for (i, child) in root.children.iter().enumerate() {
-                if i != idx {
+                if !indices.contains(&i) {
                     walk(child, visitor);
                 }
             }
@@ -92,7 +98,7 @@ mod tests {
     impl Visitor for ChildSkipper {
         fn enter(&mut self, node: &ParseNode) -> Flow {
             if node.symbol == "root" {
-                return Flow::SkipChild(self.skip_idx);
+                return Flow::SkipChildIndices(vec![self.skip_idx]);
             }
             self.visited.push(node.symbol.clone());
             Flow::Continue

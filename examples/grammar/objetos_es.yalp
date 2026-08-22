@@ -1,0 +1,225 @@
+/* ============================================================
+ * objetos_es.yalp  -  Gramatica LALR de un lenguaje de objetos
+ * con nombres DELIBERADAMENTE distintos a los de compiscript.yalp.
+ *
+ * Proposito: probar empiricamente que src/semantico es agnostico
+ * a la gramatica. Nada aca se llama como en compiscript:
+ *
+ *   compiscript.yalp        objetos_es.yalp
+ *   ----------------        ---------------
+ *   THIS / DOT / NEW        PROPIO / PUNTO / CREAR
+ *   CLASS / FUNCTION        OBJETO / METODO
+ *   ID                      IDENT
+ *   class_decl              declaracion_objeto
+ *   func_decl               declaracion_metodo
+ *   var_decl                campo
+ *   param                   parametro
+ *   bloque                  cuerpo
+ *   primary / atom          expresion_primaria / atomo
+ *   args                    argumentos
+ *   "constructor"           "iniciar"
+ *
+ * El analizador (src/semantico/{analyzer,classes}) NO cambia: toda
+ * la diferencia vive en las directivas de abajo. Ver
+ * tests/gramatica_agnostica_tests.rs.
+ * ============================================================ */
+
+%token OBJETO METODO PROPIO CREAR RETORNA IMPRIME
+%token ENTERO_T TEXTO_T
+%token IDENT NUM_LIT TXT_LIT COMENTARIO
+%token IGUAL MAS
+%token PAR_A PAR_C LLAVE_A LLAVE_C PUNTOYCOMA COMA DOSPUNTOS PUNTO
+
+IGNORE COMENTARIO
+
+/* ============================================================
+ * Directivas semanticas — los MISMOS nombres de directiva que
+ * compiscript.yalp, pero apuntando a producciones/tokens
+ * completamente distintos.
+ * ============================================================ */
+%ident IDENT
+
+%declare campo               variable
+%declare parametro           parameter
+%declare declaracion_metodo  function
+%declare declaracion_objeto  class
+
+%scope declaracion_metodo  function
+%scope declaracion_objeto  class
+%scope cuerpo              block
+
+%type_of campo              tipo_dato
+%type_of parametro          tipo_dato
+%type_of declaracion_metodo tipo_dato
+
+/* OJO — el limite exacto de la agnosticidad: el lado IZQUIERDO de
+ * %type_token es un token de ESTA gramatica (ENTERO_T, TEXTO_T...,
+ * libre), pero el lado DERECHO pertenece al vocabulario FIJO del
+ * sistema de tipos de src/semantico/types (integer, float, string,
+ * bool, void) — nombra la variante del enum `Type`, no algo de la
+ * gramatica. Escribir aca "entero" en vez de "integer" compila y
+ * parsea igual, pero el tipo cae en `Unknown` y los chequeos de
+ * compatibilidad dejan de detectar nada (silenciosamente). */
+%type_token ENTERO_T integer
+%type_token TEXTO_T  string
+%type_token NUM_LIT  integer
+%type_token TXT_LIT  string
+
+/* Clases y objetos: el token de "este objeto" es PROPIO, el punto
+ * es PUNTO, se instancia con CREAR, y el constructor es un metodo
+ * llamado "iniciar" (no "constructor"). */
+%this PROPIO
+%member_access expresion_primaria PUNTO
+%member_access asignacion         PUNTO
+%new atomo CREAR 1 3
+%call expresion_primaria PAR_A 0 2
+%arg_list_symbol argumentos
+%constructor iniciar
+
+%%
+
+unidad:
+    lista_sentencias
+;
+
+lista_sentencias:
+    lista_sentencias sentencia
+  | sentencia
+;
+
+sentencia:
+    campo PUNTOYCOMA
+  | asignacion PUNTOYCOMA
+  | declaracion_metodo
+  | declaracion_objeto
+  | imprime PUNTOYCOMA
+  | retorna PUNTOYCOMA
+  | expr PUNTOYCOMA
+;
+
+/* ============================================================
+ * Tipos: primitivos o el nombre de un objeto declarado
+ * ============================================================ */
+
+tipo_dato:
+    ENTERO_T
+  | TEXTO_T
+  | IDENT
+;
+
+/* ============================================================
+ * Campo (variable / atributo): nombre PRIMERO, tipo despues —
+ * orden inverso al de otras gramaticas, a proposito
+ * ============================================================ */
+
+campo:
+    IDENT DOSPUNTOS tipo_dato
+  | IDENT DOSPUNTOS tipo_dato IGUAL expr
+;
+
+/* ============================================================
+ * Asignacion: a una variable, o a una propiedad de un objeto
+ * ============================================================ */
+
+asignacion:
+    IDENT IGUAL expr
+  | expresion_primaria PUNTO IDENT IGUAL expr
+;
+
+/* ============================================================
+ * Metodo, con tipo de retorno opcional
+ * ============================================================ */
+
+declaracion_metodo:
+    METODO IDENT PAR_A lista_parametros PAR_C cuerpo
+  | METODO IDENT PAR_A lista_parametros PAR_C DOSPUNTOS tipo_dato cuerpo
+;
+
+lista_parametros:
+    parametros
+  | /* vacio */
+;
+
+parametros:
+    parametros COMA parametro
+  | parametro
+;
+
+parametro:
+    IDENT DOSPUNTOS tipo_dato
+;
+
+/* ============================================================
+ * Objeto (clase), con herencia opcional
+ * ============================================================ */
+
+declaracion_objeto:
+    OBJETO IDENT LLAVE_A miembros LLAVE_C
+  | OBJETO IDENT DOSPUNTOS IDENT LLAVE_A miembros LLAVE_C
+;
+
+miembros:
+    miembros miembro
+  | /* vacio */
+;
+
+miembro:
+    declaracion_metodo
+  | campo PUNTOYCOMA
+;
+
+cuerpo:
+    LLAVE_A lista_sentencias LLAVE_C
+  | LLAVE_A LLAVE_C
+;
+
+/* ============================================================
+ * retorna / imprime
+ * ============================================================ */
+
+retorna:
+    RETORNA expr
+  | RETORNA
+;
+
+imprime:
+    IMPRIME PAR_A expr PAR_C
+;
+
+/* ============================================================
+ * Expresiones (jerarquia minima: suma sobre primarias)
+ * ============================================================ */
+
+expr:
+    suma
+;
+
+suma:
+    suma MAS expresion_primaria
+  | expresion_primaria
+;
+
+expresion_primaria:
+    atomo
+  | expresion_primaria PAR_A lista_argumentos PAR_C
+  | expresion_primaria PUNTO IDENT
+;
+
+atomo:
+    IDENT
+  | NUM_LIT
+  | TXT_LIT
+  | PROPIO
+  | CREAR IDENT PAR_A lista_argumentos PAR_C
+  | PAR_A expr PAR_C
+;
+
+lista_argumentos:
+    argumentos
+  | /* vacio */
+;
+
+argumentos:
+    argumentos COMA expr
+  | expr
+;

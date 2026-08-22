@@ -3,10 +3,11 @@
 // símbolo y cuál abre un scope nuevo — sin que el walker en sí sepa nada de
 // esa gramática. Un `SemanticSpec` nuevo por cada `.yalp` que se reciba, el
 // walker no cambia nunca.
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::semantico::scopes::ScopeKind;
 use crate::semantico::symbols::SymbolKind;
+use crate::semantico::types::Type;
 use crate::sintactico::gramatica::grammar::Grammar;
 
 pub struct SemanticSpec {
@@ -16,6 +17,96 @@ pub struct SemanticSpec {
     pub identifier_token: String,
     pub declarations: Vec<DeclarationRule>,
     pub scopes: Vec<ScopeRule>,
+    /// Mapea el `symbol` de la hoja terminal de un nodo de tipo (p.ej.
+    /// "INT_T") al `Type` semántico que representa (`Type::Int`). Lo usa
+    /// `analyzer::resolve_declared_type` cuando una `DeclarationRule` trae
+    /// `type_child`. Un terminal que no aparece acá cae en `Type::Unknown`
+    /// — no es error, es "no sabemos mapear ese token a un tipo primitivo".
+    /// Vacío (default de `from_grammar`, que hoy no trae ninguna directiva
+    /// `%type`): ninguna declaración puede usar `type_child`, así que el
+    /// walker sigue llamando a `declare()` como antes de este campo existir.
+    pub type_tokens: HashMap<String, Type>,
+    /// Token de `this` (p.ej. "THIS"). `None`: la gramática no tiene `this`
+    /// — una hoja con ese `symbol` nunca aparece, así que este campo no
+    /// afecta nada si se deja sin usar.
+    pub this_token: Option<String>,
+    /// Producciones con acceso a miembros (`obj.miembro`). Suele haber más
+    /// de una: la de LECTURA (`primary: primary DOT ID`) y la de ASIGNACIÓN
+    /// (`assign_stmt: primary DOT ID ASSIGN expr`). Vacío: la gramática no
+    /// tiene `.` como operador — el walker no intenta resolver ningún
+    /// acceso a miembro.
+    pub member_access: Vec<MemberAccessRule>,
+    /// Configuración de instanciación (`new Clase(args)`). `None`: la
+    /// gramática no tiene `new`.
+    pub instantiation: Option<InstantiationRule>,
+    /// Configuración de llamada (`f(args)`, `obj.metodo(args)`). `None`: el
+    /// walker no valida aridad ni tipos de ninguna invocación.
+    pub call: Option<CallRule>,
+    /// Símbolo de la producción recursiva que separa los argumentos por
+    /// comas (p.ej. "args" en `args: args COMMA expr | expr`) — lo necesita
+    /// `classes::flatten_arg_list` para aplanar una lista de argumentos sin
+    /// conocer el nombre de la producción de expresión. Compartido por
+    /// `instantiation` y `call`, que reciben ambos un nodo `arg_list`.
+    pub args_list_symbol: Option<String>,
+    /// Nombre convencional del método que actúa como constructor de una
+    /// clase (p.ej. "constructor", estilo JS/TS — un método normal, no una
+    /// palabra reservada de la gramática). `None`: ninguna clase tiene
+    /// constructor explícito, todas usan el implícito de aridad 0.
+    pub constructor_name: Option<String>,
+}
+
+/// Dónde está el nodo de tipo dentro de los hijos DIRECTOS de una
+/// producción. `Index` sirve para una forma fija de un solo hijo posible
+/// (p.ej. `atom: NEW ID LPAREN arg_list RPAREN`, siempre en la misma
+/// posición); `BySymbol` para producciones con varias alternativas donde el
+/// nodo de tipo cambia de posición o directamente no aparece (p.ej.
+/// `var_decl: let_or_var ID | let_or_var ID COLON tipo | ...` — un índice
+/// fijo sería incorrecto para más de una alternativa a la vez).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeChildLocator {
+    Index(usize),
+    BySymbol(String),
+}
+
+/// "La producción `production` accede a un miembro del valor que precede al
+/// `dot_token`" — p.ej. `primary: primary DOT ID` (lectura) o
+/// `assign_stmt: primary DOT ID ASSIGN expr` (asignación). El walker
+/// distingue una de otra por la forma del nodo, no por configuración: si hay
+/// hijos MÁS ALLÁ del nombre del miembro, el último es el valor asignado
+/// (ver `analyzer::enter`).
+pub struct MemberAccessRule {
+    pub production: String,
+    pub dot_token: String,
+}
+
+/// "La producción `production` tiene una alternativa `new_token ID LPAREN
+/// arg_list RPAREN` que instancia una clase" — p.ej.
+/// `atom: NEW ID LPAREN arg_list RPAREN`. `class_name_index`/
+/// `arg_list_index` son los índices, entre los hijos DIRECTOS de esa
+/// alternativa, del ID (nombre de clase) y del nodo `arg_list`.
+pub struct InstantiationRule {
+    pub production: String,
+    pub new_token: String,
+    pub class_name_index: usize,
+    pub arg_list_index: usize,
+}
+
+/// "La producción `production` tiene una alternativa que INVOCA lo que
+/// precede al paréntesis de apertura" — p.ej.
+/// `primary: primary LPAREN arg_list RPAREN`, que cubre por igual una
+/// llamada a función libre (`f(1)`) y a método (`obj.m(1)`), porque el
+/// llamado es simplemente la subexpresión de la izquierda.
+///
+/// La alternativa concreta se reconoce por la FORMA, no por configuración
+/// extra: de las varias alternativas del mismo head (`primary: atom` /
+/// `primary DOT ID` / `primary LPAREN arg_list RPAREN`), solo la de llamada
+/// trae `open_paren_token` como hijo directo — mismo criterio que usa
+/// `InstantiationRule` con su `new_token`.
+pub struct CallRule {
+    pub production: String,
+    pub open_paren_token: String,
+    pub callee_index: usize,
+    pub arg_list_index: usize,
 }
 
 /// "La producción `production` declara un símbolo."
@@ -45,6 +136,17 @@ pub struct DeclarationRule {
     /// no es error. Si no existe en ningún lado, la primera asignación lo
     /// declara ahí mismo.
     pub implicit: bool,
+    /// Dónde está, entre los hijos DIRECTOS de esta producción, el nodo que
+    /// representa el TIPO declarado. `None` (default): esta declaración no
+    /// lleva tipo — el walker sigue usando `SymbolTable::declare` sin tocar
+    /// `ty`, igual que antes de que este campo existiera. `Some(locator)`:
+    /// el walker resuelve ese subárbol con `analyzer::resolve_declared_type`
+    /// (usando `SemanticSpec::type_tokens`) y declara con `declare_typed` en
+    /// su lugar, dejando `ty` poblado — incluido el caso de un nombre de
+    /// clase como tipo (`resolve_declared_type` lo resuelve a
+    /// `Type::Named`), porque el walker excluye ese hijo de la recursión
+    /// genérica vía `Flow::SkipChildIndices` (ya no se re-visita como uso).
+    pub type_child: Option<TypeChildLocator>,
 }
 
 /// "La producción `production` abre un scope nuevo mientras se recorren
@@ -81,11 +183,23 @@ impl SemanticSpec {
         let declarations = grammar
             .declare_directives
             .iter()
-            .map(|(production, kind)| DeclarationRule {
-                production: production.clone(),
-                kind: symbol_kind_from_directive(kind),
-                name_child: None,
-                implicit: false,
+            .map(|(production, kind)| {
+                // `%type_of` es por-producción, igual que `%declare`/`%scope`
+                // — si esta producción no tiene una línea `%type_of`, queda
+                // `None` (comportamiento idéntico a antes de que existiera).
+                let type_child = grammar
+                    .type_of_directives
+                    .iter()
+                    .find(|(p, _)| p == production)
+                    .map(|(_, symbol)| TypeChildLocator::BySymbol(symbol.clone()));
+
+                DeclarationRule {
+                    production: production.clone(),
+                    kind: symbol_kind_from_directive(kind),
+                    name_child: None,
+                    implicit: false,
+                    type_child,
+                }
             })
             .collect();
 
@@ -99,7 +213,45 @@ impl SemanticSpec {
             })
             .collect();
 
-        Some(SemanticSpec { identifier_token, declarations, scopes })
+        let type_tokens = grammar
+            .type_token_directives
+            .iter()
+            .map(|(token, kind)| (token.clone(), type_from_directive(kind)))
+            .collect();
+
+        let member_access = grammar
+            .member_access_directives
+            .iter()
+            .map(|(production, dot_token)| MemberAccessRule {
+                production: production.clone(),
+                dot_token: dot_token.clone(),
+            })
+            .collect();
+
+        let instantiation =
+            grammar.instantiation.clone().map(|(production, new_token, class_name_index, arg_list_index)| {
+                InstantiationRule { production, new_token, class_name_index, arg_list_index }
+            });
+
+        let call = grammar.call.clone().map(|(production, open_paren_token, callee_index, arg_list_index)| CallRule {
+            production,
+            open_paren_token,
+            callee_index,
+            arg_list_index,
+        });
+
+        Some(SemanticSpec {
+            identifier_token,
+            declarations,
+            scopes,
+            type_tokens,
+            this_token: grammar.this_token.clone(),
+            member_access,
+            instantiation,
+            call,
+            args_list_symbol: grammar.arg_list_symbol.clone(),
+            constructor_name: grammar.constructor_name.clone(),
+        })
     }
 }
 
@@ -110,6 +262,17 @@ fn symbol_kind_from_directive(kind: &str) -> SymbolKind {
         "function" => SymbolKind::Function,
         "class" => SymbolKind::Class,
         other => SymbolKind::Other(other.to_string()),
+    }
+}
+
+fn type_from_directive(kind: &str) -> Type {
+    match kind {
+        "bool" => Type::Bool,
+        "integer" => Type::Int,
+        "float" => Type::Float,
+        "string" => Type::Str,
+        "void" => Type::Void,
+        _ => Type::Unknown,
     }
 }
 
@@ -143,6 +306,14 @@ mod tests {
             ident_token: ident.map(String::from),
             declare_directives: declares.iter().map(|(p, k)| (p.to_string(), k.to_string())).collect(),
             scope_directives: scopes.iter().map(|(p, k)| (p.to_string(), k.to_string())).collect(),
+            type_of_directives: Vec::new(),
+            type_token_directives: Vec::new(),
+            this_token: None,
+            member_access_directives: Vec::new(),
+            instantiation: None,
+            call: None,
+            arg_list_symbol: None,
+            constructor_name: None,
         }
     }
 
@@ -166,6 +337,8 @@ mod tests {
         assert_eq!(func_decl.kind, SymbolKind::Function);
         assert!(!func_decl.implicit);
         assert_eq!(func_decl.name_child, None);
+        assert_eq!(func_decl.type_child, None, "el .yalp no trae directiva de tipo todavía");
+        assert!(spec.type_tokens.is_empty());
 
         let func_scope = spec.scopes.iter().find(|r| r.production == "func_decl").unwrap();
         assert_eq!(func_scope.kind, ScopeKind::Function);

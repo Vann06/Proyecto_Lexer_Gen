@@ -2,7 +2,8 @@
 (*  compiscript.yal  -  Especificacion lexica para Compiscript  *)
 (*                                                                *)
 (*  Subconjunto ejecutable derivado de Compiscript.g4 (raiz del  *)
-(*  repo, Proyecto 2): let/var/const, funciones tipadas, clases, *)
+(*  repo, Proyecto 2): let/var/const, funciones tipadas, clases  *)
+(*  con herencia/this/acceso a miembros/instanciacion (new),     *)
 (*  if/while/return/print y la jerarquia completa de expresiones *)
 (*  con precedencia (||  &&  ==/!=  </<=/>/>=  +/-  * / %  unario)*)
 (* ============================================================ *)
@@ -61,6 +62,8 @@ let kw_null     = null
 let kw_boolean  = boolean
 let kw_integer  = integer
 let kw_string   = string
+let kw_this     = this
+let kw_new      = new
 
 (* ============================================================ *)
 (*  REGLAS LEXICAS                                               *)
@@ -85,6 +88,8 @@ rule tokens =
   | kw_boolean  { "BOOL_T" }
   | kw_integer  { "INT_T" }
   | kw_string   { "STR_T" }
+  | kw_this     { "THIS" }
+  | kw_new      { "NEW" }
 
     (* 2. Identificadores *)
   | id          { "ID" }
@@ -123,6 +128,7 @@ rule tokens =
   | ';'         { "SEMI" }
   | ','         { "COMMA" }
   | ':'         { "COLON" }
+  | '.'         { "DOT" }
 
     (* 8. Blancos: ignorados silenciosamente *)
   | ws          {}

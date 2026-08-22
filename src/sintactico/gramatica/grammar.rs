@@ -95,6 +95,39 @@ pub struct Grammar {
     pub declare_directives: Vec<(String, String)>,
     /// `(producción, kind)`, uno por línea `%scope`.
     pub scope_directives: Vec<(String, String)>,
+    /// Directivas de clases/objetos (Fase 16), mismo espíritu que las de
+    /// arriba: strings tal como aparecen en el `.yalp`, sin que este módulo
+    /// sepa nada de `Type`/`SymbolKind`/etc. — `semantico::spec::SemanticSpec
+    /// ::from_grammar` las traduce.
+    ///
+    /// `(producción, símbolo del hijo que es el nodo de tipo)`, uno por línea
+    /// `%type_of` — p.ej. `%type_of var_decl tipo`.
+    pub type_of_directives: Vec<(String, String)>,
+    /// `(token terminal, nombre de tipo)`, uno por línea `%type_token` —
+    /// p.ej. `%type_token INT_T integer`.
+    pub type_token_directives: Vec<(String, String)>,
+    /// Token de `this`, de la única línea `%this` (p.ej. `%this THIS`).
+    pub this_token: Option<String>,
+    /// `(producción, token de `.`)`, una por línea `%member_access` — puede
+    /// haber varias, porque una gramática suele tener más de una producción
+    /// con acceso a miembro: la de LECTURA (`primary: primary DOT ID`) y la
+    /// de ASIGNACIÓN (`assign_stmt: primary DOT ID ASSIGN expr`).
+    pub member_access_directives: Vec<(String, String)>,
+    /// `(producción, token `new`, índice del ID de clase, índice de
+    /// `arg_list`)`, de la única línea `%new` — p.ej. `%new atom NEW 1 3`.
+    pub instantiation: Option<(String, String, usize, usize)>,
+    /// `(producción, token de paréntesis de apertura, índice del llamado,
+    /// índice de `arg_list`)`, de la única línea `%call` — p.ej.
+    /// `%call primary LPAREN 0 2` para
+    /// `primary: primary LPAREN arg_list RPAREN`.
+    pub call: Option<(String, String, usize, usize)>,
+    /// Símbolo de la producción recursiva de lista de argumentos separada
+    /// por comas (p.ej. `args` en `args: args COMMA expr | expr`), de la
+    /// única línea `%arg_list_symbol`. Lo usan tanto `%new` como `%call`.
+    pub arg_list_symbol: Option<String>,
+    /// Nombre convencional del método-constructor, de la única línea
+    /// `%constructor` (p.ej. `%constructor constructor`).
+    pub constructor_name: Option<String>,
 }
 
 impl Grammar {
@@ -173,6 +206,14 @@ impl Grammar {
             ident_token: None,
             declare_directives: Vec::new(),
             scope_directives: Vec::new(),
+            type_of_directives: Vec::new(),
+            type_token_directives: Vec::new(),
+            this_token: None,
+            member_access_directives: Vec::new(),
+            instantiation: None,
+            call: None,
+            arg_list_symbol: None,
+            constructor_name: None,
         };
 
         grammar.parse_tokens_section(sections[0]);
@@ -741,6 +782,51 @@ impl Grammar {
                 let mut parts = line[6..].split_whitespace();
                 if let (Some(production), Some(kind)) = (parts.next(), parts.next()) {
                     self.scope_directives.push((production.to_string(), kind.to_string()));
+                }
+            } else if line.starts_with("%type_of") {
+                let mut parts = line[8..].split_whitespace();
+                if let (Some(production), Some(symbol)) = (parts.next(), parts.next()) {
+                    self.type_of_directives.push((production.to_string(), symbol.to_string()));
+                }
+            } else if line.starts_with("%type_token") {
+                let mut parts = line[11..].split_whitespace();
+                if let (Some(token), Some(kind)) = (parts.next(), parts.next()) {
+                    self.type_token_directives.push((token.to_string(), kind.to_string()));
+                }
+            } else if line.starts_with("%this") {
+                if let Some(tok) = line[5..].split_whitespace().next() {
+                    self.this_token = Some(tok.to_string());
+                }
+            } else if line.starts_with("%member_access") {
+                let mut parts = line[14..].split_whitespace();
+                if let (Some(production), Some(dot_token)) = (parts.next(), parts.next()) {
+                    self.member_access_directives.push((production.to_string(), dot_token.to_string()));
+                }
+            } else if line.starts_with("%new") {
+                let mut parts = line[4..].split_whitespace();
+                if let (Some(production), Some(new_token), Some(class_idx), Some(args_idx)) =
+                    (parts.next(), parts.next(), parts.next(), parts.next())
+                {
+                    if let (Ok(class_idx), Ok(args_idx)) = (class_idx.parse::<usize>(), args_idx.parse::<usize>()) {
+                        self.instantiation = Some((production.to_string(), new_token.to_string(), class_idx, args_idx));
+                    }
+                }
+            } else if line.starts_with("%call") {
+                let mut parts = line[5..].split_whitespace();
+                if let (Some(production), Some(open_paren), Some(callee_idx), Some(args_idx)) =
+                    (parts.next(), parts.next(), parts.next(), parts.next())
+                {
+                    if let (Ok(callee_idx), Ok(args_idx)) = (callee_idx.parse::<usize>(), args_idx.parse::<usize>()) {
+                        self.call = Some((production.to_string(), open_paren.to_string(), callee_idx, args_idx));
+                    }
+                }
+            } else if line.starts_with("%arg_list_symbol") {
+                if let Some(sym) = line[16..].split_whitespace().next() {
+                    self.arg_list_symbol = Some(sym.to_string());
+                }
+            } else if line.starts_with("%constructor") {
+                if let Some(name) = line[12..].split_whitespace().next() {
+                    self.constructor_name = Some(name.to_string());
                 }
             }
         }
