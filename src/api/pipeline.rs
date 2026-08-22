@@ -184,6 +184,7 @@ pub fn build_pipeline_response_named(
                     if let Some(spec) = SemanticSpec::from_grammar(&grammar) {
                         let analysis = analyze(&tree, &spec);
                         response.symbol_table = analysis.table.dump();
+                        response.closures = analysis.closures.to_json();
                         lex_problems.extend(analysis.errors.to_problems(source_name));
                     }
                 }

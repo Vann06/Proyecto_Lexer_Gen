@@ -576,6 +576,44 @@ function SymbolTableView(){
   );
 }
 
+/* Funciones anidadas que capturan variables/parámetros de su entorno de
+   definición (D.CLOSURES, campo `closures` de /api/pipeline) — resolución de
+   nombres libres real: solo aparecen acá los nombres que NO son locales ni
+   parámetros propios de la función, y que tampoco son globales. */
+function ClosuresView(){
+  const closures = D.CLOSURES;
+  if (!closures || !closures.length) {
+    return (
+      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
+        ▍ CLOSURES
+        <span className="dim" style={{marginLeft:10}}>
+          · ninguna función anidada captura variables de su entorno
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
+        ▍ CLOSURES · {closures.length} función{closures.length===1?"":"es"} con captura
+      </div>
+      {closures.map((c, i) => (
+        <div key={i} style={{marginBottom:12}}>
+          <div style={{color:"var(--cyan)", fontWeight:600}}>{c.function}</div>
+          <div className="gen">
+            {c.captures.map((cap, j) => (
+              <div key={j}>
+                captura <span style={{color:"var(--yellow)"}}>{cap.name}</span>
+                <span className="dim"> · línea {cap.line}, col {cap.col}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ProblemsList(){
   const counts = { err:D.PROBLEMS.filter(p=>p.level==="err").length,
                    warn:D.PROBLEMS.filter(p=>p.level==="warn").length,
@@ -986,6 +1024,7 @@ function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActive
     {id:"dfa",       label:"LR(0)"},
     {id:"tree",      label:"ÁRBOL"},
     {id:"symbols",   label:"SÍMBOLOS"},
+    {id:"closures",  label:"CLOSURES", badge: D.CLOSURES.length || null},
     {id:"gen",       label:"CÓD.GEN"},
     {id:"problems",  label:"PROBLEMAS", badge: D.PROBLEMS.length},
   ];
@@ -1018,6 +1057,7 @@ function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActive
           {activeTab==="dfa"      && <LR0Graph renderKey={renderKey}/>}
           {activeTab==="tree"     && <ParseTreeView renderKey={renderKey}/>}
           {activeTab==="symbols"  && <SymbolTableView/>}
+          {activeTab==="closures" && <ClosuresView/>}
           {activeTab==="gen"      && <GeneratedCode/>}
           {activeTab==="problems" && <ProblemsList/>}
         </div>
@@ -1356,6 +1396,7 @@ function App(){
       // .yalp) los produce; el modo legado /api/parser/parse no los trae.
       D.PARSE_TREE_DOT = data.parse_tree_dot || "";
       D.SYMBOL_TABLE = data.symbol_table || "";
+      D.CLOSURES = Array.isArray(data.closures) ? data.closures : [];
       // El backend ya manda accepted/error — antes se ignoraban por completo
       // y la UI re-derivaba "aceptado" mirando si el último paso de la traza
       // era "acc", lo cual además tiraba el mensaje de error real del backend.
@@ -1387,6 +1428,7 @@ function App(){
       D.TRACE = [];
       D.PARSE_TREE_DOT = "";
       D.SYMBOL_TABLE = "";
+      D.CLOSURES = [];
       D.PARSE_ACCEPTED = null;
       D.PARSE_ERROR = msg;
       D.PROBLEMS = [{ level:"err", code:"E002", msg, loc:`pipeline ${mode.toUpperCase()}` }];

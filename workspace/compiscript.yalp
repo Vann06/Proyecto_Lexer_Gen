@@ -44,6 +44,17 @@ IGNORE COMMENT
 %scope   class_decl  class
 %scope   bloque      block
 
+/* Tipado de declaraciones (siguiente fase): records/structs definidos por el
+ * usuario reutilizan class_decl — sus campos son var_decl/const_decl/param
+ * normales, tipados con esta misma directiva. class_decl no necesita una
+ * entrada aca: se tipa solo como Type::Named(su propio nombre). */
+%type_child var_decl    tipo
+%type_child const_decl  tipo
+%type_child param       tipo
+%type_token BOOL_T boolean
+%type_token INT_T  integer
+%type_token STR_T  string
+
 %%
 
 /* ============================================================

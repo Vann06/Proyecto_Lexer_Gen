@@ -95,6 +95,21 @@ pub struct Grammar {
     pub declare_directives: Vec<(String, String)>,
     /// `(producción, kind)`, uno por línea `%scope`.
     pub scope_directives: Vec<(String, String)>,
+    /// `(producción, símbolo del hijo directo que anota su tipo)`, uno por
+    /// línea `%type_child` — p.ej. `%type_child var_decl tipo` porque
+    /// `var_decl: let_or_var ID (COLON tipo)? ...` tiene un hijo directo
+    /// `tipo` cuando la declaración trae anotación de tipo. Estructuras de
+    /// datos definidas por el usuario (records/structs): reutiliza `class_decl`
+    /// — sus campos son producciones normales (`var_decl`/`const_decl`/`param`)
+    /// con esta misma directiva, así que quedan tipados igual que cualquier
+    /// otra declaración, sin un concepto de "record" nuevo en la gramática.
+    pub type_child_directives: Vec<(String, String)>,
+    /// `(token, nombre de tipo)`, uno por línea `%type_token` — p.ej.
+    /// `%type_token INT_T integer` mapea la hoja terminal `INT_T` al tipo
+    /// primitivo `integer`. Un terminal sin entrada aquí (típicamente `ID`,
+    /// referenciando un record/clase definido por el usuario) se resuelve
+    /// como `Type::Named(lexema)` — ver `spec::SemanticSpec::resolve_type`.
+    pub type_token_directives: Vec<(String, String)>,
 }
 
 impl Grammar {
@@ -173,6 +188,8 @@ impl Grammar {
             ident_token: None,
             declare_directives: Vec::new(),
             scope_directives: Vec::new(),
+            type_child_directives: Vec::new(),
+            type_token_directives: Vec::new(),
         };
 
         grammar.parse_tokens_section(sections[0]);
@@ -741,6 +758,16 @@ impl Grammar {
                 let mut parts = line[6..].split_whitespace();
                 if let (Some(production), Some(kind)) = (parts.next(), parts.next()) {
                     self.scope_directives.push((production.to_string(), kind.to_string()));
+                }
+            } else if line.starts_with("%type_child") {
+                let mut parts = line[11..].split_whitespace();
+                if let (Some(production), Some(child)) = (parts.next(), parts.next()) {
+                    self.type_child_directives.push((production.to_string(), child.to_string()));
+                }
+            } else if line.starts_with("%type_token") {
+                let mut parts = line[11..].split_whitespace();
+                if let (Some(token), Some(type_name)) = (parts.next(), parts.next()) {
+                    self.type_token_directives.push((token.to_string(), type_name.to_string()));
                 }
             }
         }

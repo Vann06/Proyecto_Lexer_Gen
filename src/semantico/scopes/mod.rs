@@ -121,6 +121,15 @@ impl ScopeStack {
         self.scopes.iter().rev()
     }
 
+    /// Igual que `iter_innermost_first`, pero además da el índice ABSOLUTO de
+    /// cada scope en la pila (0 = Global, creciente hacia adentro) — lo que
+    /// necesita la resolución de nombres libres para closures: comparar en
+    /// qué profundidad se declaró un símbolo contra la profundidad de la
+    /// función actual, y así decidir si es una captura o un local normal.
+    pub fn iter_innermost_first_with_index(&self) -> impl Iterator<Item = (usize, &Scope)> {
+        self.scopes.iter().enumerate().rev()
+    }
+
     /// Igual que `iter_innermost_first`, mutable — para `lookup_mut`.
     pub fn iter_innermost_first_mut(&mut self) -> impl Iterator<Item = &mut Scope> {
         self.scopes.iter_mut().rev()

@@ -45,6 +45,47 @@ fn ejemplo_cps_parses_and_reports_exactly_one_undeclared_identifier() {
 }
 
 #[test]
+fn ejemplo_closures_cps_detects_the_expected_capture_and_typed_fields() {
+    let yal = read("workspace/compiscript.yal");
+    let yalp = read("workspace/compiscript.yalp");
+    let source = read("workspace/ejemplo_closures.cps");
+
+    let resp = api::build_pipeline_response_named(&yal, &yalp, &source, "lalr", "ejemplo_closures.cps")
+        .expect("el pipeline no debe fallar internamente");
+
+    assert!(resp.accepted, "ejemplo_closures.cps debe ser válido: {:?} / problems: {:#?}", resp.error, resp.problems);
+    // Sin diagnósticos semánticos: todo lo usado está declarado correctamente.
+    let sem_errors: Vec<&serde_json::Value> = resp.problems.iter().filter(|p| p["code"].as_str().unwrap_or("").starts_with('S')).collect();
+    assert!(sem_errors.is_empty(), "no debería haber errores semánticos: {sem_errors:#?}");
+
+    // "incrementar" es una función anidada dentro de "contador" que reasigna
+    // y lee "total" (declarada en el entorno de "contador", no en el suyo
+    // propio) — debe aparecer como la ÚNICA closure detectada, capturando
+    // exactamente "total" (su propio parámetro "paso" NO es una captura).
+    assert_eq!(resp.closures.len(), 1, "closures: {:#?}", resp.closures);
+    let closure = &resp.closures[0];
+    assert_eq!(closure["function"], "incrementar");
+    let captured_names: Vec<&str> = closure["captures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(captured_names, vec!["total"]);
+    // La captura trae línea/columna reales del uso que la reveló (no 0:0).
+    let first_capture = &closure["captures"][0];
+    assert!(first_capture["line"].as_u64().unwrap() > 0);
+    assert!(first_capture["col"].as_u64().unwrap() > 0);
+
+    // Records/structs definidos por el usuario (reutilizan class_decl): Punto
+    // queda tipado como Named("Punto") y sus campos x/y como Int reales.
+    assert!(resp.symbol_table.contains("Punto"), "{}", resp.symbol_table);
+    assert!(resp.symbol_table.contains("Named(\"Punto\")"), "{}", resp.symbol_table);
+    assert!(resp.symbol_table.contains("x: Variable, Int"), "{}", resp.symbol_table);
+    assert!(resp.symbol_table.contains("y: Variable, Int"), "{}", resp.symbol_table);
+}
+
+#[test]
 fn a_grammar_without_ident_directive_still_works_with_no_semantic_analysis() {
     // miniprog.yalp no trae %ident — el pipeline debe seguir funcionando
     // exactamente igual que antes de esta fase, sin tabla de símbolos ni

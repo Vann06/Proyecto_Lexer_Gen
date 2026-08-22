@@ -63,6 +63,11 @@ pub struct ParseResponse {
     /// ese mismo árbol — solo si el `.yalp` trae la directiva `%ident` (ver
     /// `semantico::spec::SemanticSpec::from_grammar`). Vacío si no.
     pub symbol_table: String,
+    /// `ClosureCollector::to_json()` del mismo análisis: `[{function,
+    /// captures:[{name,line,col}]}]` — funciones anidadas que capturan
+    /// variables/parámetros de su entorno de definición. Vacío si el .yalp no
+    /// trae `%ident` o si ninguna función anidada captura nada.
+    pub closures: Vec<Value>,
 }
 
 #[derive(Serialize)]

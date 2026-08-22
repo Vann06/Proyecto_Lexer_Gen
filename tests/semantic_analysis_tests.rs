@@ -95,6 +95,7 @@ fn miniprog_symbol_table_from_real_grammar() {
             ScopeRule { production: "func_decl".to_string(), kind: ScopeKind::Function, with_label: true },
             ScopeRule { production: "bloque".to_string(), kind: ScopeKind::Block, with_label: false },
         ],
+        ..Default::default()
     };
 
     let tree = real_parse_tree(&yal, &yalp, source);
@@ -175,6 +176,7 @@ fn classes_functions_symbol_table_from_real_grammar() {
             ScopeRule { production: "func_decl".to_string(), kind: ScopeKind::Function, with_label: true },
             ScopeRule { production: "class_decl".to_string(), kind: ScopeKind::Class, with_label: true },
         ],
+        ..Default::default()
     };
 
     let tree = real_parse_tree(&yal, &yalp, source);
@@ -232,6 +234,7 @@ fn classes_functions_reassigning_a_parameter_is_not_a_redeclaration() {
             kind: ScopeKind::Function,
             with_label: true,
         }],
+        ..Default::default()
     };
 
     let tree = real_parse_tree(&yal, &yalp, source);
@@ -279,6 +282,7 @@ fn classes_functions_class_members_are_queryable_after_the_walk() {
             ScopeRule { production: "class_decl".to_string(), kind: ScopeKind::Class, with_label: true },
             ScopeRule { production: "func_decl".to_string(), kind: ScopeKind::Function, with_label: true },
         ],
+        ..Default::default()
     };
 
     let tree = real_parse_tree(&yal, &yalp, source);

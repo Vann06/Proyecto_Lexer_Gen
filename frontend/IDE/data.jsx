@@ -128,4 +128,8 @@ window.IDE_DATA = {
   // Llenado por /api/pipeline (campo `symbol_table`) cuando el .yalp trae
   // %ident — SymbolTable::dump() del análisis semántico real.
   SYMBOL_TABLE: "",
+  // Llenado por /api/pipeline (campo `closures`): funciones anidadas que
+  // capturan variables/parámetros de su entorno de definición —
+  // [{function, captures:[{name,line,col}]}].
+  CLOSURES: [],
 };

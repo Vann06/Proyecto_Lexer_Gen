@@ -289,6 +289,17 @@ impl SymbolTable {
         })
     }
 
+    /// Igual que `lookup`, pero además da la profundidad ABSOLUTA (0 =
+    /// Global) y el `ScopeKind` del scope que lo resolvió — lo que necesita
+    /// la resolución de nombres libres para closures: un nombre encontrado
+    /// más afuera que el scope de la función actual (profundidad menor) es
+    /// candidato a variable capturada, no un local normal.
+    pub fn lookup_with_scope(&self, name: &str) -> Option<(&Symbol, usize, ScopeKind)> {
+        self.stack
+            .iter_innermost_first_with_index()
+            .find_map(|(depth, scope)| scope.get_own(name).map(|sym| (sym, depth, scope.kind())))
+    }
+
     pub fn depth(&self) -> usize {
         self.stack.depth()
     }
@@ -310,10 +321,26 @@ impl SymbolTable {
             let mut symbols: Vec<&Symbol> = scope.symbols().collect();
             symbols.sort_by(|a, b| a.name.cmp(&b.name));
             for sym in symbols {
-                out.push_str(&format!("{indent}    {}: {} @{}:{}\n", sym.name, describe(sym), sym.line, sym.col));
+                dump_symbol(&mut out, sym, &format!("{indent}    "));
             }
         }
         out
+    }
+}
+
+/// Vuelca un símbolo y, recursivamente, sus `members` (los campos de un
+/// record/clase, con una sangría extra por nivel) — sin esto, `dump()` solo
+/// mostraba `Punto: Class` y no las columnas de datos definidas por el
+/// usuario, que es justo el "tipado" que se le está dando a records/structs.
+fn dump_symbol(out: &mut String, sym: &Symbol, indent: &str) {
+    out.push_str(&format!("{indent}{}: {} @{}:{}\n", sym.name, describe(sym), sym.line, sym.col));
+    if let Some(members) = &sym.members {
+        let mut members: Vec<&Symbol> = members.iter().collect();
+        members.sort_by(|a, b| a.name.cmp(&b.name));
+        let nested_indent = format!("{indent}    ");
+        for m in members {
+            dump_symbol(out, m, &nested_indent);
+        }
     }
 }
 
@@ -498,6 +525,47 @@ mod tests {
     fn lookup_mut_on_undeclared_name_returns_none() {
         let mut t = SymbolTable::new();
         assert!(t.lookup_mut("fantasma").is_none());
+    }
+
+    #[test]
+    fn dump_recurses_into_members_with_extra_indent() {
+        let mut t = SymbolTable::new();
+        t.declare("Punto", SymbolKind::Class, 1, 1).unwrap();
+        let sym = t.lookup_mut("Punto").unwrap();
+        sym.ty = Some(Type::Named("Punto".to_string()));
+        let mut x = Symbol {
+            name: "x".to_string(), kind: SymbolKind::Variable, line: 2, col: 3,
+            ty: Some(Type::Int), mutable: true, initialized: false, used: false,
+            signature: None, storage: None, members: None,
+        };
+        x.ty = Some(Type::Int);
+        sym.members = Some(vec![x]);
+
+        let dump = t.dump();
+        assert!(dump.contains("Punto: Class, Named(\"Punto\") @1:1"));
+        // El campo "x" aparece MÁS indentado que "Punto", como hijo suyo.
+        assert!(dump.contains("        x: Variable, Int @2:3"));
+    }
+
+    #[test]
+    fn lookup_with_scope_reports_absolute_depth_and_kind() {
+        let mut t = SymbolTable::new();
+        t.declare("g", SymbolKind::Variable, 1, 1).unwrap(); // depth 0, Global
+        t.enter_scope(ScopeKind::Function);
+        t.declare("p", SymbolKind::Parameter, 2, 1).unwrap(); // depth 1, Function
+        t.enter_scope(ScopeKind::Block);
+        t.declare("l", SymbolKind::Variable, 3, 1).unwrap(); // depth 2, Block
+
+        let (sym, depth, kind) = t.lookup_with_scope("g").unwrap();
+        assert_eq!((sym.name.as_str(), depth, kind), ("g", 0, ScopeKind::Global));
+
+        let (sym, depth, kind) = t.lookup_with_scope("p").unwrap();
+        assert_eq!((sym.name.as_str(), depth, kind), ("p", 1, ScopeKind::Function));
+
+        let (sym, depth, kind) = t.lookup_with_scope("l").unwrap();
+        assert_eq!((sym.name.as_str(), depth, kind), ("l", 2, ScopeKind::Block));
+
+        assert!(t.lookup_with_scope("fantasma").is_none());
     }
 
     #[test]
