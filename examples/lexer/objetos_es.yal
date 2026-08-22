@@ -1,0 +1,86 @@
+(* ============================================================ *)
+(*  objetos_es.yal  -  Lexico de un lenguaje de objetos con      *)
+(*  nombres DELIBERADAMENTE distintos a los de compiscript.yal.  *)
+(*                                                                *)
+(*  Existe para demostrar empiricamente que el analizador         *)
+(*  semantico (src/semantico) es agnostico a la gramatica: aca    *)
+(*  no hay ningun THIS, DOT, NEW, CLASS ni FUNCTION — son         *)
+(*  PROPIO, PUNTO, CREAR, OBJETO y METODO — y el mismo            *)
+(*  analyze() resuelve miembros, herencia y constructor igual,    *)
+(*  sin una sola linea de Rust distinta. Ver                      *)
+(*  tests/gramatica_agnostica_tests.rs.                           *)
+(* ============================================================ *)
+
+(* --- Caracteres base --- *)
+let digit  = ['0'-'9']
+let lower  = ['a'-'z']
+let upper  = ['A'-'Z']
+let letter = lower | upper
+let alnum  = letter | digit
+
+(* --- Blancos --- *)
+let ws = [' ''\t''\n''\r']+
+
+(* --- Identificadores --- *)
+let id = (letter | '_')(alnum | '_')*
+
+(* --- Literales (mismo cuidado que compiscript.yal: el nombre de la
+   macro no debe chocar con el texto literal de una palabra reservada) --- *)
+let num_lit = digit+
+let txt_safe = alnum | [' ''.''!''?'','':'';''-''_']
+let txt_lit  = '"' txt_safe* '"'
+
+(* --- Comentario de una linea: inicia con # --- *)
+let cmt_char = alnum | [' ''.''!''?'','':'';''_''=''-']
+let comentario = '#' cmt_char*
+
+(* --- Palabras reservadas: en espanol, ninguna coincide con las de
+   compiscript --- *)
+let kw_objeto  = objeto
+let kw_metodo  = metodo
+let kw_propio  = propio
+let kw_crear   = crear
+let kw_retorna = retorna
+let kw_imprime = imprime
+let kw_entero  = entero
+let kw_texto   = texto
+
+(* ============================================================ *)
+(*  REGLAS LEXICAS                                               *)
+(*  Prioridad: keywords > id > literales > delimitadores         *)
+(* ============================================================ *)
+rule tokens =
+    (* 1. Palabras reservadas - deben ir ANTES que id *)
+    kw_objeto   { "OBJETO" }
+  | kw_metodo   { "METODO" }
+  | kw_propio   { "PROPIO" }
+  | kw_crear    { "CREAR" }
+  | kw_retorna  { "RETORNA" }
+  | kw_imprime  { "IMPRIME" }
+  | kw_entero   { "ENTERO_T" }
+  | kw_texto    { "TEXTO_T" }
+
+    (* 2. Identificadores *)
+  | id          { "IDENT" }
+
+    (* 3. Literales *)
+  | num_lit     { "NUM_LIT" }
+  | txt_lit     { "TXT_LIT" }
+
+    (* 4. Comentarios *)
+  | comentario  { "COMENTARIO" }
+
+    (* 5. Operadores y delimitadores *)
+  | '='         { "IGUAL" }
+  | '+'         { "MAS" }
+  | '('         { "PAR_A" }
+  | ')'         { "PAR_C" }
+  | '{'         { "LLAVE_A" }
+  | '}'         { "LLAVE_C" }
+  | ';'         { "PUNTOYCOMA" }
+  | ','         { "COMA" }
+  | ':'         { "DOSPUNTOS" }
+  | '.'         { "PUNTO" }
+
+    (* 6. Blancos: ignorados silenciosamente *)
+  | ws          {}

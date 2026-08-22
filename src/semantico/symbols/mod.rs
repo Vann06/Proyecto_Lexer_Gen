@@ -78,6 +78,11 @@ pub struct Symbol {
     /// cuelga directo del scope de la función misma (ver el comentario en
     /// `analyzer::walk` sobre por qué).
     pub members: Option<Vec<Symbol>>,
+    /// Nombre de la clase padre, solo para símbolos `SymbolKind::Class` con
+    /// herencia (`class Hijo : Padre { ... }`). `None` para cualquier otro
+    /// símbolo, y para una clase sin `: Padre`. La resolución de miembros
+    /// heredados (`classes::resolve_member`) sube por esta cadena.
+    pub parent: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -118,6 +123,75 @@ pub enum SemanticError {
         name: String,
         expected: Type,
         found: Type,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("la clase '{name}' no está declarada")]
+    UnknownClass { name: String, line: usize, col: usize },
+
+    #[error("la clase padre '{parent}' de '{class}' no está declarada")]
+    UnknownParentClass {
+        class: String,
+        parent: String,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("'this' solo puede usarse dentro de un método de clase")]
+    ThisOutsideClass { line: usize, col: usize },
+
+    #[error("'{name}' no es un miembro de la clase '{class_name}'")]
+    UnknownMember {
+        class_name: String,
+        name: String,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("el constructor de '{class_name}' espera {expected} argumento(s), se encontraron {found}")]
+    ConstructorArityMismatch {
+        class_name: String,
+        expected: usize,
+        found: usize,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("argumento {index} del constructor de '{class_name}': se esperaba {expected}, se encontró {found}")]
+    ConstructorArgTypeMismatch {
+        class_name: String,
+        index: usize,
+        expected: Type,
+        found: Type,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("'{callee}' espera {expected} argumento(s), se encontraron {found}")]
+    CallArityMismatch {
+        callee: String,
+        expected: usize,
+        found: usize,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("argumento {index} de '{callee}': se esperaba {expected}, se encontró {found}")]
+    CallArgTypeMismatch {
+        callee: String,
+        index: usize,
+        expected: Type,
+        found: Type,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("el operador '{operator}' no acepta operandos {left} y {right}")]
+    InvalidArithmetic {
+        operator: String,
+        left: Type,
+        right: Type,
         line: usize,
         col: usize,
     },
@@ -190,6 +264,7 @@ impl SymbolTable {
             signature: None,
             storage: None,
             members: None,
+            parent: None,
         });
         Ok(())
     }
@@ -197,17 +272,28 @@ impl SymbolTable {
     /// Declara un símbolo con tipo y mutabilidad conocidos. Una constante
     /// siempre debe incluir inicializador, y el inicializador se valida con
     /// la misma tabla de coerciones usada por `assign`.
+    ///
+    /// `has_initializer` y `initializer_type` son dos cosas DISTINTAS a
+    /// propósito: la primera dice si la fuente traía un `= expr`, la segunda
+    /// de qué tipo es ese valor. Un inicializador presente pero de tipo no
+    /// resoluble (una expresión compuesta que el analizador todavía no sabe
+    /// tipar) es `(true, None)`: satisface el requisito de inicialización de
+    /// una constante, pero no se compara contra nada. Colapsar ambos en un
+    /// solo `Option` haría que ese caso reportara un
+    /// `ConstRequiresInitializer` falso.
+    #[allow(clippy::too_many_arguments)]
     pub fn declare_typed(
         &mut self,
         name: &str,
         kind: SymbolKind,
         ty: Type,
         mutable: bool,
+        has_initializer: bool,
         initializer_type: Option<Type>,
         line: usize,
         col: usize,
     ) -> Result<(), SemanticError> {
-        if !mutable && initializer_type.is_none() {
+        if !mutable && !has_initializer {
             return Err(SemanticError::ConstRequiresInitializer {
                 name: name.to_string(),
                 line,
@@ -230,18 +316,27 @@ impl SymbolTable {
             .expect("el símbolo acaba de declararse");
         symbol.ty = Some(ty);
         symbol.mutable = mutable;
-        symbol.initialized = initializer_type.is_some();
+        symbol.initialized = has_initializer;
         Ok(())
     }
 
-    /// Verifica y registra una asignación contra el tipo declarado.
+    /// Verifica y registra una asignación: que el destino exista, que sea
+    /// mutable, y que el valor sea compatible con su tipo declarado.
+    ///
+    /// `value_type` es `Option` porque el analizador no siempre puede tipar
+    /// la expresión de la derecha (una composición que todavía no sabe
+    /// resolver). En ese caso se validan igual la existencia y la
+    /// mutabilidad —que no dependen del valor— y se omite solo la
+    /// comparación de tipos, devolviendo `None` en vez de una `Coercion`.
+    /// El símbolo queda marcado como inicializado en cualquiera de los dos
+    /// casos: se le asignó algo, sepamos o no de qué tipo.
     pub fn assign(
         &mut self,
         name: &str,
-        value_type: &Type,
+        value_type: Option<&Type>,
         line: usize,
         col: usize,
-    ) -> Result<Coercion, SemanticError> {
+    ) -> Result<Option<Coercion>, SemanticError> {
         let symbol = self.lookup_or_err(name, line, col)?;
         if !symbol.mutable {
             return Err(SemanticError::AssignmentToConst {
@@ -251,15 +346,18 @@ impl SymbolTable {
             });
         }
         let expected = symbol.ty.clone().unwrap_or(Type::Unknown);
-        let coercion = resolve_assignment(&expected, value_type).map_err(|_| {
-            SemanticError::AssignmentTypeMismatch {
-                name: name.to_string(),
-                expected: expected.clone(),
-                found: value_type.clone(),
-                line,
-                col,
-            }
-        })?;
+        let coercion = match value_type {
+            Some(found) => Some(resolve_assignment(&expected, found).map_err(|_| {
+                SemanticError::AssignmentTypeMismatch {
+                    name: name.to_string(),
+                    expected: expected.clone(),
+                    found: found.clone(),
+                    line,
+                    col,
+                }
+            })?),
+            None => None,
+        };
         self.lookup_mut(name)
             .expect("el símbolo ya fue encontrado")
             .initialized = true;
@@ -306,6 +404,30 @@ impl SymbolTable {
 
     pub fn current_scope_kind(&self) -> ScopeKind {
         self.stack.current().kind()
+    }
+
+    /// Etiqueta del scope actual (p.ej. el nombre de la clase, si el scope
+    /// actual es un `Class` o `Function` con nombre) — la necesita el walker
+    /// para saber en qué clase está parado antes de auto-declarar `this` al
+    /// abrir el scope de un método.
+    pub fn current_scope_label(&self) -> Option<&str> {
+        self.stack.current().label()
+    }
+
+    /// Busca `name` SOLO entre los símbolos declarados directamente en el
+    /// scope `Class` más cercano — sin mirar los scopes intermedios
+    /// (Function/Block) ni seguir subiendo más allá de esa clase. La usa
+    /// `classes::resolve_member` para el auto-acceso a un miembro de la
+    /// propia clase MIENTRAS esa clase todavía se está recorriendo (su
+    /// scope sigue abierto, `Symbol.members` todavía no existe) —
+    /// deliberadamente más restringido que `lookup()`, para no confundir un
+    /// nombre visible en un scope exterior (una función global, por
+    /// ejemplo) con un miembro real de la clase.
+    pub fn lookup_in_enclosing_class(&self, name: &str) -> Option<&Symbol> {
+        self.stack
+            .iter_innermost_first()
+            .find(|scope| scope.kind() == ScopeKind::Class)
+            .and_then(|scope| scope.get_own(name))
     }
 
     /// Vuelca el estado completo de la tabla, un bloque por entorno activo,
@@ -536,7 +658,7 @@ mod tests {
         let mut x = Symbol {
             name: "x".to_string(), kind: SymbolKind::Variable, line: 2, col: 3,
             ty: Some(Type::Int), mutable: true, initialized: false, used: false,
-            signature: None, storage: None, members: None,
+            signature: None, storage: None, members: None, parent: None,
         };
         x.ty = Some(Type::Int);
         sym.members = Some(vec![x]);
@@ -585,6 +707,7 @@ mod tests {
                 signature: None,
                 storage: None,
                 members: None,
+                parent: None,
             }),
             "Variable"
         );
@@ -601,6 +724,7 @@ mod tests {
                 signature: None,
                 storage: None,
                 members: None,
+                parent: None,
             }),
             "Variable, Int, const, usado"
         );

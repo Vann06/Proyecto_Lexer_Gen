@@ -74,10 +74,12 @@ impl Diagnostic {
     }
 }
 
-/// Mapea cada variante de `SemanticError` a su categoría y código. `S001..S006`,
-/// en el mismo orden en que las variantes aparecen declaradas en
-/// `symbols::SemanticError` — un código por variante, estable mientras no se
-/// reordene el enum de origen.
+/// Mapea cada variante de `SemanticError` a su categoría y código. `S001..S006`
+/// son de ámbito/tipos (Fase 15); `S007..S012` son de clases/objetos
+/// (`ErrorKind::Clases`); `S013..S014` son de invocación —a un método o a una
+/// función libre— (`ErrorKind::Funciones`). El mapeo es por `match` explícito,
+/// no por posición del enum, así que agregar variantes al final nunca reordena
+/// un código ya asignado.
 impl From<&SemanticError> for Diagnostic {
     fn from(err: &SemanticError) -> Self {
         let message = err.to_string();
@@ -92,6 +94,15 @@ impl From<&SemanticError> for Diagnostic {
             SemanticError::AssignmentTypeMismatch { line, col, .. } => {
                 (ErrorKind::Tipos, "S006", *line, *col)
             }
+            SemanticError::UnknownClass { line, col, .. } => (ErrorKind::Clases, "S007", *line, *col),
+            SemanticError::UnknownParentClass { line, col, .. } => (ErrorKind::Clases, "S008", *line, *col),
+            SemanticError::ThisOutsideClass { line, col } => (ErrorKind::Clases, "S009", *line, *col),
+            SemanticError::UnknownMember { line, col, .. } => (ErrorKind::Clases, "S010", *line, *col),
+            SemanticError::ConstructorArityMismatch { line, col, .. } => (ErrorKind::Clases, "S011", *line, *col),
+            SemanticError::ConstructorArgTypeMismatch { line, col, .. } => (ErrorKind::Clases, "S012", *line, *col),
+            SemanticError::CallArityMismatch { line, col, .. } => (ErrorKind::Funciones, "S013", *line, *col),
+            SemanticError::CallArgTypeMismatch { line, col, .. } => (ErrorKind::Funciones, "S014", *line, *col),
+            SemanticError::InvalidArithmetic { line, col, .. } => (ErrorKind::Tipos, "S015", *line, *col),
         };
         Diagnostic { kind, code: code.to_string(), message, line, col, severity: Severity::Error }
     }

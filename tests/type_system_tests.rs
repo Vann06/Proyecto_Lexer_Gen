@@ -134,6 +134,7 @@ fn typed_declaration_and_assignment_use_the_declared_type() {
             SymbolKind::Variable,
             Type::Float,
             true,
+            false,
             None,
             1,
             1,
@@ -142,8 +143,8 @@ fn typed_declaration_and_assignment_use_the_declared_type() {
 
     assert!(!table.lookup("promedio").unwrap().initialized);
     assert_eq!(
-        table.assign("promedio", &Type::Int, 2, 1),
-        Ok(Coercion::IntToFloat)
+        table.assign("promedio", Some(&Type::Int), 2, 1),
+        Ok(Some(Coercion::IntToFloat))
     );
     let symbol = table.lookup("promedio").unwrap();
     assert_eq!(symbol.ty, Some(Type::Float));
@@ -159,6 +160,7 @@ fn incompatible_assignment_is_rejected_without_marking_initialized() {
             SymbolKind::Variable,
             Type::Int,
             true,
+            false,
             None,
             1,
             1,
@@ -166,7 +168,7 @@ fn incompatible_assignment_is_rejected_without_marking_initialized() {
         .unwrap();
 
     assert_eq!(
-        table.assign("cantidad", &Type::Float, 3, 7),
+        table.assign("cantidad", Some(&Type::Float), 3, 7),
         Err(SemanticError::AssignmentTypeMismatch {
             name: "cantidad".to_string(),
             expected: Type::Int,
@@ -188,6 +190,7 @@ fn const_requires_a_compatible_initializer_and_cannot_be_reassigned() {
             SymbolKind::Variable,
             Type::Int,
             false,
+            false,
             None,
             4,
             3,
@@ -206,6 +209,7 @@ fn const_requires_a_compatible_initializer_and_cannot_be_reassigned() {
             SymbolKind::Variable,
             Type::Int,
             false,
+            true,
             Some(Type::Float),
             5,
             3,
@@ -220,6 +224,7 @@ fn const_requires_a_compatible_initializer_and_cannot_be_reassigned() {
             SymbolKind::Variable,
             Type::Float,
             false,
+            true,
             Some(Type::Int),
             6,
             3,
@@ -231,7 +236,7 @@ fn const_requires_a_compatible_initializer_and_cannot_be_reassigned() {
     assert_eq!(constant.ty, Some(Type::Float));
 
     assert_eq!(
-        table.assign("PI_APROX", &Type::Float, 7, 3),
+        table.assign("PI_APROX", Some(&Type::Float), 7, 3),
         Err(SemanticError::AssignmentToConst {
             name: "PI_APROX".to_string(),
             line: 7,

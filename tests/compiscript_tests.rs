@@ -77,10 +77,11 @@ fn ejemplo_closures_cps_detects_the_expected_capture_and_typed_fields() {
     assert!(first_capture["line"].as_u64().unwrap() > 0);
     assert!(first_capture["col"].as_u64().unwrap() > 0);
 
-    // Records/structs definidos por el usuario (reutilizan class_decl): Punto
-    // queda tipado como Named("Punto") y sus campos x/y como Int reales.
-    assert!(resp.symbol_table.contains("Punto"), "{}", resp.symbol_table);
-    assert!(resp.symbol_table.contains("Named(\"Punto\")"), "{}", resp.symbol_table);
+    // Records/structs definidos por el usuario (reutilizan class_decl):
+    // Punto se declara como Class y sus campos x/y quedan tipados como Int
+    // reales (no solo declarados) vía la misma directiva %type_of que
+    // cualquier otra declaración.
+    assert!(resp.symbol_table.contains("Punto: Class"), "{}", resp.symbol_table);
     assert!(resp.symbol_table.contains("x: Variable, Int"), "{}", resp.symbol_table);
     assert!(resp.symbol_table.contains("y: Variable, Int"), "{}", resp.symbol_table);
 }

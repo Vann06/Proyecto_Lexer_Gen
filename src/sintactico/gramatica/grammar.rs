@@ -95,21 +95,56 @@ pub struct Grammar {
     pub declare_directives: Vec<(String, String)>,
     /// `(producción, kind)`, uno por línea `%scope`.
     pub scope_directives: Vec<(String, String)>,
-    /// `(producción, símbolo del hijo directo que anota su tipo)`, uno por
-    /// línea `%type_child` — p.ej. `%type_child var_decl tipo` porque
-    /// `var_decl: let_or_var ID (COLON tipo)? ...` tiene un hijo directo
-    /// `tipo` cuando la declaración trae anotación de tipo. Estructuras de
-    /// datos definidas por el usuario (records/structs): reutiliza `class_decl`
-    /// — sus campos son producciones normales (`var_decl`/`const_decl`/`param`)
-    /// con esta misma directiva, así que quedan tipados igual que cualquier
-    /// otra declaración, sin un concepto de "record" nuevo en la gramática.
-    pub type_child_directives: Vec<(String, String)>,
-    /// `(token, nombre de tipo)`, uno por línea `%type_token` — p.ej.
-    /// `%type_token INT_T integer` mapea la hoja terminal `INT_T` al tipo
-    /// primitivo `integer`. Un terminal sin entrada aquí (típicamente `ID`,
-    /// referenciando un record/clase definido por el usuario) se resuelve
-    /// como `Type::Named(lexema)` — ver `spec::SemanticSpec::resolve_type`.
+    /// Directivas de clases/objetos (Fase 16), mismo espíritu que las de
+    /// arriba: strings tal como aparecen en el `.yalp`, sin que este módulo
+    /// sepa nada de `Type`/`SymbolKind`/etc. — `semantico::spec::SemanticSpec
+    /// ::from_grammar` las traduce.
+    ///
+    /// `(producción, símbolo del hijo que es el nodo de tipo)`, uno por línea
+    /// `%type_of` — p.ej. `%type_of var_decl tipo`. Es lo que le da tipado
+    /// real a records/structs definidos por el usuario: reutilizan
+    /// `class_decl`, y sus campos son `var_decl`/`const_decl`/`param`
+    /// normales tipados con esta misma directiva — sin un concepto de
+    /// "record" nuevo en la gramática.
+    pub type_of_directives: Vec<(String, String)>,
+    /// `(token terminal, nombre de tipo)`, uno por línea `%type_token` —
+    /// p.ej. `%type_token INT_T integer`.
     pub type_token_directives: Vec<(String, String)>,
+    /// `(producción, símbolo del hijo que es la expresión inicializadora)`,
+    /// uno por línea `%init_of` — p.ej. `%init_of var_decl expr`.
+    pub init_of_directives: Vec<(String, String)>,
+    /// Producciones cuyas declaraciones son CONSTANTES (inmutables), una por
+    /// línea `%immutable` — p.ej. `%immutable const_decl`.
+    pub immutable_directives: Vec<String>,
+    /// `(producción, índice del destino, índice del valor)`, de la única
+    /// línea `%assign` — p.ej. `%assign assign_stmt 0 2` para
+    /// `assign_stmt: ID ASSIGN expr`.
+    pub assign: Option<(String, usize, usize)>,
+    /// `(token del operador, nombre de la operación)`, uno por línea
+    /// `%arith` — p.ej. `%arith PLUS add`.
+    pub arith_directives: Vec<(String, String)>,
+    /// Token de `this`, de la única línea `%this` (p.ej. `%this THIS`).
+    pub this_token: Option<String>,
+    /// `(producción, token de `.`)`, una por línea `%member_access` — puede
+    /// haber varias, porque una gramática suele tener más de una producción
+    /// con acceso a miembro: la de LECTURA (`primary: primary DOT ID`) y la
+    /// de ASIGNACIÓN (`assign_stmt: primary DOT ID ASSIGN expr`).
+    pub member_access_directives: Vec<(String, String)>,
+    /// `(producción, token `new`, índice del ID de clase, índice de
+    /// `arg_list`)`, de la única línea `%new` — p.ej. `%new atom NEW 1 3`.
+    pub instantiation: Option<(String, String, usize, usize)>,
+    /// `(producción, token de paréntesis de apertura, índice del llamado,
+    /// índice de `arg_list`)`, de la única línea `%call` — p.ej.
+    /// `%call primary LPAREN 0 2` para
+    /// `primary: primary LPAREN arg_list RPAREN`.
+    pub call: Option<(String, String, usize, usize)>,
+    /// Símbolo de la producción recursiva de lista de argumentos separada
+    /// por comas (p.ej. `args` en `args: args COMMA expr | expr`), de la
+    /// única línea `%arg_list_symbol`. Lo usan tanto `%new` como `%call`.
+    pub arg_list_symbol: Option<String>,
+    /// Nombre convencional del método-constructor, de la única línea
+    /// `%constructor` (p.ej. `%constructor constructor`).
+    pub constructor_name: Option<String>,
 }
 
 impl Grammar {
@@ -188,8 +223,18 @@ impl Grammar {
             ident_token: None,
             declare_directives: Vec::new(),
             scope_directives: Vec::new(),
-            type_child_directives: Vec::new(),
+            type_of_directives: Vec::new(),
             type_token_directives: Vec::new(),
+            init_of_directives: Vec::new(),
+            immutable_directives: Vec::new(),
+            assign: None,
+            arith_directives: Vec::new(),
+            this_token: None,
+            member_access_directives: Vec::new(),
+            instantiation: None,
+            call: None,
+            arg_list_symbol: None,
+            constructor_name: None,
         };
 
         grammar.parse_tokens_section(sections[0]);
@@ -759,15 +804,71 @@ impl Grammar {
                 if let (Some(production), Some(kind)) = (parts.next(), parts.next()) {
                     self.scope_directives.push((production.to_string(), kind.to_string()));
                 }
-            } else if line.starts_with("%type_child") {
-                let mut parts = line[11..].split_whitespace();
-                if let (Some(production), Some(child)) = (parts.next(), parts.next()) {
-                    self.type_child_directives.push((production.to_string(), child.to_string()));
+            } else if line.starts_with("%type_of") {
+                let mut parts = line[8..].split_whitespace();
+                if let (Some(production), Some(symbol)) = (parts.next(), parts.next()) {
+                    self.type_of_directives.push((production.to_string(), symbol.to_string()));
                 }
             } else if line.starts_with("%type_token") {
                 let mut parts = line[11..].split_whitespace();
-                if let (Some(token), Some(type_name)) = (parts.next(), parts.next()) {
-                    self.type_token_directives.push((token.to_string(), type_name.to_string()));
+                if let (Some(token), Some(kind)) = (parts.next(), parts.next()) {
+                    self.type_token_directives.push((token.to_string(), kind.to_string()));
+                }
+            } else if line.starts_with("%this") {
+                if let Some(tok) = line[5..].split_whitespace().next() {
+                    self.this_token = Some(tok.to_string());
+                }
+            } else if line.starts_with("%member_access") {
+                let mut parts = line[14..].split_whitespace();
+                if let (Some(production), Some(dot_token)) = (parts.next(), parts.next()) {
+                    self.member_access_directives.push((production.to_string(), dot_token.to_string()));
+                }
+            } else if line.starts_with("%new") {
+                let mut parts = line[4..].split_whitespace();
+                if let (Some(production), Some(new_token), Some(class_idx), Some(args_idx)) =
+                    (parts.next(), parts.next(), parts.next(), parts.next())
+                {
+                    if let (Ok(class_idx), Ok(args_idx)) = (class_idx.parse::<usize>(), args_idx.parse::<usize>()) {
+                        self.instantiation = Some((production.to_string(), new_token.to_string(), class_idx, args_idx));
+                    }
+                }
+            } else if line.starts_with("%init_of") {
+                let mut parts = line[8..].split_whitespace();
+                if let (Some(production), Some(symbol)) = (parts.next(), parts.next()) {
+                    self.init_of_directives.push((production.to_string(), symbol.to_string()));
+                }
+            } else if line.starts_with("%immutable") {
+                if let Some(production) = line[10..].split_whitespace().next() {
+                    self.immutable_directives.push(production.to_string());
+                }
+            } else if line.starts_with("%assign") {
+                let mut parts = line[7..].split_whitespace();
+                if let (Some(production), Some(target), Some(value)) = (parts.next(), parts.next(), parts.next()) {
+                    if let (Ok(target), Ok(value)) = (target.parse::<usize>(), value.parse::<usize>()) {
+                        self.assign = Some((production.to_string(), target, value));
+                    }
+                }
+            } else if line.starts_with("%arith") {
+                let mut parts = line[6..].split_whitespace();
+                if let (Some(token), Some(op)) = (parts.next(), parts.next()) {
+                    self.arith_directives.push((token.to_string(), op.to_string()));
+                }
+            } else if line.starts_with("%call") {
+                let mut parts = line[5..].split_whitespace();
+                if let (Some(production), Some(open_paren), Some(callee_idx), Some(args_idx)) =
+                    (parts.next(), parts.next(), parts.next(), parts.next())
+                {
+                    if let (Ok(callee_idx), Ok(args_idx)) = (callee_idx.parse::<usize>(), args_idx.parse::<usize>()) {
+                        self.call = Some((production.to_string(), open_paren.to_string(), callee_idx, args_idx));
+                    }
+                }
+            } else if line.starts_with("%arg_list_symbol") {
+                if let Some(sym) = line[16..].split_whitespace().next() {
+                    self.arg_list_symbol = Some(sym.to_string());
+                }
+            } else if line.starts_with("%constructor") {
+                if let Some(name) = line[12..].split_whitespace().next() {
+                    self.constructor_name = Some(name.to_string());
                 }
             }
         }
