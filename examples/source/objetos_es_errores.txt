@@ -41,3 +41,20 @@ entera: entero = 1;
 entera = "tampoco";
 cadena: texto = "x";
 imprime(entera + cadena);
+
+# Retornos: tipo incompatible, retorno vacio en metodo tipado, valor
+# retornado desde un procedimiento, y un retorna fuera de todo metodo.
+metodo malRetorno(): entero { retorna "no soy entero"; }
+metodo sinValor(): entero { retorna; }
+metodo procedimiento() { retorna 5; }
+retorna 1;
+
+# Aridad de una llamada recursiva.
+metodo fact(n: entero): entero { retorna fact(1, 2, 3); }
+
+# Registro: campo inexistente, tipo de campo, campo faltante y repetido.
+registro Punto { x: entero; y: entero; }
+malCampo: Punto = Punto { z: 1, x: 2, y: 3 };
+malTipo: Punto = Punto { x: "no soy entero", y: 2 };
+incompleto: Punto = Punto { x: 1 };
+repetido: Punto = Punto { x: 1, x: 2, y: 3 };

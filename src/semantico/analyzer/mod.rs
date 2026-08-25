@@ -13,6 +13,7 @@
 use crate::semantico::classes;
 use crate::semantico::closures::ClosureCollector;
 use crate::semantico::errors::ErrorCollector;
+use crate::semantico::functions::FunctionContext;
 use crate::semantico::scopes::ScopeKind;
 use crate::semantico::spec::{SemanticSpec, ChildLocator};
 use crate::semantico::symbols::{SemanticError, Signature, SymbolKind, SymbolTable};
@@ -76,13 +77,29 @@ struct Analyzer<'a> {
     /// MENOR (pero no Global) es una variable libre que esa función captura
     /// de su entorno de definición.
     function_stack: Vec<(usize, String)>,
-    /// TODOS los nombres de clase declarados en cualquier punto del archivo.
-    /// A diferencia de la tabla de símbolos, este set nunca se vacía cuando
-    /// un scope se cierra — ver `report_unknown_named_types`.
-    declared_class_names: HashSet<String>,
+    /// TODOS los nombres de tipo declarados por el usuario —clases y
+    /// structs— en cualquier punto del archivo. A diferencia de la tabla de
+    /// símbolos, este set nunca se vacía cuando un scope se cierra — ver
+    /// `report_unknown_named_types`.
+    declared_type_names: HashSet<String>,
     /// Cada `Type::Named` que apareció como anotación de tipo, con su
     /// posición, para validarlo al terminar el recorrido.
     pending_named_types: Vec<(String, usize, usize)>,
+    /// `(clase, padre declarado, línea, columna)` de cada `class Hija : Padre`,
+    /// para validar al final que el padre exista. Se difiere por el mismo
+    /// motivo que `pending_named_types`: la clase padre puede declararse más
+    /// abajo en el archivo que la hija.
+    pending_parents: Vec<(String, String, usize, usize)>,
+    /// Pila de funciones activas con su TIPO DE RETORNO declarado, para
+    /// validar cada `return` contra la función que lo contiene.
+    ///
+    /// Va en lockstep con `function_stack` —se empuja y se saca en los mismos
+    /// dos puntos— pero se mantiene aparte a propósito: `function_stack`
+    /// guarda `(profundidad, nombre)` y solo le sirve a la detección de
+    /// capturas, mientras que esto guarda `(nombre, tipo de retorno)` y solo
+    /// le sirve a la validación de retornos. Fusionarlas ataría dos reglas
+    /// que no tienen nada que ver.
+    fn_context: FunctionContext,
 }
 
 impl<'a> Analyzer<'a> {
@@ -94,8 +111,10 @@ impl<'a> Analyzer<'a> {
             closures: ClosureCollector::new(),
             frames: Vec::new(),
             function_stack: Vec::new(),
-            declared_class_names: HashSet::new(),
+            declared_type_names: HashSet::new(),
             pending_named_types: Vec::new(),
+            pending_parents: Vec::new(),
+            fn_context: FunctionContext::new(),
         }
     }
 
@@ -105,7 +124,7 @@ impl<'a> Analyzer<'a> {
     /// clase puede aparecer más abajo en el archivo que su primer uso como
     /// tipo.
     ///
-    /// Se contrasta contra `declared_class_names` (acumulado, nunca vaciado)
+    /// Se contrasta contra `declared_type_names` (acumulado, nunca vaciado)
     /// y no contra la tabla de símbolos, porque al terminar el walk todos los
     /// scopes están cerrados: una clase declarada dentro de un bloque ya no
     /// sería visible ahí y daría un FALSO POSITIVO. El set acumulado solo
@@ -116,9 +135,23 @@ impl<'a> Analyzer<'a> {
     /// de tipo necesitaría distinguirlos antes de usar esta validación.
     fn report_unknown_named_types(&mut self) {
         for (name, line, col) in &self.pending_named_types {
-            if !self.declared_class_names.contains(name) {
+            if !self.declared_type_names.contains(name) {
                 self.errors.push_semantic(&SemanticError::UnknownClass {
                     name: name.clone(),
+                    line: *line,
+                    col: *col,
+                });
+            }
+        }
+
+        // Misma pasada diferida, mensaje propio: heredar de algo inexistente
+        // no es lo mismo que anotar un tipo inexistente, y el error nombra a
+        // las DOS clases para que se vea de dónde salió.
+        for (class, parent, line, col) in &self.pending_parents {
+            if !self.declared_type_names.contains(parent) {
+                self.errors.push_semantic(&SemanticError::UnknownParentClass {
+                    class: class.clone(),
+                    parent: parent.clone(),
                     line: *line,
                     col: *col,
                 });
@@ -136,7 +169,7 @@ impl<'a> Visitor for Analyzer<'a> {
         if node.children.is_empty() && node.symbol == self.spec.identifier_token {
             let name = node.lexeme.as_deref().unwrap_or(&node.symbol);
             match self.table.lookup_with_scope(name) {
-                Some((sym, def_depth, _def_kind)) => {
+                Some((sym, def_depth, def_kind)) => {
                     // Resolución de nombres libres: si hay una función activa
                     // (el tope de function_stack) y este nombre vive en una
                     // profundidad MENOR que la del scope propio de esa
@@ -145,9 +178,22 @@ impl<'a> Visitor for Analyzer<'a> {
                     // captura, no un local. Las funciones y clases NO cuentan
                     // como captura: llamar a un vecino o a sí misma (recursión)
                     // es resolución de nombre normal, no cerrar sobre datos.
+                    //
+                    // Un scope de CLASE tampoco cuenta, aunque cumpla las dos
+                    // condiciones de profundidad: un método que nombra un
+                    // atributo de su propia clase está haciendo un acceso
+                    // implícito a `this`, no cerrando sobre el entorno de
+                    // definición de una función encerradora. Los scopes de
+                    // bloque SÍ siguen contando — una variable de un bloque
+                    // que encierra a la función es una captura legítima.
                     if let Some(&(boundary_depth, ref fn_name)) = self.function_stack.last() {
                         let is_capturable = matches!(sym.kind, SymbolKind::Variable | SymbolKind::Parameter);
-                        if def_depth < boundary_depth && def_depth > 0 && is_capturable {
+                        if def_depth < boundary_depth
+                            && def_depth > 0
+                            && is_capturable
+                            && def_kind != ScopeKind::Class
+                            && def_kind != ScopeKind::Struct
+                        {
                             let fn_name = fn_name.clone();
                             self.closures.record_capture(&fn_name, name, node.line, node.col);
                         }
@@ -246,6 +292,34 @@ impl<'a> Visitor for Analyzer<'a> {
             }
         }
 
+        // 2c. Retorno (`return_stmt: RETURN expr | RETURN`, según
+        // `spec.returns`): valida el valor retornado contra el tipo declarado
+        // de la función que lo contiene, que vive en el tope de `fn_context`.
+        // Como la rama de aritmética, no hace early-return ni salta hijos: la
+        // expresión de retorno tiene que seguir recorriéndose para que sus
+        // identificadores se validen como usos normales.
+        if let Some(rule) = self.spec.returns.iter().find(|r| r.production == node.symbol) {
+            let value_node = find_child_index(node, &rule.value_child).map(|i| &node.children[i]);
+            let value_ty = value_node.and_then(|n| classes::resolve_expr_type(n, &self.table, self.spec));
+
+            // Distinción crítica entre "no hay valor" y "hay valor pero no lo
+            // sé tipar": las dos llegarían acá como `value_ty == None`, pero
+            // solo la primera es un `return;` de verdad. Tratar la segunda
+            // como retorno vacío produciría un `MissingReturnValue` falso en
+            // cada `return f(x)` — `resolve_expr_type` no tipa llamadas.
+            let checkable = value_node.is_none() || value_ty.is_some();
+            if checkable {
+                // La posición sale de la hoja del token de retorno, no del
+                // nodo interno: una hoja siempre trae línea/columna reales.
+                let pos_node = node.children.first().unwrap_or(node);
+                if let Err(err) =
+                    self.fn_context.validate_return(value_ty.as_ref(), pos_node.line, pos_node.col)
+                {
+                    self.errors.push_function(&err);
+                }
+            }
+        }
+
         // 3a. Asignación a una variable suelta (`assign_stmt: ID ASSIGN expr`,
         // según `spec.assign`). Solo dispara si el destino es una HOJA
         // identificador: la otra alternativa del mismo head
@@ -331,6 +405,44 @@ impl<'a> Visitor for Analyzer<'a> {
                     self.frames.push(Frame::default());
                     return Flow::SkipChildIndices(vec![rule.class_name_index]);
                 }
+            }
+        }
+
+        // 4b. Literal de struct (`atom: ID LBRACE field_inits RBRACE`, según
+        // `spec.struct_literal`): valida campos inexistentes, repetidos, mal
+        // tipados y faltantes contra los campos declarados del struct.
+        if let Some((struct_name, field_list_node)) = classes::find_struct_literal(node, self.spec) {
+            let rule = self.spec.struct_literal.as_ref().expect("find_struct_literal ya la consultó");
+            let name_node = &node.children[rule.type_name_index];
+            let field_inits = classes::flatten_field_inits(field_list_node, self.spec);
+
+            for e in classes::validate_struct_literal(
+                &self.table,
+                self.spec,
+                &struct_name,
+                (name_node.line, name_node.col),
+                &field_inits,
+            ) {
+                self.errors.push_semantic(&e);
+            }
+
+            // Saltar el nombre del struct: ya se consumió como tipo, no es un
+            // uso de variable. Las ETIQUETAS de campo viven dentro del
+            // subárbol de la lista y no son hijos directos de este nodo, así
+            // que no se pueden excluir por índice desde acá — de eso se
+            // encarga la rama 4c, que corta cada `field_init` por separado.
+            self.frames.push(Frame::default());
+            return Flow::SkipChildIndices(vec![rule.type_name_index]);
+        }
+
+        // 4c. Un `field_init` de un literal de struct (`ID COLON expr`): su
+        // primer hijo es la ETIQUETA del campo, no un uso de variable, así
+        // que hay que excluirlo del recorrido o saldría un `S002` falso. El
+        // valor sí se sigue recorriendo normalmente.
+        if let Some(rule) = &self.spec.field_init {
+            if node.symbol == rule.production && node.children.len() > rule.name_index {
+                self.frames.push(Frame::default());
+                return Flow::SkipChildIndices(vec![rule.name_index]);
             }
         }
 
@@ -447,23 +559,48 @@ impl<'a> Visitor for Analyzer<'a> {
                         Err(e) => self.errors.push_semantic(&e),
                     }
                 }
+                // Firma PROVISIONAL, antes de recorrer el cuerpo: sin ella
+                // una llamada recursiva (`fact(...)` dentro de `fact`) no se
+                // podría validar, porque la firma autoritativa se arma recién
+                // en `exit`, cuando el cuerpo ya pasó. `exit` la sobrescribe
+                // con la versión calculada desde los símbolos de parámetro
+                // reales, así que esto es puramente aditivo.
+                if matches!(rule.kind, SymbolKind::Function | SymbolKind::Other(_)) {
+                    let params = collect_param_types(node, self.spec);
+                    if let Some(sym) = self.table.lookup_mut(&name) {
+                        let returns = sym.ty.clone().unwrap_or(Type::Void);
+                        sym.signature = Some(Signature { params, returns });
+                    }
+                }
+
                 declared_name = Some(name.clone());
                 declared_kind = Some(rule.kind.clone());
 
+                // Registro permanente para `report_unknown_named_types`:
+                // sobrevive al cierre del scope donde se declaró. Vale para
+                // TODO tipo nombrable por el usuario —clase o struct—, porque
+                // cualquiera de los dos puede aparecer luego como anotación
+                // de tipo y `Type::Named` no distingue entre ellos.
+                if matches!(rule.kind, SymbolKind::Class | SymbolKind::Struct) {
+                    self.declared_type_names.insert(name.clone());
+                }
+
                 // Herencia: si esta declaración es una clase, un SEGUNDO
                 // identificador directo (aparte del propio) es el nombre de
-                // la clase padre (`class Hijo : Padre { ... }`).
+                // la clase padre (`class Hijo : Padre { ... }`). Solo clases:
+                // un struct no hereda, y como este escaneo es POSICIONAL
+                // ("cualquier segundo ID hijo directo") dejarlo activo para
+                // structs sería frágil ante cambios de gramática.
                 if rule.kind == SymbolKind::Class {
-                    // Registro permanente para `report_unknown_named_types`:
-                    // sobrevive al cierre del scope donde se declaró.
-                    self.declared_class_names.insert(name);
-
-
                     if let Some((parent_idx, parent_node)) =
                         node.children.iter().enumerate().find(|(i, c)| *i != idx && c.symbol == self.spec.identifier_token)
                     {
                         skip_indices.push(parent_idx);
-                        parent_name = Some(parent_node.lexeme.as_deref().unwrap_or(&parent_node.symbol).to_string());
+                        let parent = parent_node.lexeme.as_deref().unwrap_or(&parent_node.symbol).to_string();
+                        // Anotar para validar al final que el padre exista;
+                        // acá todavía no se puede, podría declararse abajo.
+                        self.pending_parents.push((name.clone(), parent.clone(), parent_node.line, parent_node.col));
+                        parent_name = Some(parent);
                     }
                 }
             }
@@ -524,6 +661,26 @@ impl<'a> Visitor for Analyzer<'a> {
                 // posición para que las capturas sigan siendo atribuibles.
                 let fn_name =
                     declared_name.clone().or_else(|| label.clone()).unwrap_or_else(|| format!("<fn@{}:{}>", node.line, node.col));
+
+                // Tipo de retorno declarado, para validar los `return` del
+                // cuerpo que estamos por recorrer. Se lee de la tabla porque
+                // el símbolo ya se declaró más arriba en este mismo `enter`,
+                // en el scope EXTERIOR; el scope que se acaba de abrir está
+                // vacío, así que `lookup` sube y lo encuentra igual.
+                //
+                // Sin anotación de tipo => `Void`: la función es un
+                // procedimiento y retornar un valor es un error. Es la misma
+                // convención que ya aplica `exit` al armar la `Signature`.
+                //
+                // No se puede esperar a la `Signature`: esa se arma recién en
+                // `exit`, cuando el cuerpo —y sus `return`— ya pasaron.
+                let returns = self
+                    .table
+                    .lookup(&fn_name)
+                    .and_then(|s| s.ty.clone())
+                    .unwrap_or(Type::Void);
+                self.fn_context.enter_returning(fn_name.clone(), returns);
+
                 self.function_stack.push((this_fn_depth, fn_name));
             }
 
@@ -561,6 +718,9 @@ impl<'a> Visitor for Analyzer<'a> {
         let frame = self.frames.pop().expect("enter empujó un frame para cada nodo visitado");
         if frame.opened_function {
             self.function_stack.pop();
+            // Lockstep con el push de `enter`: las dos pilas de función se
+            // mantienen alineadas subiendo y bajando en los mismos puntos.
+            self.fn_context.exit();
         }
         if frame.entered_scope {
             // El scope que se cierra es el que este mismo `enter` acaba de
@@ -632,6 +792,50 @@ fn resolve_declared_type(node: &ParseNode, spec: &SemanticSpec) -> Type {
     spec.type_tokens.get(&node.symbol).cloned().unwrap_or(Type::Unknown)
 }
 
+/// Tipos de los parámetros que declara ESTA producción, recogidos ANTES de
+/// recorrerla, para poder darle una firma provisional a la función y así
+/// validar sus llamadas recursivas (ver el uso en `enter`).
+///
+/// Recorre los descendientes de `node` podando todo subárbol que abra un
+/// scope propio: eso saca el cuerpo de la función (y con él los parámetros de
+/// cualquier función anidada, que no son de esta). El podado se hace contra
+/// `spec.scopes` y no contra un nombre de producción concreto — es la misma
+/// regla genérica que usa el resto del walker, así sigue sirviendo para
+/// cualquier gramática.
+///
+/// Es solo provisional: los tipos salen de la anotación escrita en el árbol,
+/// no de los símbolos ya declarados. `exit` la reemplaza por la versión
+/// autoritativa, calculada desde los parámetros reales del scope cerrado.
+fn collect_param_types(node: &ParseNode, spec: &SemanticSpec) -> Vec<Type> {
+    fn walk(node: &ParseNode, spec: &SemanticSpec, out: &mut Vec<Type>) {
+        for child in &node.children {
+            if spec.scopes.iter().any(|r| r.production == child.symbol) {
+                continue;
+            }
+            let is_param = spec
+                .declarations
+                .iter()
+                .find(|r| r.production == child.symbol)
+                .is_some_and(|r| r.kind == SymbolKind::Parameter);
+            if is_param {
+                let rule = spec.declarations.iter().find(|r| r.production == child.symbol).expect("recién encontrada");
+                let ty = rule
+                    .type_child
+                    .as_ref()
+                    .and_then(|locator| find_child_index(child, locator))
+                    .map(|i| resolve_declared_type(&child.children[i], spec))
+                    .unwrap_or(Type::Unknown);
+                out.push(ty);
+            }
+            walk(child, spec, out);
+        }
+    }
+
+    let mut out = Vec::new();
+    walk(node, spec, &mut out);
+    out
+}
+
 /// Encuentra, entre los hijos DIRECTOS de `node`, el índice del nodo de tipo
 /// según `locator`: `Index(i)` lo confirma con `i` si existe ese hijo;
 /// `BySymbol(s)` busca el primer hijo directo cuyo `symbol` sea `s` — para
@@ -665,7 +869,10 @@ mod tests {
     use super::*;
     use crate::semantico::errors::ErrorKind;
     use crate::semantico::scopes::ScopeKind;
-    use crate::semantico::spec::{CallRule, DeclarationRule, MemberAccessRule, ScopeRule};
+    use crate::semantico::spec::{
+        CallRule, DeclarationRule, FieldInitRule, MemberAccessRule, ReturnRule, ScopeRule,
+        StructLiteralRule,
+    };
     use crate::semantico::symbols::SymbolKind;
     use std::collections::HashMap;
 
@@ -696,6 +903,7 @@ mod tests {
             constructor_name: None,
             assign: None,
             arith_tokens: Default::default(),
+            ..Default::default()
         }
     }
 
@@ -1335,6 +1543,7 @@ mod tests {
             constructor_name: None,
             assign: None,
             arith_tokens: Default::default(),
+            ..Default::default()
         }
     }
 
@@ -1550,5 +1759,364 @@ mod tests {
         let diag = result.errors.iter().next().unwrap();
         assert_eq!(diag.code, "S013");
         assert!(diag.message.contains("suma"), "{}", diag.message);
+    }
+
+    // ============== Retornos y capturas de clase (Semana 2) ==============
+
+    /// Como `closures_and_types_spec`, pero con tipo de retorno declarado en
+    /// `func_decl` y con la produccion de retorno configurada — el equivalente
+    /// a `%type_of func_decl tipo` + `%return return_stmt expr`.
+    fn returns_spec() -> SemanticSpec {
+        let mut spec = closures_and_types_spec();
+        for rule in spec.declarations.iter_mut() {
+            if rule.production == "func_decl" {
+                rule.type_child = Some(ChildLocator::BySymbol("tipo".to_string()));
+            }
+        }
+        spec.type_tokens.insert("INT_LIT".to_string(), Type::Int);
+        spec.type_tokens.insert("STR_LIT".to_string(), Type::Str);
+        spec.returns = vec![ReturnRule {
+            production: "return_stmt".to_string(),
+            value_child: ChildLocator::BySymbol("expr".to_string()),
+        }];
+        spec
+    }
+
+    /// `func_decl: FUN ID [tipo] return_stmt`, con el `return_stmt` que se le
+    /// pase. `tipo` ausente => la funcion es un procedimiento (retorno Void).
+    fn function_returning(name: &str, tipo_node: Option<ParseNode>, return_stmt: ParseNode) -> ParseNode {
+        let mut children = vec![leaf("FUN", "fun", 1, 1), leaf("ID", name, 1, 5)];
+        children.extend(tipo_node);
+        children.push(return_stmt);
+        internal("func_decl", children)
+    }
+
+    fn return_with(value: Option<ParseNode>) -> ParseNode {
+        let mut children = vec![leaf("RETURN", "return", 2, 3)];
+        children.extend(value.map(|v| internal("expr", vec![v])));
+        internal("return_stmt", children)
+    }
+
+    #[test]
+    fn returning_the_wrong_type_is_reported_against_the_declared_one() {
+        let f = function_returning(
+            "f",
+            Some(tipo("INT_T", "integer")),
+            return_with(Some(leaf("STR_LIT", "\"texto\"", 2, 10))),
+        );
+
+        let result = analyze(&f, &returns_spec());
+        assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+        let diag = result.errors.iter().next().unwrap();
+        assert_eq!(diag.code, "S016");
+        // La posicion sale de la hoja RETURN, no del nodo interno (que en
+        // este helper de test viene con 0:0).
+        assert_eq!((diag.line, diag.col), (2, 3));
+    }
+
+    #[test]
+    fn returning_the_declared_type_is_clean() {
+        let f = function_returning(
+            "f",
+            Some(tipo("INT_T", "integer")),
+            return_with(Some(leaf("INT_LIT", "1", 2, 10))),
+        );
+        let result = analyze(&f, &returns_spec());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+    }
+
+    #[test]
+    fn an_empty_return_in_a_typed_function_is_reported() {
+        let f = function_returning("f", Some(tipo("INT_T", "integer")), return_with(None));
+        let result = analyze(&f, &returns_spec());
+        assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+        assert_eq!(result.errors.iter().next().unwrap().code, "S017");
+    }
+
+    #[test]
+    fn returning_a_value_from_a_procedure_is_reported() {
+        // Sin nodo `tipo`: la funcion no declara retorno, asi que es un
+        // procedimiento y no puede devolver un valor.
+        let f = function_returning("p", None, return_with(Some(leaf("INT_LIT", "5", 2, 10))));
+        let result = analyze(&f, &returns_spec());
+        assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+        assert_eq!(result.errors.iter().next().unwrap().code, "S018");
+    }
+
+    #[test]
+    fn an_untypable_return_expression_is_not_reported() {
+        // La expresion tiene una forma que `resolve_expr_type` no sabe tipar
+        // (dos hijos, sin operador aritmetico configurado). No hay que
+        // confundirla con un `return;` — eso daria un S017 falso.
+        let opaca = internal("expr", vec![leaf("INT_LIT", "1", 2, 10), leaf("INT_LIT", "2", 2, 12)]);
+        let f = function_returning(
+            "f",
+            Some(tipo("INT_T", "integer")),
+            internal("return_stmt", vec![leaf("RETURN", "return", 2, 3), opaca]),
+        );
+
+        let result = analyze(&f, &returns_spec());
+        assert!(result.errors.is_empty(), "una expresion sin tipo resuelto no se chequea: {:?}", result.errors);
+    }
+
+    #[test]
+    fn a_return_outside_any_function_is_reported() {
+        let programa = internal("programa", vec![return_with(Some(leaf("INT_LIT", "1", 1, 8)))]);
+        let result = analyze(&programa, &returns_spec());
+        assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+        assert_eq!(result.errors.iter().next().unwrap().code, "S019");
+    }
+
+    #[test]
+    fn a_method_reading_its_own_class_attribute_is_not_a_capture() {
+        // class C { var radio; function m() { <uso de radio> } }
+        // `radio` vive en el scope de CLASE, que encierra al del metodo, pero
+        // leerlo es un acceso implicito a `this`, no cerrar sobre el entorno
+        // de definicion de una funcion. Regresion: antes se reportaba
+        // "m captura: radio".
+        let var_radio = internal("var_decl", vec![leaf("ID", "radio", 2, 7)]);
+        let m = internal("func_decl", vec![
+            leaf("FUN", "fun", 3, 3),
+            leaf("ID", "m", 3, 12),
+            leaf("ID", "radio", 4, 12),
+        ]);
+        let class_c = internal("class_decl", vec![leaf("ID", "C", 1, 7), var_radio, m]);
+
+        let result = analyze(&class_c, &closures_and_types_spec());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert!(
+            result.closures.is_empty(),
+            "un atributo de la clase encerradora no es una captura: {}",
+            result.closures.dump()
+        );
+    }
+
+    #[test]
+    fn a_variable_from_an_enclosing_block_is_still_a_capture() {
+        // El filtro de la prueba anterior es solo para scopes de CLASE: una
+        // variable de un bloque que encierra a la funcion sigue capturandose.
+        let var_x = internal("var_decl", vec![leaf("ID", "x", 2, 7)]);
+        let inner = internal("func_decl", vec![
+            leaf("FUN", "fun", 3, 3),
+            leaf("ID", "inner", 3, 12),
+            leaf("ID", "x", 4, 12),
+        ]);
+        let bloque = internal("bloque", vec![var_x, inner]);
+        let outer = internal("func_decl", vec![
+            leaf("FUN", "fun", 1, 1),
+            leaf("ID", "outer", 1, 5),
+            bloque,
+        ]);
+
+        let mut spec = closures_and_types_spec();
+        spec.scopes.push(ScopeRule { production: "bloque".to_string(), kind: ScopeKind::Block, with_label: false });
+
+        let result = analyze(&outer, &spec);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let caps = result.closures.captures_of("inner").expect("inner captura x del bloque encerrador");
+        assert_eq!(caps[0].name, "x");
+    }
+
+    // ===================== Structs / records =====================
+
+    /// Spec con struct: `struct_decl: ID struct_field*`, campos
+    /// `struct_field: ID tipo`, y literal `atom: ID LBRACE inits RBRACE`
+    /// con `field_init: ID expr`.
+    fn struct_spec() -> SemanticSpec {
+        let mut spec = returns_spec();
+        spec.declarations.push(DeclarationRule {
+            production: "struct_decl".to_string(),
+            kind: SymbolKind::Struct,
+            name_child: None,
+            implicit: false,
+            type_child: None,
+            init_child: None,
+            immutable: false,
+        });
+        spec.declarations.push(DeclarationRule {
+            production: "struct_field".to_string(),
+            kind: SymbolKind::Variable,
+            name_child: None,
+            implicit: false,
+            type_child: Some(ChildLocator::BySymbol("tipo".to_string())),
+            init_child: None,
+            immutable: false,
+        });
+        spec.scopes.push(ScopeRule {
+            production: "struct_decl".to_string(),
+            kind: ScopeKind::Struct,
+            with_label: true,
+        });
+        spec.struct_literal = Some(StructLiteralRule {
+            production: "atom".to_string(),
+            open_brace_token: "LBRACE".to_string(),
+            type_name_index: 0,
+            field_list_index: 2,
+        });
+        spec.field_list_symbol = Some("inits".to_string());
+        spec.field_init = Some(FieldInitRule {
+            production: "field_init".to_string(),
+            name_index: 0,
+            value_index: 1,
+        });
+        spec
+    }
+
+    /// `struct Punto { x: integer; y: integer; }`
+    fn punto_decl() -> ParseNode {
+        internal("struct_decl", vec![
+            leaf("ID", "Punto", 1, 8),
+            internal("struct_field", vec![leaf("ID", "x", 1, 16), tipo("INT_T", "integer")]),
+            internal("struct_field", vec![leaf("ID", "y", 1, 28), tipo("INT_T", "integer")]),
+        ])
+    }
+
+    /// `Nombre { campo: valor, ... }`, con la lista recursiva izquierda que
+    /// genera el parser (`inits: inits COMMA field_init | field_init`).
+    fn struct_literal(name: &str, fields: Vec<(&str, ParseNode)>) -> ParseNode {
+        let mut list: Option<ParseNode> = None;
+        for (fname, value) in fields {
+            let init = internal("field_init", vec![leaf("ID", fname, 2, 20), value]);
+            list = Some(match list {
+                None => internal("inits", vec![init]),
+                Some(prev) => internal("inits", vec![prev, leaf("COMMA", ",", 2, 19), init]),
+            });
+        }
+        // El hijo de indice 2 es el ENVOLTORIO de la lista
+        // (`field_inits: inits | vacio`), igual que en la gramatica real;
+        // `flatten_arg_list` espera bajar un nivel antes de recorrerla.
+        let envoltorio = internal("field_inits", list.into_iter().collect());
+        internal("atom", vec![
+            leaf("ID", name, 2, 16),
+            leaf("LBRACE", "{", 2, 22),
+            envoltorio,
+            leaf("RBRACE", "}", 2, 40),
+        ])
+    }
+
+    fn codes_of(result: &AnalysisResult) -> Vec<&str> {
+        result.errors.iter().map(|d| d.code.as_str()).collect()
+    }
+
+    #[test]
+    fn struct_declaration_is_its_own_kind_with_typed_members() {
+        let result = analyze(&punto_decl(), &struct_spec());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+
+        let punto = result.table.lookup("Punto").expect("Punto declarado");
+        assert_eq!(punto.kind, SymbolKind::Struct, "un struct no debe registrarse como Class");
+        let members = punto.members.as_ref().expect("los campos quedan como miembros");
+        let mut names: Vec<&str> = members.iter().map(|m| m.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["x", "y"]);
+        assert!(members.iter().all(|m| m.ty == Some(Type::Int)), "campos tipados: {members:?}");
+    }
+
+    #[test]
+    fn a_correct_struct_literal_is_clean_and_typed() {
+        let lit = struct_literal("Punto", vec![
+            ("x", leaf("INT_LIT", "1", 2, 24)),
+            ("y", leaf("INT_LIT", "2", 2, 32)),
+        ]);
+        let programa = internal("programa", vec![punto_decl(), lit]);
+
+        let result = analyze(&programa, &struct_spec());
+        assert!(
+            result.errors.is_empty(),
+            "ni el nombre del struct ni las etiquetas de campo cuentan como usos: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn struct_literal_with_an_unknown_field_is_reported() {
+        let lit = struct_literal("Punto", vec![
+            ("z", leaf("INT_LIT", "1", 2, 24)),
+            ("x", leaf("INT_LIT", "2", 2, 32)),
+            ("y", leaf("INT_LIT", "3", 2, 38)),
+        ]);
+        let programa = internal("programa", vec![punto_decl(), lit]);
+
+        let result = analyze(&programa, &struct_spec());
+        assert_eq!(codes_of(&result), vec!["S010"], "{:?}", result.errors);
+    }
+
+    #[test]
+    fn struct_literal_with_a_wrongly_typed_field_is_reported() {
+        let lit = struct_literal("Punto", vec![
+            ("x", leaf("STR_LIT", "texto", 2, 24)),
+            ("y", leaf("INT_LIT", "2", 2, 32)),
+        ]);
+        let programa = internal("programa", vec![punto_decl(), lit]);
+
+        let result = analyze(&programa, &struct_spec());
+        assert_eq!(codes_of(&result), vec!["S022"], "{:?}", result.errors);
+    }
+
+    #[test]
+    fn struct_literal_missing_a_field_is_reported() {
+        let lit = struct_literal("Punto", vec![("x", leaf("INT_LIT", "1", 2, 24))]);
+        let programa = internal("programa", vec![punto_decl(), lit]);
+
+        let result = analyze(&programa, &struct_spec());
+        assert_eq!(codes_of(&result), vec!["S023"], "{:?}", result.errors);
+        assert!(result.errors.iter().next().unwrap().message.contains('y'));
+    }
+
+    #[test]
+    fn struct_literal_with_a_repeated_field_is_reported() {
+        let lit = struct_literal("Punto", vec![
+            ("x", leaf("INT_LIT", "1", 2, 24)),
+            ("x", leaf("INT_LIT", "2", 2, 32)),
+            ("y", leaf("INT_LIT", "3", 2, 38)),
+        ]);
+        let programa = internal("programa", vec![punto_decl(), lit]);
+
+        let result = analyze(&programa, &struct_spec());
+        assert_eq!(codes_of(&result), vec!["S024"], "{:?}", result.errors);
+    }
+
+    #[test]
+    fn a_field_value_that_cannot_be_typed_is_not_reported() {
+        // Valor con una forma que `resolve_expr_type` no sabe tipar: cuenta
+        // como campo presente, pero su tipo no se compara. No confundirlo con
+        // `Some(Type::Unknown)`, que `resolve_assignment` rechazaria.
+        let opaco = internal("expr", vec![leaf("INT_LIT", "1", 2, 24), leaf("INT_LIT", "2", 2, 26)]);
+        let lit = struct_literal("Punto", vec![
+            ("x", opaco),
+            ("y", leaf("INT_LIT", "2", 2, 32)),
+        ]);
+        let programa = internal("programa", vec![punto_decl(), lit]);
+
+        let result = analyze(&programa, &struct_spec());
+        assert!(result.errors.is_empty(), "un valor sin tipo resuelto no se chequea: {:?}", result.errors);
+    }
+
+    #[test]
+    fn an_undeclared_struct_in_a_literal_reports_only_the_root_cause() {
+        let lit = struct_literal("NoExiste", vec![("x", leaf("INT_LIT", "1", 2, 24))]);
+        let result = analyze(&lit, &struct_spec());
+        assert_eq!(
+            codes_of(&result),
+            vec!["S007"],
+            "un diagnostico por causa raiz, no uno por campo: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn a_struct_used_as_a_type_annotation_is_not_an_unknown_class() {
+        // `struct Punto {...}` + `var p: Punto` — el nombre del struct entra
+        // al mismo registro de tipos declarados que las clases, o la pasada
+        // diferida lo reportaria como clase inexistente (S007).
+        let var_p = internal("var_decl", vec![
+            leaf("ID", "p", 3, 5),
+            internal("tipo", vec![leaf("ID", "Punto", 3, 8)]),
+        ]);
+        let programa = internal("programa", vec![punto_decl(), var_p]);
+
+        let result = analyze(&programa, &struct_spec());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(result.table.lookup("p").unwrap().ty, Some(Type::Named("Punto".to_string())));
     }
 }

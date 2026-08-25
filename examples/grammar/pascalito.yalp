@@ -1,0 +1,324 @@
+/* ============================================================
+ * pascalito.yalp - TERCERA gramatica de prueba de agnosticidad.
+ *
+ * A diferencia de objetos_es.yalp, que renombra token por token
+ * la gramatica de compiscript, esta cambia la FORMA:
+ *   - no hay llaves: los bloques son  is ... end
+ *   - se asigna con  :=
+ *   - el literal de registro usa corchetes:  Punto[ x := 1 ]
+ *   - if lleva  then ... end  y el bucle es  loop e do ... end
+ *   - el constructor se llama  init
+ *
+ * El codigo Rust del analizador no cambia: toda la diferencia
+ * vive en las directivas de abajo.
+ * ============================================================ */
+
+%token RECORD CLASS EXTENDS FUNC VAR LET IS END DO
+%token IF THEN ELSE LOOP GIVE SHOW SELF MAKE
+%token INT_T TEXT_T FLAG_T YES NO
+%token ID INT_LIT TEXT_LIT COMENT
+%token ASSIGN PLUS MINUS STAR SLASH GT LT
+%token LPAREN RPAREN LBRACK RBRACK SEMI COMMA COLON DOT
+
+IGNORE COMENT
+
+/* ============================================================
+ * Directivas semanticas: los MISMOS nombres de directiva que las
+ * otras dos gramaticas, apuntando a producciones y tokens que no
+ * se parecen en nada.
+ * ============================================================ */
+%ident ID
+
+%declare decl_var    variable
+%declare decl_const  variable
+%declare param       parameter
+%declare decl_func   function
+%declare decl_clase  class
+%declare decl_record struct
+%declare campo       variable
+
+%scope decl_func   function
+%scope decl_clase  class
+%scope decl_record struct
+%scope bloque      block
+
+%type_of decl_var   tipo
+%type_of decl_const tipo
+%type_of param      tipo
+%type_of decl_func  tipo
+%type_of campo      tipo
+
+%init_of decl_var   expr
+%init_of decl_const expr
+%immutable decl_const
+
+/* Asignacion con := , y aritmetica. Los indices son posiciones de
+ * hijo directo, no nombres. */
+%assign asig 0 2
+%arith PLUS  add
+%arith MINUS subtract
+%arith STAR  multiply
+%arith SLASH divide
+
+/* OJO: el lado derecho de %type_token es vocabulario FIJO del enum
+ * Type de src/semantico/types - integer, float, string, bool, void.
+ * El lado izquierdo si es libre. */
+%type_token INT_T    integer
+%type_token TEXT_T   string
+%type_token FLAG_T   bool
+%type_token YES      bool
+%type_token NO       bool
+%type_token INT_LIT  integer
+%type_token TEXT_LIT string
+
+/* Clases: self en vez de this, make en vez de new, constructor
+ * llamado init. */
+%this SELF
+%member_access prim DOT
+%member_access asig DOT
+%new atomo MAKE 1 3
+%call prim LPAREN 0 2
+%arg_list_symbol arg_list
+%constructor init
+
+%return give_stmt expr
+
+/* Registros: el literal usa CORCHETES, y sus campos se inicializan
+ * con := igual que una asignacion. Notese que %new y %struct_literal
+ * apuntan a la MISMA produccion (atomo): se distinguen por la forma
+ * del nodo, no por configuracion extra. */
+%struct_literal atomo LBRACK 0 2
+%field_list_symbol init_list
+%field_init init_campo 0 2
+
+%%
+
+/* ============================================================
+ * Punto de entrada
+ * ============================================================ */
+
+unidad:
+    lista
+;
+
+lista:
+    lista sent
+  | sent
+;
+
+sent:
+    decl_var SEMI
+  | decl_const SEMI
+  | asig SEMI
+  | decl_func
+  | decl_clase
+  | decl_record
+  | show_stmt SEMI
+  | bloque
+  | if_stmt
+  | loop_stmt
+  | give_stmt SEMI
+  | expr SEMI
+;
+
+/* ============================================================
+ * Tipos
+ * ============================================================ */
+
+tipo:
+    INT_T
+  | TEXT_T
+  | FLAG_T
+  | ID
+;
+
+/* ============================================================
+ * Declaraciones de dato: var mutable, let constante
+ * ============================================================ */
+
+decl_var:
+    VAR ID COLON tipo
+  | VAR ID COLON tipo ASSIGN expr
+;
+
+decl_const:
+    LET ID COLON tipo ASSIGN expr
+;
+
+/* ============================================================
+ * Asignacion: a una variable, o a un campo de un objeto
+ * ============================================================ */
+
+asig:
+    ID ASSIGN expr
+  | prim DOT ID ASSIGN expr
+;
+
+/* ============================================================
+ * Sentencias de control: sin llaves, todo termina en end
+ * ============================================================ */
+
+show_stmt:
+    SHOW LPAREN expr RPAREN
+;
+
+bloque:
+    DO lista END
+  | DO END
+;
+
+if_stmt:
+    IF expr THEN lista END
+  | IF expr THEN lista ELSE lista END
+;
+
+loop_stmt:
+    LOOP expr DO lista END
+;
+
+give_stmt:
+    GIVE expr
+  | GIVE
+;
+
+/* ============================================================
+ * Funciones: func nombre(params) [: tipo] is ... end
+ * ============================================================ */
+
+decl_func:
+    FUNC ID LPAREN plist RPAREN IS lista END
+  | FUNC ID LPAREN plist RPAREN COLON tipo IS lista END
+;
+
+plist:
+    params
+  | /* vacio */
+;
+
+params:
+    params COMMA param
+  | param
+;
+
+param:
+    ID COLON tipo
+;
+
+/* ============================================================
+ * Clases: class Nombre [extends Padre] is miembros end
+ * ============================================================ */
+
+decl_clase:
+    CLASS ID IS miembros END
+  | CLASS ID EXTENDS ID IS miembros END
+;
+
+miembros:
+    miembros miembro
+  | /* vacio */
+;
+
+miembro:
+    decl_func
+  | decl_var SEMI
+  | decl_const SEMI
+;
+
+/* ============================================================
+ * Registros: solo campos tipados, sin metodos ni herencia
+ *   record Nombre is campo : tipo; ... end
+ * ============================================================ */
+
+decl_record:
+    RECORD ID IS campos END
+;
+
+campos:
+    campos campo SEMI
+  | /* vacio */
+;
+
+campo:
+    ID COLON tipo
+;
+
+/* ============================================================
+ * Expresiones, de menor a mayor precedencia:
+ *   comparacion  <  >
+ *     suma         +  -
+ *       producto     *  /
+ *         unario       - unario
+ *           prim         llamada, acceso a miembro
+ *             atomo        literales, self, make, literal de record
+ * ============================================================ */
+
+expr:
+    comparacion
+;
+
+comparacion:
+    comparacion LT suma
+  | comparacion GT suma
+  | suma
+;
+
+suma:
+    suma PLUS producto
+  | suma MINUS producto
+  | producto
+;
+
+producto:
+    producto STAR unario
+  | producto SLASH unario
+  | unario
+;
+
+unario:
+    MINUS unario
+  | prim
+;
+
+prim:
+    atomo
+  | prim LPAREN args RPAREN
+  | prim DOT ID
+;
+
+atomo:
+    ID
+  | INT_LIT
+  | TEXT_LIT
+  | YES
+  | NO
+  | SELF
+  | MAKE ID LPAREN args RPAREN
+  | ID LBRACK inits RBRACK
+  | LPAREN expr RPAREN
+;
+
+args:
+    arg_list
+  | /* vacio */
+;
+
+arg_list:
+    arg_list COMMA expr
+  | expr
+;
+
+/* Literal de registro: Punto[ x := 1, y := 2 ] */
+
+inits:
+    init_list
+  | /* vacio */
+;
+
+init_list:
+    init_list COMMA init_campo
+  | init_campo
+;
+
+init_campo:
+    ID ASSIGN expr
+;

@@ -22,6 +22,15 @@ pub enum SymbolKind {
     Parameter,
     Function,
     Class,
+    /// Tipo registro definido por el usuario: solo campos tipados. Comparte
+    /// con `Class` la resolucion de miembros y el tipado nominal
+    /// (`Type::Named`), pero no la herencia ni el constructor.
+    ///
+    /// Es una variante propia y no `Other("struct")` a proposito: `Other(_)`
+    /// esta agrupado con `Function` donde se arma la `Signature`, asi que un
+    /// struct habria recibido una firma espuria y `Punto(...)` habria pasado
+    /// por una llamada valida de aridad 0.
+    Struct,
     Other(String),
 }
 
@@ -141,7 +150,7 @@ pub enum SemanticError {
     #[error("'this' solo puede usarse dentro de un método de clase")]
     ThisOutsideClass { line: usize, col: usize },
 
-    #[error("'{name}' no es un miembro de la clase '{class_name}'")]
+    #[error("'{name}' no es un miembro de '{class_name}'")]
     UnknownMember {
         class_name: String,
         name: String,
@@ -192,6 +201,32 @@ pub enum SemanticError {
         operator: String,
         left: Type,
         right: Type,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("campo '{field}' de '{struct_name}': se esperaba {expected}, se encontró {found}")]
+    StructFieldTypeMismatch {
+        struct_name: String,
+        field: String,
+        expected: Type,
+        found: Type,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("falta el campo '{field}' al construir '{struct_name}'")]
+    MissingStructField {
+        struct_name: String,
+        field: String,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("el campo '{field}' de '{struct_name}' se asignó más de una vez")]
+    DuplicateStructField {
+        struct_name: String,
+        field: String,
         line: usize,
         col: usize,
     },

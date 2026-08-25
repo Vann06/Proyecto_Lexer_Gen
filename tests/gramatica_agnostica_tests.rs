@@ -81,13 +81,20 @@ fn alternate_grammar_reports_the_same_diagnostic_codes() {
     assert_eq!(count("S006"), 3, "tipos incompatibles: propiedad, inicializador y asignación: {codes:?}");
     assert_eq!(count("S007"), 2, "objeto desconocido en `crear` y como anotación de tipo: {codes:?}");
     assert_eq!(count("S009"), 1, "`propio` fuera de un método: {codes:?}");
-    assert_eq!(count("S010"), 3, "miembros inexistentes (1 lectura + 2 asignaciones): {codes:?}");
+    assert_eq!(count("S010"), 4, "miembros inexistentes (1 lectura, 2 asignaciones y 1 campo de literal): {codes:?}");
     assert_eq!(count("S011"), 1, "aridad incorrecta del constructor `iniciar`: {codes:?}");
     assert_eq!(count("S012"), 1, "tipo de argumento incorrecto en `crear`: {codes:?}");
-    assert_eq!(count("S013"), 2, "aridad incorrecta en llamada a método y a función libre: {codes:?}");
+    assert_eq!(count("S013"), 3, "aridad incorrecta en llamada a método, a función libre y recursiva: {codes:?}");
     assert_eq!(count("S014"), 1, "tipo de argumento incorrecto en llamada: {codes:?}");
     assert_eq!(count("S015"), 1, "operación aritmética inválida: {codes:?}");
-    assert_eq!(codes.len(), 15, "sin diagnósticos de más: {:#?}", resp.problems);
+    assert_eq!(count("S016"), 1, "retorno de tipo incompatible: {codes:?}");
+    assert_eq!(count("S017"), 1, "retorno vacío en un método con tipo declarado: {codes:?}");
+    assert_eq!(count("S018"), 1, "valor retornado desde un procedimiento: {codes:?}");
+    assert_eq!(count("S019"), 1, "`retorna` fuera de todo método: {codes:?}");
+    assert_eq!(count("S022"), 1, "campo de registro mal tipado: {codes:?}");
+    assert_eq!(count("S023"), 1, "campo de registro faltante: {codes:?}");
+    assert_eq!(count("S024"), 1, "campo de registro repetido: {codes:?}");
+    assert_eq!(codes.len(), 24, "sin diagnósticos de más: {:#?}", resp.problems);
 
     for p in &resp.problems {
         assert!(p["loc"].as_str().unwrap().starts_with("objetos_es_errores.txt:"));

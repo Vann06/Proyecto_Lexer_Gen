@@ -12,6 +12,7 @@
 // `constructor_name`, `this_token`) o como parámetros (`class_name`).
 use std::collections::HashSet;
 
+use crate::semantico::functions::{self, ArgProblem};
 use crate::semantico::spec::SemanticSpec;
 use crate::semantico::symbols::{SemanticError, Signature, Symbol, SymbolKind, SymbolTable};
 use crate::semantico::types::{resolve_arithmetic, resolve_assignment, ArithmeticOperator, Type};
@@ -34,7 +35,8 @@ use crate::sintactico::runtime::parse_tree::ParseNode;
 ///    sin depender de que `members` ya esté cerrado.
 ///
 /// `Err(UnknownClass)` si `class_name` no resuelve a un símbolo
-/// `SymbolKind::Class`; `Err(UnknownMember)` si se agota la cadena de
+/// `SymbolKind::Class` ni `SymbolKind::Struct`; `Err(UnknownMember)` si se
+/// agota la cadena de
 /// herencia. Guarda de ciclos con un set de nombres visitados (defensiva —
 /// la gramática actual no puede producir un ciclo con una sola cadena
 /// `CLASS ID COLON ID`, pero es barata y evita un loop infinito si algún día
@@ -74,7 +76,7 @@ fn resolve_member_rec<'a>(
 
     let class_symbol = table
         .lookup(class_name)
-        .filter(|s| s.kind == SymbolKind::Class)
+        .filter(|s| matches!(s.kind, SymbolKind::Class | SymbolKind::Struct))
         .ok_or_else(|| SemanticError::UnknownClass { name: class_name.to_string(), line, col })?;
 
     let found_in_own = match &class_symbol.members {
@@ -143,6 +145,13 @@ pub fn resolve_expr_type(node: &ParseNode, table: &SymbolTable, spec: &SemanticS
         let member_name = member_id.lexeme.as_deref().unwrap_or(&member_id.symbol);
         let member = resolve_member(table, &class_name, member_name, member_id.line, member_id.col).ok()?;
         return member.ty.clone();
+    }
+
+    // Literal de struct: su tipo es el struct que nombra. Va DESPUÉS del
+    // acceso a miembro (para que `Punto{...}.x` siga resolviendo el campo) y
+    // ANTES de las ramas de hoja/paso-a-través.
+    if let Some((struct_name, _)) = find_struct_literal(node, spec) {
+        return Some(Type::Named(struct_name));
     }
 
     if node.children.is_empty() {
@@ -242,51 +251,159 @@ pub fn constructor_signature(class_symbol: &Symbol, spec: &SemanticSpec) -> Sign
         .unwrap_or_else(implicit)
 }
 
-/// Un desajuste entre los argumentos de una invocación y la firma que se
-/// invoca, SIN comprometerse todavía con una variante de `SemanticError` —
-/// la misma comprobación sirve para un constructor (`new Clase(...)`) y para
-/// una llamada normal (`f(...)`, `obj.m(...)`), pero cada una reporta con su
-/// propio mensaje. Cada llamador mapea estos casos a sus variantes.
-enum ArgProblem {
-    Arity { expected: usize, found: usize },
-    ArgType { index: usize, expected: Type, found: Type, line: usize, col: usize },
+/// Si `node` es la producción de literal de struct configurada en
+/// `spec.struct_literal` Y esta instancia concreta trae el token de llave
+/// entre sus hijos, devuelve `(nombre del struct, nodo de la lista de
+/// campos)`. Una misma producción suele tener alternativas SIN llave
+/// (`atom: ID`, `atom: NEW ID ...`) — para esas devuelve `None`.
+///
+/// Se reconoce por la FORMA, igual que `%new` y `%call`: solo la alternativa
+/// del literal trae `open_brace_token` como hijo directo.
+pub fn find_struct_literal<'a>(
+    node: &'a ParseNode,
+    spec: &SemanticSpec,
+) -> Option<(String, &'a ParseNode)> {
+    let rule = spec.struct_literal.as_ref()?;
+    if node.symbol != rule.production {
+        return None;
+    }
+    if !node.children.iter().any(|c| c.symbol == rule.open_brace_token) {
+        return None;
+    }
+    let name_node = node.children.get(rule.type_name_index)?;
+    if name_node.symbol != spec.identifier_token {
+        return None;
+    }
+    let fields = node.children.get(rule.field_list_index)?;
+    let name = name_node.lexeme.as_deref().unwrap_or(&name_node.symbol).to_string();
+    Some((name, fields))
 }
 
-/// Comprueba `arg_nodes` contra `signature`: aridad exacta, y tipo de cada
-/// argumento "simple" (el que `resolve_expr_type` sabe resolver: un literal,
-/// una variable ya tipada, un acceso a miembro) contra el parámetro
-/// correspondiente, vía `resolve_assignment` — la misma tabla de coerciones
-/// que ya usa `SymbolTable::assign`. Un argumento compuesto (`None`) solo
-/// cuenta para la aridad.
+/// Los pares `(hoja del nombre del campo, nodo de la expresión)` de un
+/// literal, aplanando la lista recursiva. Reusa `flatten_arg_list`, que ya es
+/// genérico en el símbolo de la lista, y saca de cada elemento el nombre y el
+/// valor según `spec.field_init`.
 ///
-/// Si la aridad ya está mal devuelve SOLO ese problema, sin comparar tipos
-/// posicionalmente: los pares parámetro/argumento ya están desalineados y
-/// cualquier diferencia de tipo sería ruido derivado del error real.
-fn check_args(
+/// Un elemento con otra forma se descarta en vez de reportar: mantiene la
+/// disciplina silenciosa del resto del módulo ante formas inesperadas.
+pub fn flatten_field_inits<'a>(
+    field_list_node: &'a ParseNode,
+    spec: &SemanticSpec,
+) -> Vec<(&'a ParseNode, &'a ParseNode)> {
+    let (Some(field_list_symbol), Some(rule)) =
+        (spec.field_list_symbol.as_deref(), spec.field_init.as_ref())
+    else {
+        return Vec::new();
+    };
+    flatten_arg_list(field_list_node, field_list_symbol)
+        .into_iter()
+        .filter_map(|init| {
+            let name = init.children.get(rule.name_index)?;
+            let value = init.children.get(rule.value_index)?;
+            Some((name, value))
+        })
+        .collect()
+}
+
+/// Valida `Nombre { campo: valor, ... }` contra los campos declarados del
+/// struct: campos inexistentes, repetidos, mal tipados y faltantes. Devuelve
+/// TODOS los problemas, no se detiene en el primero.
+///
+/// Si el nombre no resuelve a un struct, devuelve un ÚNICO `UnknownClass` y
+/// no dice nada de los campos: un diagnóstico por causa raíz, en vez de un
+/// error por campo derivado del mismo problema.
+pub fn validate_struct_literal(
     table: &SymbolTable,
     spec: &SemanticSpec,
-    signature: &Signature,
-    arg_nodes: &[&ParseNode],
-) -> Vec<ArgProblem> {
-    if signature.params.len() != arg_nodes.len() {
-        return vec![ArgProblem::Arity { expected: signature.params.len(), found: arg_nodes.len() }];
-    }
+    struct_name: &str,
+    name_pos: (usize, usize),
+    field_inits: &[(&ParseNode, &ParseNode)],
+) -> Vec<SemanticError> {
+    let (line, col) = name_pos;
 
-    let mut problems = Vec::new();
-    for (i, (param_ty, arg_node)) in signature.params.iter().zip(arg_nodes.iter()).enumerate() {
-        if let Some(found_ty) = resolve_expr_type(arg_node, table, spec) {
-            if resolve_assignment(param_ty, &found_ty).is_err() {
-                problems.push(ArgProblem::ArgType {
-                    index: i + 1,
-                    expected: param_ty.clone(),
-                    found: found_ty,
-                    line: arg_node.line,
-                    col: arg_node.col,
+    let struct_symbol = match table.lookup(struct_name).filter(|s| s.kind == SymbolKind::Struct) {
+        Some(s) => s,
+        None => return vec![SemanticError::UnknownClass { name: struct_name.to_string(), line, col }],
+    };
+
+    let mut errors = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+
+    for (name_node, value_node) in field_inits {
+        let field = name_node.lexeme.as_deref().unwrap_or(&name_node.symbol).to_string();
+
+        if seen.contains(&field) {
+            errors.push(SemanticError::DuplicateStructField {
+                struct_name: struct_name.to_string(),
+                field,
+                line: name_node.line,
+                col: name_node.col,
+            });
+            continue;
+        }
+        seen.push(field.clone());
+
+        let declared = match resolve_member(table, struct_name, &field, name_node.line, name_node.col) {
+            Ok(sym) => sym,
+            Err(e) => {
+                errors.push(e);
+                continue;
+            }
+        };
+
+        // Un valor que no sabemos tipar NO se chequea (`None`, nunca
+        // `Some(Unknown)`): `resolve_assignment` trata `Unknown` como
+        // incompatible con todo salvo consigo mismo.
+        if let (Some(expected), Some(found)) =
+            (declared.ty.clone(), resolve_expr_type(value_node, table, spec))
+        {
+            if resolve_assignment(&expected, &found).is_err() {
+                errors.push(SemanticError::StructFieldTypeMismatch {
+                    struct_name: struct_name.to_string(),
+                    field,
+                    expected,
+                    found,
+                    line: value_node.line,
+                    col: value_node.col,
                 });
             }
         }
     }
-    problems
+
+    // Campos faltantes: solo comprobable con los miembros ya cerrados. Si el
+    // struct todavía se está recorriendo (`members == None`) no se sabe cuál
+    // es el conjunto completo, y suponerlo daría falsos positivos.
+    if let Some(members) = &struct_symbol.members {
+        for member in members {
+            if !seen.contains(&member.name) {
+                errors.push(SemanticError::MissingStructField {
+                    struct_name: struct_name.to_string(),
+                    field: member.name.clone(),
+                    line,
+                    col,
+                });
+            }
+        }
+    }
+
+    errors
+}
+
+/// Tipa cada nodo de argumento con `resolve_expr_type`, dejando `None` en las
+/// posiciones que esta fase no sabe resolver (una expresión compuesta, una
+/// llamada anidada). Es el puente entre este módulo —que sí conoce
+/// `ParseNode`— y `functions`, que solo razona sobre tipos.
+///
+/// Importante: una posición que no se puede tipar va como `None`, NUNCA como
+/// `Some(Type::Unknown)`; `resolve_assignment` trata `Unknown` como
+/// incompatible con todo salvo consigo mismo, así que confundir ambos casos
+/// produciría errores de tipo inventados.
+fn argument_types(
+    arg_nodes: &[&ParseNode],
+    table: &SymbolTable,
+    spec: &SemanticSpec,
+) -> Vec<Option<Type>> {
+    arg_nodes.iter().map(|n| resolve_expr_type(n, table, spec)).collect()
 }
 
 /// Valida `new class_name(args)`: existencia de la clase, más aridad y tipos
@@ -307,8 +424,9 @@ pub fn validate_instantiation(
     };
 
     let signature = constructor_signature(class_symbol, spec);
+    let arg_types = argument_types(arg_nodes, table, spec);
 
-    check_args(table, spec, &signature, arg_nodes)
+    functions::check_arguments(&signature, &arg_types)
         .into_iter()
         .map(|p| match p {
             ArgProblem::Arity { expected, found } => SemanticError::ConstructorArityMismatch {
@@ -318,13 +436,16 @@ pub fn validate_instantiation(
                 line,
                 col,
             },
-            ArgProblem::ArgType { index, expected, found, line, col } => SemanticError::ConstructorArgTypeMismatch {
+            // El índice viene 1-based; el argumento que lo produjo es el que
+            // aporta la posición, para que el error señale al argumento y no
+            // al nombre de la clase.
+            ArgProblem::ArgType { index, expected, found } => SemanticError::ConstructorArgTypeMismatch {
                 class_name: class_name.to_string(),
                 index,
                 expected,
                 found,
-                line,
-                col,
+                line: arg_nodes[index - 1].line,
+                col: arg_nodes[index - 1].col,
             },
         })
         .collect()
@@ -389,20 +510,23 @@ pub fn validate_call(
         None => return Vec::new(),
     };
     let (line, col) = call_pos;
+    let arg_types = argument_types(arg_nodes, table, spec);
 
-    check_args(table, spec, signature, arg_nodes)
+    functions::check_arguments(signature, &arg_types)
         .into_iter()
         .map(|p| match p {
             ArgProblem::Arity { expected, found } => {
                 SemanticError::CallArityMismatch { callee: callee_label.to_string(), expected, found, line, col }
             }
-            ArgProblem::ArgType { index, expected, found, line, col } => SemanticError::CallArgTypeMismatch {
+            // Igual que en el constructor: el índice es 1-based y la posición
+            // sale del argumento que falló, no de la invocación entera.
+            ArgProblem::ArgType { index, expected, found } => SemanticError::CallArgTypeMismatch {
                 callee: callee_label.to_string(),
                 index,
                 expected,
                 found,
-                line,
-                col,
+                line: arg_nodes[index - 1].line,
+                col: arg_nodes[index - 1].col,
             },
         })
         .collect()
@@ -563,6 +687,7 @@ mod tests {
             constructor_name: Some("constructor".to_string()),
             assign: None,
             arith_tokens: Default::default(),
+            ..Default::default()
         };
         let sig = constructor_signature(&class, &spec);
         assert!(sig.params.is_empty());
@@ -599,6 +724,7 @@ mod tests {
             constructor_name: Some("constructor".to_string()),
             assign: None,
             arith_tokens: Default::default(),
+            ..Default::default()
         };
 
         // Cero argumentos, se esperaba 1.
@@ -642,6 +768,7 @@ mod tests {
             constructor_name: Some("constructor".to_string()),
             assign: None,
             arith_tokens: Default::default(),
+            ..Default::default()
         };
 
         let arg = leaf("STR_LIT", "\"texto\"");
@@ -677,6 +804,7 @@ mod tests {
             constructor_name: None,
             assign: None,
             arith_tokens: Default::default(),
+            ..Default::default()
         };
         // primary -> atom -> ID(x) : cadena de un solo hijo, "primary" es
         // TAMBIÉN el nombre de la producción de member_access, pero esta

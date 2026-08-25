@@ -38,3 +38,21 @@ let texto: string = "x";
 print(entera + texto);
 const FIJA: integer = 10;
 FIJA = 11;
+
+// Retornos: tipo incompatible, retorno vacio en funcion tipada, valor
+// retornado desde un procedimiento, y un return fuera de toda funcion.
+function malRetorno(): integer { return "no soy entero"; }
+function sinValor(): integer { return; }
+function procedimiento() { return 5; }
+return 1;
+
+// Aridad de una llamada RECURSIVA: la firma ya esta registrada al entrar.
+function fact(n: integer): integer { return fact(1, 2, 3); }
+
+// Struct: campo inexistente, tipo de campo, campo faltante y campo repetido
+// en el literal. Un diagnostico por cada uno.
+struct Punto { x: integer; y: integer; }
+let malCampo: Punto = Punto { z: 1, x: 2, y: 3 };
+let malTipo: Punto = Punto { x: "no soy entero", y: 2 };
+let incompleto: Punto = Punto { x: 1 };
+let repetido: Punto = Punto { x: 1, x: 2, y: 3 };

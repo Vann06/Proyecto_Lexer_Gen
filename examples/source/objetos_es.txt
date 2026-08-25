@@ -58,3 +58,20 @@ entera: entero = 1;
 otra: entero = 2;
 entera = entera + otra;
 imprime(entera);
+
+# Retorno tipo-correcto y llamada recursiva con la aridad correcta.
+metodo contarAtras(n: entero): entero {
+  retorna contarAtras(n);
+}
+
+# Registro: el struct de este lenguaje. Mismas capacidades, otros nombres.
+registro Punto { x: entero; y: entero; }
+
+origen: Punto = Punto { x: 0, y: 0 };
+imprime(origen.x);
+origen.y = 5;
+
+# Registro anidado.
+registro Caja { esquina: Punto; alto: entero; }
+caja: Caja = Caja { esquina: Punto { x: 1, y: 2 }, alto: 10 };
+imprime(caja.esquina.y);

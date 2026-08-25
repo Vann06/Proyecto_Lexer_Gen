@@ -19,6 +19,11 @@ pub enum ScopeKind {
     Global,
     Function,
     Class,
+    /// Entorno de un tipo registro (struct). Separado de `Class` porque un
+    /// struct no tiene metodos, ni `this`, ni herencia: distinguirlos deja
+    /// que las reglas que solo aplican a clases (declarar `this` al abrir un
+    /// metodo) no se disparen aca por accidente.
+    Struct,
     Block,
 }
 

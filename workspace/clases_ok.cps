@@ -55,3 +55,22 @@ let inferida = 2;
 entera = entera + inferida * 3 - 1;
 const FIJA: integer = 10;
 print(entera + FIJA);
+
+// Retorno tipo-correcto y llamada recursiva con la aridad correcta:
+// ninguno de los dos debe generar diagnostico.
+function contarAtras(n: integer): integer {
+  return contarAtras(n);
+}
+
+// Struct: tipo registro con campos tipados, literal con campos nombrados,
+// acceso y asignacion de campo. Todo debe pasar limpio.
+struct Punto { x: integer; y: integer; }
+
+let origen: Punto = Punto { x: 0, y: 0 };
+print(origen.x);
+origen.y = 5;
+
+// Struct anidado dentro de otro struct.
+struct Caja { esquina: Punto; alto: integer; }
+let caja: Caja = Caja { esquina: Punto { x: 1, y: 2 }, alto: 10 };
+print(caja.esquina.y);

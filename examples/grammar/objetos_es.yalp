@@ -24,7 +24,7 @@
  * tests/gramatica_agnostica_tests.rs.
  * ============================================================ */
 
-%token OBJETO METODO PROPIO CREAR RETORNA IMPRIME
+%token OBJETO METODO PROPIO CREAR RETORNA IMPRIME REGISTRO
 %token ENTERO_T TEXTO_T
 %token IDENT NUM_LIT TXT_LIT COMENTARIO
 %token IGUAL MAS
@@ -43,9 +43,11 @@ IGNORE COMENTARIO
 %declare parametro           parameter
 %declare declaracion_metodo  function
 %declare declaracion_objeto  class
+%declare declaracion_registro struct
 
 %scope declaracion_metodo  function
 %scope declaracion_objeto  class
+%scope declaracion_registro struct
 %scope cuerpo              block
 
 %type_of campo              tipo_dato
@@ -82,6 +84,15 @@ IGNORE COMENTARIO
 %arg_list_symbol argumentos
 %constructor iniciar
 
+/* Retorno: la misma directiva que compiscript.yalp, apuntando a la
+ * produccion `retorna` y a su hijo `expr`. */
+%return retorna expr
+
+/* Literal de registro: las mismas directivas, otras producciones y tokens. */
+%struct_literal atomo LLAVE_A 0 2
+%field_list_symbol lista_inicializadores
+%field_init inicializador 0 2
+
 %%
 
 unidad:
@@ -98,6 +109,7 @@ sentencia:
   | asignacion PUNTOYCOMA
   | declaracion_metodo
   | declaracion_objeto
+  | declaracion_registro
   | imprime PUNTOYCOMA
   | retorna PUNTOYCOMA
   | expr PUNTOYCOMA
@@ -174,6 +186,18 @@ miembro:
   | campo PUNTOYCOMA
 ;
 
+/* Registro (el struct de este lenguaje): solo campos, sin metodos
+ * ni herencia. Reusa `campo`, que ya es IDENT DOSPUNTOS tipo_dato. */
+
+declaracion_registro:
+    REGISTRO IDENT LLAVE_A campos_registro LLAVE_C
+;
+
+campos_registro:
+    campos_registro campo PUNTOYCOMA
+  | /* vacio */
+;
+
 cuerpo:
     LLAVE_A lista_sentencias LLAVE_C
   | LLAVE_A LLAVE_C
@@ -217,7 +241,24 @@ atomo:
   | TXT_LIT
   | PROPIO
   | CREAR IDENT PAR_A lista_argumentos PAR_C
+  | IDENT LLAVE_A inicializadores LLAVE_C
   | PAR_A expr PAR_C
+;
+
+/* Literal de registro: Punto { x: 1, y: 2 } */
+
+inicializadores:
+    lista_inicializadores
+  | /* vacio */
+;
+
+lista_inicializadores:
+    lista_inicializadores COMA inicializador
+  | inicializador
+;
+
+inicializador:
+    IDENT DOSPUNTOS expr
 ;
 
 lista_argumentos:

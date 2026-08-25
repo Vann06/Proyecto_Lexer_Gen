@@ -64,6 +64,7 @@ let kw_integer  = integer
 let kw_string   = string
 let kw_this     = this
 let kw_new      = new
+let kw_struct   = struct
 
 (* ============================================================ *)
 (*  REGLAS LEXICAS                                               *)
@@ -90,6 +91,7 @@ rule tokens =
   | kw_string   { "STR_T" }
   | kw_this     { "THIS" }
   | kw_new      { "NEW" }
+  | kw_struct   { "STRUCT" }
 
     (* 2. Identificadores *)
   | id          { "ID" }

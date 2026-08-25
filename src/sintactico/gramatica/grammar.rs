@@ -145,6 +145,33 @@ pub struct Grammar {
     /// Nombre convencional del método-constructor, de la única línea
     /// `%constructor` (p.ej. `%constructor constructor`).
     pub constructor_name: Option<String>,
+    /// `(producción, token de llave de apertura, índice del nombre de tipo,
+    /// índice de la lista de campos)`, de la única línea `%struct_literal` —
+    /// p.ej. `%struct_literal atom LBRACE 0 2` para
+    /// `atom: ID LBRACE field_inits RBRACE`.
+    ///
+    /// `None`: la gramática no tiene literales de struct.
+    pub struct_literal: Option<(String, String, usize, usize)>,
+    /// Símbolo de la producción recursiva de lista de campos de un literal
+    /// (p.ej. `field_init_list`), de la única línea `%field_list_symbol`.
+    pub field_list_symbol: Option<String>,
+    /// `(producción, índice del nombre del campo, índice del valor)`, de la
+    /// única línea `%field_init` — p.ej. `%field_init field_init 0 2` para
+    /// `field_init: ID COLON expr`.
+    pub field_init: Option<(String, usize, usize)>,
+    /// `(producción, símbolo del hijo con el valor retornado)`, una por línea
+    /// `%return` — p.ej. `%return return_stmt expr` para
+    /// `return_stmt: RETURN expr | RETURN`.
+    ///
+    /// El hijo se nombra por SÍMBOLO y no por índice a propósito: las dos
+    /// alternativas tienen distinta cantidad de hijos, y buscar por símbolo
+    /// devuelve "no hay" para el `return` sin valor, que es justo lo que hace
+    /// falta para distinguirlo de un `return expr`.
+    ///
+    /// Vacío: la gramática no declara ninguna producción de retorno y no se
+    /// valida ningún `return` (comportamiento idéntico a antes de que
+    /// existiera la directiva).
+    pub return_directives: Vec<(String, String)>,
 }
 
 impl Grammar {
@@ -235,6 +262,10 @@ impl Grammar {
             call: None,
             arg_list_symbol: None,
             constructor_name: None,
+            struct_literal: None,
+            field_list_symbol: None,
+            field_init: None,
+            return_directives: Vec::new(),
         };
 
         grammar.parse_tokens_section(sections[0]);
@@ -869,6 +900,34 @@ impl Grammar {
             } else if line.starts_with("%constructor") {
                 if let Some(name) = line[12..].split_whitespace().next() {
                     self.constructor_name = Some(name.to_string());
+                }
+            } else if line.starts_with("%struct_literal") {
+                let mut parts = line[15..].split_whitespace();
+                if let (Some(production), Some(open_brace), Some(name_idx), Some(fields_idx)) =
+                    (parts.next(), parts.next(), parts.next(), parts.next())
+                {
+                    if let (Ok(name_idx), Ok(fields_idx)) = (name_idx.parse::<usize>(), fields_idx.parse::<usize>()) {
+                        self.struct_literal =
+                            Some((production.to_string(), open_brace.to_string(), name_idx, fields_idx));
+                    }
+                }
+            } else if line.starts_with("%field_init") {
+                let mut parts = line[11..].split_whitespace();
+                if let (Some(production), Some(name_idx), Some(value_idx)) =
+                    (parts.next(), parts.next(), parts.next())
+                {
+                    if let (Ok(name_idx), Ok(value_idx)) = (name_idx.parse::<usize>(), value_idx.parse::<usize>()) {
+                        self.field_init = Some((production.to_string(), name_idx, value_idx));
+                    }
+                }
+            } else if line.starts_with("%field_list_symbol") {
+                if let Some(sym) = line[18..].split_whitespace().next() {
+                    self.field_list_symbol = Some(sym.to_string());
+                }
+            } else if line.starts_with("%return") {
+                let mut parts = line[7..].split_whitespace();
+                if let (Some(production), Some(value_symbol)) = (parts.next(), parts.next()) {
+                    self.return_directives.push((production.to_string(), value_symbol.to_string()));
                 }
             }
         }

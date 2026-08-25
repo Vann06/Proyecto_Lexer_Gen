@@ -1,0 +1,82 @@
+-- Cada error de este archivo produce exactamente un diagnostico, con los
+-- MISMOS codigos que compiscript.yalp y objetos_es.yalp ante el mismo error
+-- conceptual. Prueba que los diagnosticos no dependen de como se llamen los
+-- tokens ni las producciones, ni de la FORMA de la sintaxis.
+
+record Punto is
+  x : int;
+  y : int;
+end
+
+class Figura is
+  var area : int := 0;
+  func init(inicial : int) is
+    self.area := inicial;
+  end
+  func escalar(factor : int) is
+    self.area := factor;
+  end
+end
+
+class Circulo extends Figura is
+  var radio : int := 0;
+  func init(r : int) is
+    self.radio := r;
+  end
+end
+
+-- Herencia de una clase que nunca se declaro.
+class Huerfana extends NoHay is
+  var z : int := 0;
+end
+
+-- Ambito: redeclaracion en el mismo ambito, y uso de algo no declarado.
+var repetida : int := 1;
+var repetida : int := 2;
+show(faltante);
+
+-- Clases: miembro inexistente, self fuera de una clase, y una anotacion de
+-- tipo que nombra algo que nunca se declaro.
+var c : Circulo := make Circulo(5);
+show(c.noExiste);
+show(self.area);
+var fantasma : TipoInexistente;
+
+-- Constructor: aridad y tipo de argumento.
+var malo1 : Circulo := make Circulo(1, 2);
+var malo2 : Circulo := make Circulo("texto");
+
+-- Invocacion: aridad y tipo, sobre funcion libre.
+func duplicar(n : int) : int is
+  give n + n;
+end
+show(duplicar(1, 2));
+show(duplicar("texto"));
+
+-- Retornos: tipo incompatible, give vacio en funcion tipada, valor devuelto
+-- desde un procedimiento, y un give fuera de toda funcion.
+func malRetorno() : int is
+  give "no soy entero";
+end
+func sinValor() : int is
+  give;
+end
+func procedimiento() is
+  give 5;
+end
+give 1;
+
+-- Registros: campo inexistente, mal tipado, faltante y repetido.
+var malCampo : Punto := Punto[ z := 1, x := 2, y := 3 ];
+var malTipo : Punto := Punto[ x := "no soy entero", y := 2 ];
+var incompleto : Punto := Punto[ x := 1 ];
+var repetido : Punto := Punto[ x := 1, x := 2, y := 3 ];
+
+-- Sistema de tipos: inicializador, asignacion, aritmetica y constante.
+var malTipada : int := "no soy entero";
+var entera : int := 1;
+entera := "tampoco";
+var cadena : text := "x";
+show(entera + cadena);
+let FIJA : int := 10;
+FIJA := 11;

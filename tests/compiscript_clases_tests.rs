@@ -57,20 +57,27 @@ fn clases_errores_cps_reports_expected_codes() {
     assert_eq!(count("S009"), 1, "esperaba 1 uso de this fuera de clase: {codes:?}");
     // S010 UnknownMember — c.noExiste (lectura), this.noExisteEnLaClase y
     // c.noExisteTampoco (asignación: el destino tampoco puede inventarse).
-    assert_eq!(count("S010"), 3, "esperaba 3 miembros inexistentes: {codes:?}");
+    assert_eq!(count("S010"), 4, "esperaba 4 miembros inexistentes (3 accesos + 1 campo de literal): {codes:?}");
     // S011 ConstructorArityMismatch — new Circulo(1, 2)
     assert_eq!(count("S011"), 1, "esperaba 1 aridad incorrecta de constructor: {codes:?}");
     // S012 ConstructorArgTypeMismatch — new Circulo("texto")
     assert_eq!(count("S012"), 1, "esperaba 1 tipo de argumento incorrecto en constructor: {codes:?}");
     // S013 CallArityMismatch — c.escalar(1,2,3) (método heredado) y
     // duplicar(1,2) (función libre).
-    assert_eq!(count("S013"), 2, "esperaba 2 aridades incorrectas de llamada: {codes:?}");
+    assert_eq!(count("S013"), 3, "esperaba 3 aridades incorrectas de llamada (metodo, funcion libre y recursiva): {codes:?}");
     // S014 CallArgTypeMismatch — c.escalar("texto")
     assert_eq!(count("S014"), 1, "esperaba 1 tipo de argumento incorrecto en llamada: {codes:?}");
     // S015 InvalidArithmetic — entera + texto
     assert_eq!(count("S015"), 1, "esperaba 1 operación aritmética inválida: {codes:?}");
+    assert_eq!(count("S016"), 1, "esperaba 1 retorno de tipo incompatible: {codes:?}");
+    assert_eq!(count("S017"), 1, "esperaba 1 retorno vacío en función con tipo declarado: {codes:?}");
+    assert_eq!(count("S018"), 1, "esperaba 1 valor retornado desde un procedimiento: {codes:?}");
+    assert_eq!(count("S019"), 1, "esperaba 1 return fuera de toda función: {codes:?}");
+    assert_eq!(count("S022"), 1, "esperaba 1 campo de struct mal tipado: {codes:?}");
+    assert_eq!(count("S023"), 1, "esperaba 1 campo de struct faltante: {codes:?}");
+    assert_eq!(count("S024"), 1, "esperaba 1 campo de struct repetido: {codes:?}");
 
-    assert_eq!(codes.len(), 16, "no debería haber diagnósticos de más: {:#?}", resp.problems);
+    assert_eq!(codes.len(), 25, "no debería haber diagnósticos de más: {:#?}", resp.problems);
 
     // Todos con línea/columna reales y el nombre real del archivo.
     for p in &resp.problems {

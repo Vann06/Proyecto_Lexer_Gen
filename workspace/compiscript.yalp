@@ -22,7 +22,7 @@
  * ============================================================ */
 
 %token LET VAR CONST FUNCTION CLASS IF ELSE WHILE RETURN PRINT
-%token TRUE FALSE NULL_KW BOOL_T INT_T STR_T THIS NEW
+%token TRUE FALSE NULL_KW BOOL_T INT_T STR_T THIS NEW STRUCT
 %token ID INT_LIT STR_LIT COMMENT
 %token EQ NEQ LTE GTE AND OR
 %token ASSIGN PLUS MINUS TIMES DIV MOD LT GT NOT
@@ -44,8 +44,11 @@ IGNORE COMMENT
 %declare param       parameter
 %declare func_decl   function
 %declare class_decl  class
+%declare struct_decl struct
+%declare struct_field variable
 %scope   func_decl   function
 %scope   class_decl  class
+%scope   struct_decl struct
 %scope   bloque      block
 
 /* ------------------------------------------------------------
@@ -57,6 +60,7 @@ IGNORE COMMENT
 %type_of const_decl  tipo
 %type_of param       tipo
 %type_of func_decl   tipo
+%type_of struct_field tipo
 
 /* Inicializador (`= expr`) para validarlo contra el tipo declarado; si no
  * hay tipo declarado, el tipo se infiere del inicializador. Y `const` es
@@ -97,6 +101,19 @@ IGNORE COMMENT
 %arg_list_symbol args
 %constructor constructor
 
+/* Retorno: que produccion retorna de una funcion, y cual de sus hijos lleva
+ * el valor. Se nombra el hijo por SIMBOLO (no por indice) porque
+ * `return_stmt: RETURN expr | RETURN` tiene dos alternativas de distinto
+ * largo: buscar `expr` no lo encuentra en la segunda, y esa ausencia es
+ * justo la senal de "retorno sin valor". */
+%return return_stmt expr
+
+/* Literal de struct: Punto { x: 1, y: 2 }. La produccion se reconoce por la
+ * FORMA (que traiga LBRACE como hijo directo), igual que %new y %call. */
+%struct_literal atom LBRACE 0 2
+%field_list_symbol field_init_list
+%field_init field_init 0 2
+
 %%
 
 /* ============================================================
@@ -121,6 +138,7 @@ stmt:
   | assign_stmt SEMI
   | func_decl
   | class_decl
+  | struct_decl
   | print_stmt SEMI
   | bloque
   | if_stmt
@@ -252,6 +270,27 @@ class_member:
 ;
 
 /* ============================================================
+ * Declaracion de struct/record: solo campos tipados, sin
+ * metodos, sin herencia y sin constructor.
+ *   struct Nombre { campo: tipo; ... }
+ * El SEMI de cada campo es OBLIGATORIO: sin el, dos campos
+ * seguidos exigirian decidir con un solo token de lookahead.
+ * ============================================================ */
+
+struct_decl:
+    STRUCT ID LBRACE struct_fields RBRACE
+;
+
+struct_fields:
+    struct_fields struct_field
+  | /* vacio */
+;
+
+struct_field:
+    ID COLON tipo SEMI
+;
+
+/* ============================================================
  * Jerarquia de expresiones (menor a mayor precedencia), calcada de
  * la seccion "Expression Rules" de Compiscript.g4:
  *
@@ -335,7 +374,24 @@ atom:
   | NULL_KW
   | THIS
   | NEW ID LPAREN arg_list RPAREN
+  | ID LBRACE field_inits RBRACE
   | LPAREN expr RPAREN
+;
+
+/* Literal de struct: Punto { x: 1, y: 2 } */
+
+field_inits:
+    field_init_list
+  | /* vacio */
+;
+
+field_init_list:
+    field_init_list COMMA field_init
+  | field_init
+;
+
+field_init:
+    ID COLON expr
 ;
 
 arg_list:

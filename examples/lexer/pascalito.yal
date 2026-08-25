@@ -1,0 +1,131 @@
+(* ============================================================ *)
+(*  pascalito.yal  -  Especificacion lexica de "Pascalito"       *)
+(*                                                                *)
+(*  TERCERA gramatica de prueba de agnosticidad, deliberadamente  *)
+(*  distinta de las otras dos EN LA FORMA, no solo en los         *)
+(*  nombres:                                                      *)
+(*    - no tiene llaves: los bloques son  is ... end              *)
+(*    - asigna con  :=  en vez de  =                              *)
+(*    - el literal de registro usa corchetes: Punto[ x := 1 ]     *)
+(*    - los comentarios empiezan con  --                          *)
+(*  Estilo Pascal/Ada. Ver pascalito.README.md.                   *)
+(* ============================================================ *)
+
+(* --- Caracteres base --- *)
+let digit  = ['0'-'9']
+let lower  = ['a'-'z']
+let upper  = ['A'-'Z']
+let letter = lower | upper
+let alnum  = letter | digit
+
+(* --- Blancos --- *)
+let ws = [' ''\t''\n''\r']+
+
+(* --- Identificadores --- *)
+let id = (letter | '_')(alnum | '_')*
+
+(* --- Literales enteros --- *)
+let num_lit = digit+
+
+(* --- Textos entre comillas dobles --- *)
+let txt_safe = alnum | [' ''.''!''?'','':'';''-''_']
+let txt_lit  = '"' txt_safe* '"'
+
+(* --- Comentario de una linea: inicia con --
+   OJO: el juego de caracteres permitido adentro es restringido (no hay
+   llaves, parentesis, acentos ni comillas); un caracter fuera de esta
+   clase CORTA el comentario y el resto se lexea como codigo real. *)
+let cmt_char = alnum | [' ''.''!''?'','':'';''_''=']
+let comentario = '-''-' cmt_char*
+
+(* --- Operadores compuestos --- *)
+let assign_op = ':''='
+
+(* --- Palabras reservadas: forma Pascal/Ada, ninguna coincide con las
+   de compiscript.yal ni con las de objetos_es.yal --- *)
+let kw_record  = record
+let kw_class   = class
+let kw_extends = extends
+let kw_func    = func
+let kw_var     = var
+let kw_let     = let
+let kw_is      = is
+let kw_end     = end
+let kw_do      = do
+let kw_if      = if
+let kw_then    = then
+let kw_else    = else
+let kw_loop    = loop
+let kw_give    = give
+let kw_show    = show
+let kw_self    = self
+let kw_make    = make
+let kw_int     = int
+let kw_text    = text
+let kw_flag    = flag
+let kw_yes     = yes
+let kw_no      = no
+
+(* ============================================================ *)
+(*  REGLAS LEXICAS                                               *)
+(*  Prioridad: keywords > id > literales > ops > delimitadores   *)
+(* ============================================================ *)
+
+rule tokens =
+    (* 1. Palabras reservadas - deben ir ANTES que id *)
+    kw_record   { "RECORD" }
+  | kw_class    { "CLASS" }
+  | kw_extends  { "EXTENDS" }
+  | kw_func     { "FUNC" }
+  | kw_var      { "VAR" }
+  | kw_let      { "LET" }
+  | kw_is       { "IS" }
+  | kw_end      { "END" }
+  | kw_do       { "DO" }
+  | kw_if       { "IF" }
+  | kw_then     { "THEN" }
+  | kw_else     { "ELSE" }
+  | kw_loop     { "LOOP" }
+  | kw_give     { "GIVE" }
+  | kw_show     { "SHOW" }
+  | kw_self     { "SELF" }
+  | kw_make     { "MAKE" }
+  | kw_int      { "INT_T" }
+  | kw_text     { "TEXT_T" }
+  | kw_flag     { "FLAG_T" }
+  | kw_yes      { "YES" }
+  | kw_no       { "NO" }
+
+    (* 2. Identificadores *)
+  | id          { "ID" }
+
+    (* 3. Literales *)
+  | num_lit     { "INT_LIT" }
+  | txt_lit     { "TEXT_LIT" }
+
+    (* 4. Comentario - antes que el operador MINUS, para que "--" gane *)
+  | comentario  { "COMENT" }
+
+    (* 5. Operadores compuestos - antes que los simples *)
+  | assign_op   { "ASSIGN" }
+
+    (* 6. Operadores simples *)
+  | '+' { "PLUS" }
+  | '-' { "MINUS" }
+  | '*' { "STAR" }
+  | '/' { "SLASH" }
+  | '>' { "GT" }
+  | '<' { "LT" }
+
+    (* 7. Delimitadores - sin llaves: este lenguaje no las usa *)
+  | '(' { "LPAREN" }
+  | ')' { "RPAREN" }
+  | '[' { "LBRACK" }
+  | ']' { "RBRACK" }
+  | ';' { "SEMI" }
+  | ',' { "COMMA" }
+  | ':' { "COLON" }
+  | '.' { "DOT" }
+
+    (* 8. Blancos: se descartan *)
+  | ws  {}

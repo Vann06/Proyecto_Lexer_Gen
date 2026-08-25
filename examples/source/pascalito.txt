@@ -1,0 +1,139 @@
+-- Programa valido de Pascalito: debe dar CERO diagnosticos semanticos.
+-- Ejercita todo lo implementado, en un lenguaje sin llaves, que asigna
+-- con dos puntos igual y construye registros con corchetes.
+
+-- ============================================================
+-- 1. Registros: campos tipados, literal, acceso y anidamiento
+-- ============================================================
+
+record Punto is
+  x : int;
+  y : int;
+end
+
+record Caja is
+  esquina : Punto;
+  alto    : int;
+end
+
+var origen : Punto := Punto[ x := 0, y := 0 ];
+show(origen.x);
+origen.y := 5;
+
+var caja : Caja := Caja[ esquina := Punto[ x := 1, y := 2 ], alto := 10 ];
+show(caja.esquina.y);
+
+-- ============================================================
+-- 2. Clases: atributos, self, constructor init, herencia
+-- ============================================================
+
+class Figura is
+  var area : int := 0;
+
+  func init(inicial : int) is
+    self.area := inicial;
+  end
+
+  func obtenerArea() : int is
+    give self.area;
+  end
+
+  func escalar(factor : int) is
+    self.area := self.area * factor;
+  end
+end
+
+class Circulo extends Figura is
+  var radio : int := 0;
+
+  func init(r : int) is
+    self.radio := r;
+    self.area := 3 * r * r;
+  end
+
+  func obtenerRadio() : int is
+    give radio;
+  end
+end
+
+var f : Figura := make Figura(10);
+show(f.obtenerArea());
+
+var c : Circulo := make Circulo(5);
+show(c.obtenerRadio());
+show(c.obtenerArea());
+show(c.area);
+
+c.radio := 7;
+c.escalar(3);
+f.escalar(2);
+
+-- ============================================================
+-- 3. Funciones: tipos de argumento, retorno y recursion
+-- ============================================================
+
+func duplicar(n : int) : int is
+  give n + n;
+end
+
+show(duplicar(21));
+
+func cuentaAtras(n : int) : int is
+  give cuentaAtras(n);
+end
+
+-- Procedimiento sin tipo declarado: un give vacio es correcto.
+func avisar(m : text) is
+  show(m);
+  give;
+end
+
+avisar("listo");
+
+-- ============================================================
+-- 4. Closures: una funcion anidada captura del entorno
+-- ============================================================
+
+func contador() : int is
+  var total : int := 0;
+
+  func incrementar(paso : int) : int is
+    total := total + paso;
+    give total;
+  end
+
+  incrementar(1);
+  incrementar(2);
+  give total;
+end
+
+show(contador());
+
+-- ============================================================
+-- 5. Tipos, ambitos y control de flujo
+-- ============================================================
+
+var entera : int := 1;
+let FIJA : int := 10;
+entera := entera + FIJA * 2 - 1;
+
+var bandera : flag := yes;
+var texto : text := "hola";
+
+if entera > 0 then
+  show(entera);
+else
+  show("no positivo");
+end
+
+loop entera > 0 do
+  entera := entera - 1;
+end
+
+-- Bloque anidado: abre su propio ambito, la de adentro tapa a la de afuera.
+do
+  var entera : int := 99;
+  show(entera);
+end
+
+show(entera);

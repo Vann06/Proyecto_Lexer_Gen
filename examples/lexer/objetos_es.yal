@@ -44,6 +44,7 @@ let kw_retorna = retorna
 let kw_imprime = imprime
 let kw_entero  = entero
 let kw_texto   = texto
+let kw_registro = registro
 
 (* ============================================================ *)
 (*  REGLAS LEXICAS                                               *)
@@ -59,6 +60,7 @@ rule tokens =
   | kw_imprime  { "IMPRIME" }
   | kw_entero   { "ENTERO_T" }
   | kw_texto    { "TEXTO_T" }
+  | kw_registro { "REGISTRO" }
 
     (* 2. Identificadores *)
   | id          { "IDENT" }

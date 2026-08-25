@@ -65,6 +65,23 @@ pub struct SemanticSpec {
     /// tipo con `types::resolve_arithmetic`. Vacío: no se tipa ni se valida
     /// ninguna expresión aritmética.
     pub arith_tokens: HashMap<String, ArithmeticOperator>,
+    /// Configuración del literal de struct (`Punto { x: 1, y: 2 }`).
+    /// `None`: la gramática no tiene literales de struct y el walker no
+    /// tipa ni valida ninguno.
+    pub struct_literal: Option<StructLiteralRule>,
+    /// Símbolo de la producción recursiva que separa los campos de un
+    /// literal por comas — el análogo de `args_list_symbol`, y lo consume el
+    /// mismo `classes::flatten_arg_list`.
+    pub field_list_symbol: Option<String>,
+    /// Forma de un campo suelto dentro de un literal (`x: 1`). Se declara
+    /// aparte porque el walker necesita reconocer ESE nodo por sí solo —
+    /// llega a él sin saber quién es su padre— para excluir la etiqueta del
+    /// campo del recorrido y que no se reporte como variable no declarada.
+    pub field_init: Option<FieldInitRule>,
+    /// Producciones que retornan de una función, una por línea `%return`.
+    /// Vacío: no se valida ningún `return` contra el tipo declarado de la
+    /// función que lo contiene.
+    pub returns: Vec<ReturnRule>,
 }
 
 /// "La producción `production` asigna el valor de `value_index` a la
@@ -134,6 +151,45 @@ pub struct CallRule {
     pub open_paren_token: String,
     pub callee_index: usize,
     pub arg_list_index: usize,
+}
+
+/// "La producción `production` tiene una alternativa que construye un valor
+/// de struct con campos nombrados" — p.ej.
+/// `atom: ID LBRACE field_inits RBRACE`, con `type_name_index: 0` y
+/// `field_list_index: 2`.
+///
+/// Igual que `InstantiationRule` y `CallRule`, la alternativa concreta se
+/// reconoce por la FORMA: de las varias alternativas de `atom`, solo esta
+/// trae `open_brace_token` como hijo directo.
+pub struct StructLiteralRule {
+    pub production: String,
+    pub open_brace_token: String,
+    pub type_name_index: usize,
+    pub field_list_index: usize,
+}
+
+/// "La producción `production` es un campo de un literal de struct, con su
+/// nombre en `name_index` y su valor en `value_index`" — p.ej.
+/// `field_init: ID COLON expr` con `0` y `2`.
+pub struct FieldInitRule {
+    pub production: String,
+    pub name_index: usize,
+    pub value_index: usize,
+}
+
+/// "La producción `production` retorna de la función que la contiene, y el
+/// valor retornado —si lo hay— es su hijo `value_child`" — p.ej.
+/// `return_stmt: RETURN expr | RETURN`.
+///
+/// `value_child` es un `ChildLocator` y en la práctica siempre `BySymbol`:
+/// las dos alternativas tienen distinta aridad, así que un índice fijo no
+/// sirve. Buscar por símbolo devuelve `None` para la alternativa sin valor,
+/// y esa ausencia es exactamente la señal de "retorno vacío" — el mismo
+/// truco que usa `DeclarationRule::init_child` para un `var_decl` con y sin
+/// inicializador.
+pub struct ReturnRule {
+    pub production: String,
+    pub value_child: ChildLocator,
 }
 
 /// "La producción `production` declara un símbolo."
@@ -308,6 +364,28 @@ impl SemanticSpec {
                 .iter()
                 .filter_map(|(token, op)| arith_operator_from_directive(op).map(|o| (token.clone(), o)))
                 .collect(),
+            struct_literal: grammar.struct_literal.clone().map(
+                |(production, open_brace_token, type_name_index, field_list_index)| StructLiteralRule {
+                    production,
+                    open_brace_token,
+                    type_name_index,
+                    field_list_index,
+                },
+            ),
+            field_list_symbol: grammar.field_list_symbol.clone(),
+            field_init: grammar.field_init.clone().map(|(production, name_index, value_index)| FieldInitRule {
+                production,
+                name_index,
+                value_index,
+            }),
+            returns: grammar
+                .return_directives
+                .iter()
+                .map(|(production, value_symbol)| ReturnRule {
+                    production: production.clone(),
+                    value_child: ChildLocator::BySymbol(value_symbol.clone()),
+                })
+                .collect(),
         })
     }
 }
@@ -318,6 +396,7 @@ fn symbol_kind_from_directive(kind: &str) -> SymbolKind {
         "parameter" => SymbolKind::Parameter,
         "function" => SymbolKind::Function,
         "class" => SymbolKind::Class,
+        "struct" => SymbolKind::Struct,
         other => SymbolKind::Other(other.to_string()),
     }
 }
@@ -351,6 +430,7 @@ fn scope_kind_from_directive(kind: &str) -> ScopeKind {
     match kind {
         "global" => ScopeKind::Global,
         "class" => ScopeKind::Class,
+        "struct" => ScopeKind::Struct,
         "block" => ScopeKind::Block,
         // "function" y cualquier otro valor no reconocido: Function es el
         // scope más común de una declaración con cuerpo propio.
@@ -399,6 +479,10 @@ mod tests {
             immutable_directives: Vec::new(),
             assign: None,
             arith_directives: Vec::new(),
+            struct_literal: None,
+            field_list_symbol: None,
+            field_init: None,
+            return_directives: Vec::new(),
         }
     }
 

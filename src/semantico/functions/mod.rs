@@ -155,25 +155,43 @@ pub fn validate_call(
     validate_arguments(callee, signature, arguments, line, col)
 }
 
-/// Valida argumentos ya resueltos contra una firma concreta.
+/// Un desajuste entre unos argumentos y la firma que se invoca, SIN
+/// comprometerse todavía con una variante concreta de error ni con una
+/// posición: la misma comprobación sirve para un constructor
+/// (`new Clase(...)`), para una llamada normal (`f(...)`, `obj.m(...)`) y
+/// para cualquier otra forma invocable que una gramática defina, pero cada
+/// una reporta con su propio mensaje y ubica el error a su manera. Cada
+/// llamador mapea estos casos a lo que corresponda.
 ///
-/// Es útil también para métodos u otros símbolos invocables que ya fueron
-/// resueltos por otra capa. Si falla la aridad se reporta solo ese problema:
-/// comparar tipos con posiciones desalineadas produciría errores derivados.
-pub fn validate_arguments(
-    callee: &str,
-    signature: &Signature,
-    arguments: &[Option<Type>],
-    line: usize,
-    col: usize,
-) -> Vec<FunctionError> {
+/// `index` es 1-based, para poder usarse tal cual en el mensaje al usuario;
+/// quien necesite la posición del argumento la saca de su propia lista con
+/// `index - 1`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArgProblem {
+    Arity { expected: usize, found: usize },
+    ArgType { index: usize, expected: Type, found: Type },
+}
+
+/// Núcleo neutral de la comprobación de argumentos: aridad exacta, y tipo de
+/// cada argumento contra el parámetro correspondiente vía `resolve_assignment`
+/// — la misma tabla de coerciones que ya usa `SymbolTable::assign`.
+///
+/// Cada posición es `Option<Type>` porque no todas las expresiones pueden
+/// tiparse en esta fase. Un tipo desconocido (`None`) sigue contando para la
+/// aridad, pero no produce un diagnóstico especulativo de tipo.
+///
+/// Si la aridad ya está mal devuelve SOLO ese problema, sin comparar tipos
+/// posicionalmente: los pares parámetro/argumento ya están desalineados y
+/// cualquier diferencia de tipo sería ruido derivado del error real.
+///
+/// Esta es la ÚNICA implementación de la regla en el proyecto —
+/// `validate_arguments`/`validate_call` acá y `classes::validate_call`/
+/// `classes::validate_instantiation` son todos envoltorios sobre ella.
+pub fn check_arguments(signature: &Signature, arguments: &[Option<Type>]) -> Vec<ArgProblem> {
     if signature.params.len() != arguments.len() {
-        return vec![FunctionError::ArityMismatch {
-            callee: callee.to_string(),
+        return vec![ArgProblem::Arity {
             expected: signature.params.len(),
             found: arguments.len(),
-            line,
-            col,
         }];
     }
 
@@ -184,16 +202,47 @@ pub fn validate_arguments(
         .enumerate()
         .filter_map(|(index, (expected, found))| {
             let found = found.as_ref()?;
-            resolve_assignment(expected, found).is_err().then(|| {
-                FunctionError::ArgumentTypeMismatch {
-                    callee: callee.to_string(),
+            resolve_assignment(expected, found)
+                .is_err()
+                .then(|| ArgProblem::ArgType {
                     index: index + 1,
                     expected: expected.clone(),
                     found: found.clone(),
-                    line,
-                    col,
-                }
-            })
+                })
+        })
+        .collect()
+}
+
+/// Valida argumentos ya resueltos contra una firma concreta.
+///
+/// Es útil también para métodos u otros símbolos invocables que ya fueron
+/// resueltos por otra capa. Envoltorio sobre `check_arguments` que ubica
+/// todos los problemas en la misma posición (la de la invocación).
+pub fn validate_arguments(
+    callee: &str,
+    signature: &Signature,
+    arguments: &[Option<Type>],
+    line: usize,
+    col: usize,
+) -> Vec<FunctionError> {
+    check_arguments(signature, arguments)
+        .into_iter()
+        .map(|problem| match problem {
+            ArgProblem::Arity { expected, found } => FunctionError::ArityMismatch {
+                callee: callee.to_string(),
+                expected,
+                found,
+                line,
+                col,
+            },
+            ArgProblem::ArgType { index, expected, found } => FunctionError::ArgumentTypeMismatch {
+                callee: callee.to_string(),
+                index,
+                expected,
+                found,
+                line,
+                col,
+            },
         })
         .collect()
 }
@@ -220,9 +269,19 @@ impl FunctionContext {
     }
 
     pub fn enter(&mut self, name: impl Into<String>, signature: &Signature) {
+        self.enter_returning(name, signature.returns.clone());
+    }
+
+    /// Igual que `enter`, pero cuando solo se conoce el tipo de retorno.
+    ///
+    /// Es el caso del recorrido del árbol: al abrir el scope de una función
+    /// su tipo declarado ya está resuelto, pero la firma completa todavía no
+    /// —los parámetros se van declarando al recorrer los hijos—, y esperar a
+    /// tenerla llegaría tarde para validar los `return` del cuerpo.
+    pub fn enter_returning(&mut self, name: impl Into<String>, returns: Type) {
         self.active.push(ActiveFunction {
             name: name.into(),
-            returns: signature.returns.clone(),
+            returns,
         });
     }
 
@@ -252,6 +311,14 @@ impl FunctionContext {
             .ok_or(FunctionError::ReturnOutsideFunction { line, col })?;
 
         match (&active.returns, found) {
+            // El tipo de retorno declarado no se pudo resolver (por ejemplo
+            // un `%type_token` cuyo lado derecho cae fuera del vocabulario
+            // fijo del enum `Type`). Sin un tipo esperado real no se puede
+            // comprobar nada sin inventar diagnósticos: silencio deliberado.
+            // Cuidado: `resolve_assignment` NO es permisivo con `Unknown`
+            // —solo acepta `Unknown` contra `Unknown`—, así que sin este
+            // brazo cada `return` de esa función daría un error falso.
+            (Type::Unknown, _) => Ok(None),
             (Type::Void, None) => Ok(None),
             (Type::Void, Some(found)) => Err(FunctionError::UnexpectedReturnValue {
                 function: active.name.clone(),
@@ -306,6 +373,45 @@ mod tests {
                 returns: Type::Int,
             })
         );
+    }
+
+    #[test]
+    fn an_unresolved_declared_return_type_is_never_checked() {
+        // El tipo declarado cayo en `Unknown` (p.ej. un %type_token con un
+        // nombre fuera del vocabulario fijo de `Type`). `resolve_assignment`
+        // trata `Unknown` como incompatible con todo salvo consigo mismo, asi
+        // que sin la guarda cada `return` daria un error inventado.
+        let mut context = FunctionContext::new();
+        context.enter_returning("misteriosa", Type::Unknown);
+
+        assert!(context.validate_return(Some(&Type::Int), 1, 1).is_ok());
+        assert!(context.validate_return(Some(&Type::Str), 2, 1).is_ok());
+        assert!(context.validate_return(None, 3, 1).is_ok(), "un `return;` tampoco se chequea");
+    }
+
+    #[test]
+    fn a_return_outside_any_function_is_an_error() {
+        let context = FunctionContext::new();
+        assert!(matches!(
+            context.validate_return(Some(&Type::Int), 4, 2),
+            Err(FunctionError::ReturnOutsideFunction { line: 4, col: 2 })
+        ));
+    }
+
+    #[test]
+    fn wrong_arity_suppresses_positional_type_problems() {
+        // Con las posiciones desalineadas, cualquier diferencia de tipo es
+        // ruido derivado del error real: se reporta solo la aridad.
+        let signature = Signature { params: vec![Type::Int], returns: Type::Void };
+        let problems = check_arguments(&signature, &[Some(Type::Str), Some(Type::Str)]);
+        assert_eq!(problems, vec![ArgProblem::Arity { expected: 1, found: 2 }]);
+    }
+
+    #[test]
+    fn an_untypable_argument_counts_for_arity_but_not_for_types() {
+        let signature = Signature { params: vec![Type::Int, Type::Int], returns: Type::Void };
+        let problems = check_arguments(&signature, &[Some(Type::Int), None]);
+        assert!(problems.is_empty(), "un argumento sin tipo resuelto no se compara: {problems:?}");
     }
 
     #[test]

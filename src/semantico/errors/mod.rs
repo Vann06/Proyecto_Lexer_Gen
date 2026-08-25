@@ -10,6 +10,7 @@
 // los acumula igual que `AnalysisResult.errors` ya hacía con el `Vec` plano.
 use serde_json::{json, Value};
 
+use crate::semantico::functions::FunctionError;
 use crate::semantico::symbols::SemanticError;
 
 /// Categoría del error, según las familias de reglas que pide la rúbrica del
@@ -103,6 +104,48 @@ impl From<&SemanticError> for Diagnostic {
             SemanticError::CallArityMismatch { line, col, .. } => (ErrorKind::Funciones, "S013", *line, *col),
             SemanticError::CallArgTypeMismatch { line, col, .. } => (ErrorKind::Funciones, "S014", *line, *col),
             SemanticError::InvalidArithmetic { line, col, .. } => (ErrorKind::Tipos, "S015", *line, *col),
+            SemanticError::StructFieldTypeMismatch { line, col, .. } => (ErrorKind::Tipos, "S022", *line, *col),
+            SemanticError::MissingStructField { line, col, .. } => (ErrorKind::Tipos, "S023", *line, *col),
+            SemanticError::DuplicateStructField { line, col, .. } => (ErrorKind::Tipos, "S024", *line, *col),
+        };
+        Diagnostic { kind, code: code.to_string(), message, line, col, severity: Severity::Error }
+    }
+}
+
+/// Mapea cada variante de `FunctionError` a su categoría y código. `S016..S019`
+/// son de retorno y `S020..S021` de invocabilidad; todas
+/// `ErrorKind::Funciones`, igual que `S013`/`S014`.
+///
+/// `ArityMismatch`/`ArgumentTypeMismatch` reusan a propósito `S013`/`S014`: son
+/// literalmente el mismo error que `SemanticError::CallArityMismatch`/
+/// `CallArgTypeMismatch`, con el mismo mensaje, solo que producido desde el
+/// lado de `functions` en vez del de `classes`. Un evaluador que vea el código
+/// no debería tener que saber cuál de los dos módulos lo emitió.
+///
+/// `NotCallable`/`MissingSignature` todavía no las produce nadie (el walker
+/// resuelve el llamado por su cuenta antes de validar), pero el `match` es
+/// exhaustivo a propósito: así agregar una variante sin asignarle código es un
+/// error de compilación y no un diagnóstico que se pierde en silencio.
+impl From<&FunctionError> for Diagnostic {
+    fn from(err: &FunctionError) -> Self {
+        // Un error que en realidad venía de la tabla de símbolos conserva su
+        // código original — no se le inventa uno nuevo por haber pasado por
+        // `functions`.
+        if let FunctionError::Symbol(inner) = err {
+            return Diagnostic::from(inner);
+        }
+
+        let message = err.to_string();
+        let (kind, code, line, col) = match err {
+            FunctionError::Symbol(_) => unreachable!("tratado arriba"),
+            FunctionError::ArityMismatch { line, col, .. } => (ErrorKind::Funciones, "S013", *line, *col),
+            FunctionError::ArgumentTypeMismatch { line, col, .. } => (ErrorKind::Funciones, "S014", *line, *col),
+            FunctionError::ReturnTypeMismatch { line, col, .. } => (ErrorKind::Funciones, "S016", *line, *col),
+            FunctionError::MissingReturnValue { line, col, .. } => (ErrorKind::Funciones, "S017", *line, *col),
+            FunctionError::UnexpectedReturnValue { line, col, .. } => (ErrorKind::Funciones, "S018", *line, *col),
+            FunctionError::ReturnOutsideFunction { line, col } => (ErrorKind::Funciones, "S019", *line, *col),
+            FunctionError::NotCallable { line, col, .. } => (ErrorKind::Funciones, "S020", *line, *col),
+            FunctionError::MissingSignature { line, col, .. } => (ErrorKind::Funciones, "S021", *line, *col),
         };
         Diagnostic { kind, code: code.to_string(), message, line, col, severity: Severity::Error }
     }
@@ -128,6 +171,12 @@ impl ErrorCollector {
     /// Atajo para el caso común: convertir y acumular un `SemanticError` tal
     /// como lo devuelve `SymbolTable`.
     pub fn push_semantic(&mut self, err: &SemanticError) {
+        self.push(Diagnostic::from(err));
+    }
+
+    /// Igual que `push_semantic`, para los errores que produce `functions`
+    /// (aridad/tipos de una invocacion y validacion de `return`).
+    pub fn push_function(&mut self, err: &FunctionError) {
         self.push(Diagnostic::from(err));
     }
 

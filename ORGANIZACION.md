@@ -438,51 +438,70 @@ el lexer no sabe de antemano qué tokens va a tokenizar.
 
 ### Fase 15. Análisis semántico
 
-**Ubicación:** `src/semantico/` (esqueleto creado, sin lógica)
+**Ubicación:** `src/semantico/` — **implementada y conectada al pipeline HTTP.**
 
-Tabla de símbolos, alcance y chequeo de tipos. Consume el `ParseNode` que ya
+Tabla de símbolos, alcance y chequeo de tipos, sobre el `ParseNode` real que
 construyen `LRParser::parse_tree`/`parse_recovering_with_pos`
 (`src/sintactico/runtime/parser_lr.rs`) y `LL1Parser::parse_tree`
-(`src/sintactico/runtime/ll1.rs`) — ambos ya anotan cada hoja con
-`line`/`col` (`ParseNode`/`ParseToken` en
-`src/sintactico/runtime/parse_tree.rs`), así que los errores semánticos
-("variable X no declarada en línea N") pueden ubicarse sin trabajo extra.
+(`src/sintactico/runtime/ll1.rs`) — ambos anotan cada hoja con `line`/`col`
+(`ParseNode`/`ParseToken` en `src/sintactico/runtime/parse_tree.rs`), así que
+cada diagnóstico sale ubicado.
 
-**Bloqueos a resolver antes de implementarla:**
+**Submódulos** (ver el doc-comment de cabecera de `src/semantico/mod.rs` para
+el reparto completo):
 
-* **El pipeline HTTP nunca construye ese árbol.** `api::pipeline::
-  build_pipeline_response` descarta línea/columna de cada token al derivar
-  `token_kinds`, y `api::sintactico::build_parse_response` usa
-  `parse_with_trace_lr` — una reimplementación aparte del shift-reduce que
-  solo emite un trace JSON para el stepper del IDE, nunca un `ParseNode`.
-  Hoy el árbol solo lo consumen los binarios de CLI (`src/bin/test_*.rs`).
-* **Deuda de shift-reduce duplicado.** Solo para LR ya hay 4 variantes del
-  mismo driver en `parser_lr.rs` (`parse`, `parse_tree`, `parse_recovering`/
-  `parse_recovering_with_pos`) más una 5ª en `api::sintactico::
-  parse_with_trace_lr`. Conectar semántica al pipeline HTTP sin antes
-  consolidarlas sumaría una 6ª. Riesgo de tocar esto: la variante JSON
-  alimenta directamente la UI de "PASO" del frontend, así que la
-  consolidación tiene que preservar ese contrato byte a byte.
-* **Acciones semánticas dinámicas por producción (diseño, no implementado).**
-  Para que `src/semantico/` sirva con cualquier gramática dada, el `.yalp`
-  necesitará eventualmente sintaxis de acciones al estilo yacc, igual que
-  `.yal` ya tiene `{ action_code }` por regla:
-  ```
-  E : E PLUS T  { $$ = $1 + $3 }
-    | T          { $$ = $1 }
-    ;
-  ```
-  Para keyear cada acción a su producción no hace falta un id nuevo en
-  `Production` (cambiar `Production.bodies: Vec<Vec<Symbol>>` sería
-  invasivo — se itera en `first.rs`, `follow.rs`, `lr0.rs`, `lr1.rs`,
-  `ll1.rs`, `tablas.rs`, `api/sintactico.rs`): el orden de iteración que ya
-  usa `grammar_to_prods` (`src/api/sintactico.rs`) para numerar
-  producciones en la respuesta JSON es determinista y sirve como id
-  implícito.
-* **Sin tipo de diagnóstico compartido.** `src/error.rs` (`LexerGenError`)
-  es exclusivo del lexer (4 variantes, todas `String`) y `sintactico` no lo
-  usa — todo devuelve `Result<_, String>`. Diseñar ya una forma con *spans*
-  compartida sería especular sin un caso de uso real que la valide.
+| submódulo | responsabilidad |
+|---|---|
+| `scopes` / `symbols` | tabla de símbolos con entornos anidados, shadowing, `dump()` |
+| `types` | enum de tipos, tabla de compatibilidad y coerciones |
+| `spec` | la config declarativa por gramática (`SemanticSpec`) |
+| `analyzer` | el walker genérico; no menciona ninguna producción concreta |
+| `errors` | `Diagnostic` + códigos `S001`–`S024` + `ErrorCollector` |
+| `classes` | miembros con `.` (con herencia), `this`, constructor, literal de struct |
+| `functions` | firmas, argumentos (`check_arguments`) y `return` |
+| `closures` | captura de variables libres del entorno de definición |
+
+**Agnosticismo a la gramática.** Nada de esto está atado a Compiscript: toda
+la especificidad llega por directivas en el `.yalp` — `%ident`, `%declare`,
+`%scope`, `%type_of`, `%type_token`, `%init_of`, `%immutable`, `%assign`,
+`%arith`, `%this`, `%member_access`, `%new`, `%call`, `%arg_list_symbol`,
+`%constructor`, `%return`, `%struct_literal`, `%field_list_symbol`,
+`%field_init`. Se parsean en un único lugar
+(`Grammar::parse_tokens_section`) y se traducen a `SemanticSpec` en
+`SemanticSpec::from_grammar`. La prueba empírica vive en
+dos gramáticas de prueba independientes, que producen exactamente los mismos
+códigos de diagnóstico que Compiscript:
+
+* `examples/grammar/objetos_es.yalp` — todos los NOMBRES distintos
+  (`tests/gramatica_agnostica_tests.rs`).
+* `examples/grammar/pascalito.yalp` — además la FORMA distinta: sin llaves
+  (bloques `is ... end`), asignación con `:=`, literal de registro con
+  corchetes, comentarios con `--` (`tests/pascalito_tests.rs`).
+
+**Límite conocido de las directivas:** el lado derecho de `%type_token`
+pertenece a un vocabulario FIJO (`integer`, `float`, `string`, `bool`,
+`void`) porque nombra una variante del enum `Type`. Escribir otra cosa
+compila y parsea igual, pero el tipo cae en `Unknown` y los chequeos se
+desactivan en silencio — ver `examples/grammar/objetos_es.README.md`.
+
+**Bloqueos históricos, ya resueltos:** el pipeline HTTP sí construye el árbol
+y sí corre el análisis (`api::pipeline`, gated a `mode != "ll1"` y a que el
+`.yalp` traiga `%ident`), y `errors::Diagnostic` es el tipo de diagnóstico
+compartido que faltaba. Sigue en pie la **deuda de shift-reduce duplicado**
+(5 variantes del mismo driver entre `parser_lr.rs` y
+`api::sintactico::parse_with_trace_lr`), y las **acciones semánticas por
+producción al estilo yacc** siguen sin implementarse — las directivas
+declarativas cubrieron el caso de uso sin necesitarlas.
+
+**Estructuras definidas por el usuario.** `struct Nombre { campo: tipo; ... }`
+declara un tipo registro; se usa como anotación de tipo, se construye con un
+literal de campos nombrados (`Punto { x: 1, y: 2 }`) que valida campo
+inexistente, faltante, repetido y mal tipado, y sus campos se acceden con `.`
+ya tipados. Reusa la maquinaria de clases; lo único propio es el literal.
+
+**Lo que falta:** detectar "función con tipo declarado que nunca retorna"
+(necesita análisis de flujo de control), y arreglos/listas — `Type::Array`
+existe en el enum pero ninguna gramática lo produce.
 
 ---
 

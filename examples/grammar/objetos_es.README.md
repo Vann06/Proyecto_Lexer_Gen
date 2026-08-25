@@ -9,7 +9,7 @@ para demostrar empíricamente que `src/semantico` no está atado a
 - `examples/lexer/objetos_es.yal` — tokens en español
 - `examples/grammar/objetos_es.yalp` — gramática + directivas semánticas
 - `examples/source/objetos_es.txt` — programa válido (0 diagnósticos)
-- `examples/source/objetos_es_errores.txt` — 8 errores semánticos
+- `examples/source/objetos_es_errores.txt` — 24 diagnósticos semánticos
 
 ## Nada se llama igual
 
@@ -22,12 +22,15 @@ para demostrar empíricamente que `src/semantico` no está atado a
 | `var_decl` / `param` / `bloque` | `campo` / `parametro` / `cuerpo` |
 | `primary` / `atom` / `args` | `expresion_primaria` / `atomo` / `argumentos` |
 | método `constructor` | método `iniciar` |
+| `struct` / `struct_decl` | `registro` / `declaracion_registro` |
+| `field_init` / `field_init_list` | `inicializador` / `lista_inicializadores` |
 | `var x: integer` (tipo después) | `x: entero` (nombre primero) |
 
 El código Rust del analizador **no cambia**: toda la diferencia vive en las
 directivas `%ident` / `%declare` / `%scope` / `%type_of` / `%type_token` /
-`%this` / `%member_access` / `%new` / `%call` / `%arg_list_symbol` /
-`%constructor`.
+`%init_of` / `%immutable` / `%assign` / `%arith` / `%this` / `%member_access` /
+`%new` / `%call` / `%arg_list_symbol` / `%constructor` / `%return` /
+`%struct_literal` / `%field_list_symbol` / `%field_init`.
 
 ## Qué prueba exactamente
 
@@ -44,9 +47,20 @@ El mismo `analyze()` resuelve sobre esta gramática:
 - aridad y tipos de una invocación, tanto a método (`c.escalar(1,2,3)`) como
   a función libre (`duplicar(1,2)`)
 - una anotación de tipo que nombra un objeto que nunca se declaró
+- **retornos**: tipo retornado contra el tipo declarado del método, `retorna`
+  sin valor en un método tipado, valor retornado desde un procedimiento, y
+  `retorna` fuera de todo método
+- aridad de una llamada **recursiva**, que exige tener la firma registrada
+  antes de recorrer el cuerpo
+- **registros (structs)**: declaración con campos tipados, uso como anotación
+  de tipo, literal con campos nombrados validado (campo inexistente, faltante,
+  repetido y mal tipado), acceso a campo tipado y registros anidados
 
-Y emite **los mismos códigos de diagnóstico** (`S006`–`S014`) que produce
-Compiscript ante los mismos errores conceptuales.
+Y emite **los mismos códigos de diagnóstico** (`S006`–`S024`) que produce
+Compiscript ante los mismos errores conceptuales — de hecho, en el mismo
+orden: las dos listas de códigos son idénticas salvo por el `S005`
+(asignación a constante), que esta gramática no puede producir porque no
+tiene `const`.
 
 ## El límite que este ejemplo dejó a la vista
 
