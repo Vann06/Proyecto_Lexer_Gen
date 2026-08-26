@@ -13,6 +13,7 @@
 use crate::semantico::classes;
 use crate::semantico::closures::ClosureCollector;
 use crate::semantico::errors::ErrorCollector;
+use crate::semantico::flow::{self, FlowContext};
 use crate::semantico::functions::FunctionContext;
 use crate::semantico::scopes::ScopeKind;
 use crate::semantico::spec::{SemanticSpec, ChildLocator};
@@ -51,6 +52,7 @@ pub fn analyze(tree: &ParseNode, spec: &SemanticSpec) -> AnalysisResult {
 struct Frame {
     entered_scope: bool,
     declared_name: Option<String>,
+    opened_loop: bool,
     /// `true` si el scope que este nodo abrió era `Function` — así `exit`
     /// sabe si debe desapilar `function_stack` además de cerrar el scope.
     opened_function: bool,
@@ -100,6 +102,7 @@ struct Analyzer<'a> {
     /// le sirve a la validación de retornos. Fusionarlas ataría dos reglas
     /// que no tienen nada que ver.
     fn_context: FunctionContext,
+    flow_context: FlowContext,
 }
 
 impl<'a> Analyzer<'a> {
@@ -115,6 +118,7 @@ impl<'a> Analyzer<'a> {
             pending_named_types: Vec::new(),
             pending_parents: Vec::new(),
             fn_context: FunctionContext::new(),
+            flow_context: FlowContext::new(),
         }
     }
 
@@ -446,6 +450,35 @@ impl<'a> Visitor for Analyzer<'a> {
             }
         }
 
+        // Control de flujo configurado por el `.yalp`; no depende de nombres
+        // concretos de producciones ni palabras reservadas.
+        for rule in self.spec.flow.conditions.iter().filter(|r| r.production == node.symbol) {
+            if let Some(condition_index) = find_child_index(node, &rule.condition_child) {
+                let condition = &node.children[condition_index];
+                let found = classes::resolve_expr_type(condition, &self.table, self.spec);
+                if let Err(error) = flow::validate_condition(found.as_ref(), condition.line, condition.col) {
+                    self.errors.push_flow(&error);
+                }
+            }
+        }
+
+        let position = node.children.first().unwrap_or(node);
+        if self.spec.flow.breaks.iter().any(|production| production == &node.symbol) {
+            if let Err(error) = self.flow_context.validate_break(position.line, position.col) {
+                self.errors.push_flow(&error);
+            }
+        }
+        if self.spec.flow.continues.iter().any(|production| production == &node.symbol) {
+            if let Err(error) = self.flow_context.validate_continue(position.line, position.col) {
+                self.errors.push_flow(&error);
+            }
+        }
+
+        let opened_loop = self.spec.flow.loops.iter().any(|production| production == &node.symbol);
+        if opened_loop {
+            self.flow_context.enter_loop();
+        }
+
         // 5. Declaración/scope genérico — como en la Fase 15, extendido con
         // tipo (`type_child`), herencia de clase, tracking de parámetros
         // para `Signature`, y auto-declaración de `this`.
@@ -680,6 +713,7 @@ impl<'a> Visitor for Analyzer<'a> {
                     .and_then(|s| s.ty.clone())
                     .unwrap_or(Type::Void);
                 self.fn_context.enter_returning(fn_name.clone(), returns);
+                self.flow_context.enter_function();
 
                 self.function_stack.push((this_fn_depth, fn_name));
             }
@@ -702,6 +736,7 @@ impl<'a> Visitor for Analyzer<'a> {
         self.frames.push(Frame {
             entered_scope,
             declared_name,
+            opened_loop,
             opened_function,
             declared_kind,
             param_order: Vec::new(),
@@ -721,6 +756,10 @@ impl<'a> Visitor for Analyzer<'a> {
             // Lockstep con el push de `enter`: las dos pilas de función se
             // mantienen alineadas subiendo y bajando en los mismos puntos.
             self.fn_context.exit();
+            debug_assert!(self.flow_context.exit_function());
+        }
+        if frame.opened_loop {
+            debug_assert!(self.flow_context.exit_loop());
         }
         if frame.entered_scope {
             // El scope que se cierra es el que este mismo `enter` acaba de

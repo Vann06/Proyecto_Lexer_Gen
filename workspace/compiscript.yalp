@@ -21,7 +21,7 @@
  *    sin ambiguedad porque bloque siempre exige llaves.
  * ============================================================ */
 
-%token LET VAR CONST FUNCTION CLASS IF ELSE WHILE RETURN PRINT
+%token LET VAR CONST FUNCTION CLASS IF ELSE WHILE BREAK CONTINUE RETURN PRINT
 %token TRUE FALSE NULL_KW BOOL_T INT_T STR_T THIS NEW STRUCT
 %token ID INT_LIT STR_LIT COMMENT
 %token EQ NEQ LTE GTE AND OR
@@ -108,6 +108,12 @@ IGNORE COMMENT
  * justo la senal de "retorno sin valor". */
 %return return_stmt expr
 
+%condition if_stmt expr
+%condition while_stmt expr
+%loop while_stmt
+%break break_stmt
+%continue continue_stmt
+
 /* Literal de struct: Punto { x: 1, y: 2 }. La produccion se reconoce por la
  * FORMA (que traiga LBRACE como hijo directo), igual que %new y %call. */
 %struct_literal atom LBRACE 0 2
@@ -143,6 +149,8 @@ stmt:
   | bloque
   | if_stmt
   | while_stmt
+  | break_stmt SEMI
+  | continue_stmt SEMI
   | return_stmt SEMI
   | expr SEMI
 ;
@@ -216,6 +224,14 @@ if_stmt:
 
 while_stmt:
     WHILE LPAREN expr RPAREN bloque
+;
+
+break_stmt:
+    BREAK
+;
+
+continue_stmt:
+    CONTINUE
 ;
 
 return_stmt:

@@ -54,6 +54,8 @@ let kw_class    = class
 let kw_if       = if
 let kw_else     = else
 let kw_while    = while
+let kw_break    = break
+let kw_continue = continue
 let kw_return   = return
 let kw_print    = print
 let kw_true     = true
@@ -81,6 +83,8 @@ rule tokens =
   | kw_if       { "IF" }
   | kw_else     { "ELSE" }
   | kw_while    { "WHILE" }
+  | kw_break    { "BREAK" }
+  | kw_continue { "CONTINUE" }
   | kw_return   { "RETURN" }
   | kw_print    { "PRINT" }
   | kw_true     { "TRUE" }

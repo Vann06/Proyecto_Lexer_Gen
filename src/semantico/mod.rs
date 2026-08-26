@@ -23,6 +23,7 @@
 // validación de `return` contra el tipo declarado (`FunctionContext`).
 // `closures` acumula qué función anidada captura qué variables libres de su
 // entorno de definición.
+// `flow` valida condiciones booleanas y el contexto de los saltos de bucle.
 //
 // Los tipos registro (structs) definidos por el usuario reusan casi toda la
 // maquinaria de clases: `SymbolKind::Struct`/`ScopeKind::Struct` los
@@ -57,6 +58,7 @@ pub mod analyzer;
 pub mod classes;
 pub mod closures;
 pub mod errors;
+pub mod flow;
 pub mod functions;
 pub mod scopes;
 pub mod spec;

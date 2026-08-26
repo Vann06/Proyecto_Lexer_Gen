@@ -82,6 +82,8 @@ pub struct SemanticSpec {
     /// Vacío: no se valida ningún `return` contra el tipo declarado de la
     /// función que lo contiene.
     pub returns: Vec<ReturnRule>,
+    /// Reglas de control de flujo declaradas por la gramática.
+    pub flow: FlowSpec,
 }
 
 /// "La producción `production` asigna el valor de `value_index` a la
@@ -190,6 +192,20 @@ pub struct FieldInitRule {
 pub struct ReturnRule {
     pub production: String,
     pub value_child: ChildLocator,
+}
+
+#[derive(Debug, Default)]
+pub struct FlowSpec {
+    pub conditions: Vec<ConditionRule>,
+    pub loops: Vec<String>,
+    pub breaks: Vec<String>,
+    pub continues: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConditionRule {
+    pub production: String,
+    pub condition_child: ChildLocator,
 }
 
 /// "La producción `production` declara un símbolo."
@@ -386,8 +402,28 @@ impl SemanticSpec {
                     value_child: ChildLocator::BySymbol(value_symbol.clone()),
                 })
                 .collect(),
+            flow: FlowSpec {
+                conditions: grammar
+                    .condition_directives
+                    .iter()
+                    .map(|(production, locator)| ConditionRule {
+                        production: production.clone(),
+                        condition_child: child_locator_from_directive(locator),
+                    })
+                    .collect(),
+                loops: grammar.loop_directives.clone(),
+                breaks: grammar.break_directives.clone(),
+                continues: grammar.continue_directives.clone(),
+            },
         })
     }
+}
+
+fn child_locator_from_directive(value: &str) -> ChildLocator {
+    value
+        .parse::<usize>()
+        .map(ChildLocator::Index)
+        .unwrap_or_else(|_| ChildLocator::BySymbol(value.to_string()))
 }
 
 fn symbol_kind_from_directive(kind: &str) -> SymbolKind {
@@ -483,6 +519,10 @@ mod tests {
             field_list_symbol: None,
             field_init: None,
             return_directives: Vec::new(),
+            condition_directives: Vec::new(),
+            loop_directives: Vec::new(),
+            break_directives: Vec::new(),
+            continue_directives: Vec::new(),
         }
     }
 

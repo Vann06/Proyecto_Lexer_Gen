@@ -172,6 +172,12 @@ pub struct Grammar {
     /// valida ningún `return` (comportamiento idéntico a antes de que
     /// existiera la directiva).
     pub return_directives: Vec<(String, String)>,
+    /// `(producción, hijo condición)` declarados con `%condition`.
+    pub condition_directives: Vec<(String, String)>,
+    /// Producciones declaradas con `%loop`, `%break` y `%continue`.
+    pub loop_directives: Vec<String>,
+    pub break_directives: Vec<String>,
+    pub continue_directives: Vec<String>,
 }
 
 impl Grammar {
@@ -266,6 +272,10 @@ impl Grammar {
             field_list_symbol: None,
             field_init: None,
             return_directives: Vec::new(),
+            condition_directives: Vec::new(),
+            loop_directives: Vec::new(),
+            break_directives: Vec::new(),
+            continue_directives: Vec::new(),
         };
 
         grammar.parse_tokens_section(sections[0]);
@@ -928,6 +938,23 @@ impl Grammar {
                 let mut parts = line[7..].split_whitespace();
                 if let (Some(production), Some(value_symbol)) = (parts.next(), parts.next()) {
                     self.return_directives.push((production.to_string(), value_symbol.to_string()));
+                }
+            } else if line.starts_with("%condition") {
+                let mut parts = line[10..].split_whitespace();
+                if let (Some(production), Some(condition_child)) = (parts.next(), parts.next()) {
+                    self.condition_directives.push((production.to_string(), condition_child.to_string()));
+                }
+            } else if line.starts_with("%loop") {
+                if let Some(production) = line[5..].split_whitespace().next() {
+                    self.loop_directives.push(production.to_string());
+                }
+            } else if line.starts_with("%break") {
+                if let Some(production) = line[6..].split_whitespace().next() {
+                    self.break_directives.push(production.to_string());
+                }
+            } else if line.starts_with("%continue") {
+                if let Some(production) = line[9..].split_whitespace().next() {
+                    self.continue_directives.push(production.to_string());
                 }
             }
         }

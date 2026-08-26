@@ -10,6 +10,7 @@
 // los acumula igual que `AnalysisResult.errors` ya hacía con el `Vec` plano.
 use serde_json::{json, Value};
 
+use crate::semantico::flow::FlowError;
 use crate::semantico::functions::FunctionError;
 use crate::semantico::symbols::SemanticError;
 
@@ -151,6 +152,24 @@ impl From<&FunctionError> for Diagnostic {
     }
 }
 
+impl From<&FlowError> for Diagnostic {
+    fn from(err: &FlowError) -> Self {
+        let (code, line, col) = match err {
+            FlowError::ConditionNotBoolean { line, col, .. } => ("S025", *line, *col),
+            FlowError::BreakOutsideLoop { line, col } => ("S026", *line, *col),
+            FlowError::ContinueOutsideLoop { line, col } => ("S027", *line, *col),
+        };
+        Diagnostic {
+            kind: ErrorKind::ControlFlujo,
+            code: code.to_string(),
+            message: err.to_string(),
+            line,
+            col,
+            severity: Severity::Error,
+        }
+    }
+}
+
 /// Acumula diagnósticos durante un recorrido — lo que `Visitor::enter`/`exit`
 /// va llenando en vez de detenerse en el primer error (mismo espíritu que el
 /// modo pánico del parser LR: reportar todo lo que se pueda en una pasada).
@@ -177,6 +196,10 @@ impl ErrorCollector {
     /// Igual que `push_semantic`, para los errores que produce `functions`
     /// (aridad/tipos de una invocacion y validacion de `return`).
     pub fn push_function(&mut self, err: &FunctionError) {
+        self.push(Diagnostic::from(err));
+    }
+
+    pub fn push_flow(&mut self, err: &FlowError) {
         self.push(Diagnostic::from(err));
     }
 
