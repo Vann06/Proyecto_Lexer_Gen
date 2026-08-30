@@ -37,3 +37,14 @@ jobs:
 
       - name: Test suite completa
         run: cargo test --no-fail-fast --locked
+
+      # También en release, y no por redundancia: `debug_assert!` expande a
+      # `if cfg!(debug_assertions) { assert!(..) }`, así que cualquier efecto
+      # secundario que quede DENTRO de la macro desaparece del binario
+      # optimizado. Un bug así ya se coló una vez —el desapilado de
+      # `semantico::flow::FlowContext` vivía adentro de un `debug_assert!`, y
+      # S026/S027 dejaban de reportarse— y la suite en debug pasaba entera.
+      # Dockerfile.api compila con --release, o sea que es la configuración
+      # que de verdad se despliega.
+      - name: Test suite completa (release)
+        run: cargo test --no-fail-fast --locked --release

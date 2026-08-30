@@ -126,6 +126,66 @@ fn assignment_table_rejects_narrowing_and_unrelated_types() {
 }
 
 #[test]
+fn unknown_is_neutral_on_both_sides_of_an_assignment() {
+    // `Unknown` significa "esta fase todavía no supo tipar la expresión", no
+    // un tipo incompatible. Usarlo para rechazar convierte cada hueco de
+    // tipado en un diagnóstico falso: un `%type_of` que apunta a un terminal
+    // sin `%type_token`, o un `const K = f();` cuyo inicializador no se sabe
+    // tipar, hacían que toda declaración/asignación/argumento de ese símbolo
+    // reportara S006/S014. Antes solo se aceptaba `Unknown` contra `Unknown`.
+    for known in [
+        Type::Int,
+        Type::Float,
+        Type::Bool,
+        Type::Str,
+        Type::Void,
+        Type::Named("Punto".to_string()),
+    ] {
+        assert_eq!(
+            resolve_assignment(&Type::Unknown, &known),
+            Ok(Coercion::Exact),
+            "destino sin tipar, valor {known}"
+        );
+        assert_eq!(
+            resolve_assignment(&known, &Type::Unknown),
+            Ok(Coercion::Exact),
+            "destino {known}, valor sin tipar"
+        );
+    }
+
+    assert_eq!(
+        resolve_assignment(&Type::Unknown, &Type::Unknown),
+        Ok(Coercion::Exact)
+    );
+}
+
+#[test]
+fn an_unknown_operand_makes_arithmetic_unknown_instead_of_invalid() {
+    for operator in OPERATORS {
+        for (left, right) in [
+            (Type::Unknown, Type::Int),
+            (Type::Float, Type::Unknown),
+            (Type::Unknown, Type::Unknown),
+            // Ni siquiera contra un tipo que jamás sería válido: no sabemos
+            // el otro operando, así que no hay nada que afirmar.
+            (Type::Unknown, Type::Str),
+        ] {
+            let resolved = resolve_arithmetic(operator, &left, &right)
+                .unwrap_or_else(|e| panic!("{left} {operator} {right} no debe fallar: {e}"));
+            assert_eq!(
+                resolved.result,
+                Type::Unknown,
+                "{left} {operator} {right} debe propagar Unknown"
+            );
+        }
+    }
+
+    // Permisivo con lo desconocido, NO con lo conocido: dos tipos que sí
+    // sabemos tipar y son incompatibles siguen siendo un error.
+    assert!(resolve_arithmetic(ArithmeticOperator::Add, &Type::Bool, &Type::Str).is_err());
+}
+
+#[test]
 fn typed_declaration_and_assignment_use_the_declared_type() {
     let mut table = SymbolTable::new();
     table

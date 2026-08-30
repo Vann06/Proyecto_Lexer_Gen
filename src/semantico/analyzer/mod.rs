@@ -15,6 +15,7 @@ use crate::semantico::closures::ClosureCollector;
 use crate::semantico::errors::ErrorCollector;
 use crate::semantico::flow::{self, FlowContext};
 use crate::semantico::functions::FunctionContext;
+use crate::semantico::operators;
 use crate::semantico::scopes::ScopeKind;
 use crate::semantico::spec::{SemanticSpec, ChildLocator};
 use crate::semantico::symbols::{SemanticError, Signature, SymbolKind, SymbolTable};
@@ -293,6 +294,59 @@ impl<'a> Visitor for Analyzer<'a> {
                         col: node.children[1].col,
                     });
                 }
+            }
+        }
+
+        // 2b-bis. Lógicas, comparaciones y unarias (`spec.logic_tokens` /
+        // `compare_tokens` / `unary_tokens`). Como la rama aritmética, ninguna
+        // hace early-return ni salta hijos: los operandos siguen recorriéndose
+        // y, si alguno es a su vez una expresión inválida, también se reporta.
+        // Un operando cuyo tipo no sabemos resolver no se chequea.
+        if let Some((op, left, right)) = operators::find_logical(node, self.spec) {
+            let left_ty = classes::resolve_expr_type(left, &self.table, self.spec);
+            let right_ty = classes::resolve_expr_type(right, &self.table, self.spec);
+            if let (Some(l), Some(r)) = (left_ty, right_ty) {
+                let pos = &node.children[1];
+                if let Err(e) = operators::resolve_logical(op, &l, &r, pos.line, pos.col) {
+                    self.errors.push_operator(&e);
+                }
+            }
+        }
+
+        if let Some((op, left, right)) = operators::find_comparison(node, self.spec) {
+            let left_ty = classes::resolve_expr_type(left, &self.table, self.spec);
+            let right_ty = classes::resolve_expr_type(right, &self.table, self.spec);
+            if let (Some(l), Some(r)) = (left_ty, right_ty) {
+                let pos = &node.children[1];
+                if let Err(e) = operators::resolve_comparison(op, &l, &r, pos.line, pos.col) {
+                    self.errors.push_operator(&e);
+                }
+            }
+        }
+
+        if let Some((op, operand)) = operators::find_unary(node, self.spec) {
+            if let Some(ty) = classes::resolve_expr_type(operand, &self.table, self.spec) {
+                let pos = &node.children[0];
+                if let Err(e) = operators::resolve_unary(op, &ty, pos.line, pos.col) {
+                    self.errors.push_operator(&e);
+                }
+            }
+        }
+
+        // 2b-ter. Sentido semántico de los operandos: una función, clase o
+        // struct NOMBRADA A SECAS no es un valor (`f * 2`, `f && ok`). Se
+        // aplica a las cuatro familias desde un solo lugar, incluida la
+        // aritmética que ya existía — sin esto el caso pasa desapercibido,
+        // porque el tipo de la hoja `f` es el tipo de RETORNO de `f`.
+        let operand_nodes: Vec<&ParseNode> = classes::find_arithmetic(node, self.spec)
+            .map(|(_, l, r)| vec![l, r])
+            .or_else(|| operators::find_logical(node, self.spec).map(|(_, l, r)| vec![l, r]))
+            .or_else(|| operators::find_comparison(node, self.spec).map(|(_, l, r)| vec![l, r]))
+            .or_else(|| operators::find_unary(node, self.spec).map(|(_, o)| vec![o]))
+            .unwrap_or_default();
+        for operand in operand_nodes {
+            if let Some(e) = operators::non_value_operand(operand, &self.table, self.spec) {
+                self.errors.push_operator(&e);
             }
         }
 
@@ -756,10 +810,19 @@ impl<'a> Visitor for Analyzer<'a> {
             // Lockstep con el push de `enter`: las dos pilas de función se
             // mantienen alineadas subiendo y bajando en los mismos puntos.
             self.fn_context.exit();
-            debug_assert!(self.flow_context.exit_function());
+            // El desapilado va en un `let` y NO adentro del `debug_assert!`:
+            // esa macro expande a `if cfg!(debug_assertions) { assert!(..) }`,
+            // así que en release la expresión no se evalúa y el pop NUNCA
+            // ocurría. La pila de `flow_context` crecía sin parar y
+            // `has_loop_in_current_function` devolvía basura: S026/S027
+            // dejaban de reportarse en el binario de release —el que compila
+            // Dockerfile.api—, aunque toda la suite pasara en debug.
+            let exited = self.flow_context.exit_function();
+            debug_assert!(exited, "enter_function y exit_function deben ir en lockstep");
         }
         if frame.opened_loop {
-            debug_assert!(self.flow_context.exit_loop());
+            let exited = self.flow_context.exit_loop();
+            debug_assert!(exited, "enter_loop y exit_loop deben ir en lockstep");
         }
         if frame.entered_scope {
             // El scope que se cierra es el que este mismo `enter` acaba de
@@ -909,10 +972,11 @@ mod tests {
     use crate::semantico::errors::ErrorKind;
     use crate::semantico::scopes::ScopeKind;
     use crate::semantico::spec::{
-        CallRule, DeclarationRule, FieldInitRule, MemberAccessRule, ReturnRule, ScopeRule,
-        StructLiteralRule,
+        AssignRule, CallRule, DeclarationRule, FieldInitRule, MemberAccessRule, ReturnRule,
+        ScopeRule, StructLiteralRule,
     };
     use crate::semantico::symbols::SymbolKind;
+    use crate::semantico::types::ArithmeticOperator;
     use std::collections::HashMap;
 
     fn leaf(symbol: &str, lexeme: &str, line: usize, col: usize) -> ParseNode {
@@ -1003,6 +1067,60 @@ mod tests {
         let sym = result.table.lookup("x").expect("x se declaró");
         assert_eq!(sym.ty, Some(Type::Int), "el tipo debe quedar poblado desde el nodo `tipo`");
         assert!(sym.mutable);
+    }
+
+    #[test]
+    fn an_unknown_typed_symbol_does_not_invent_diagnostics_downstream() {
+        // `var_decl: tipo ID` donde el terminal del `tipo` (FOO_T) no está en
+        // `type_tokens`: `resolve_declared_type` cae en `Type::Unknown`, que
+        // significa "no lo sabemos", no "es incompatible". Ni la operación
+        // aritmética ni la asignación posterior pueden reportar nada — antes
+        // salían un S015 y un S006 falsos, porque la tabla de compatibilidad
+        // solo aceptaba `Unknown` contra `Unknown`.
+        let declaracion = internal(
+            "var_decl",
+            vec![internal("tipo", vec![leaf("FOO_T", "foo", 1, 1)]), leaf("ID", "x", 1, 5)],
+        );
+        let suma = internal(
+            "suma",
+            vec![leaf("ID", "x", 2, 1), leaf("PLUS", "+", 2, 3), leaf("INT_LIT", "1", 2, 5)],
+        );
+        let asignacion = internal(
+            "assign_stmt",
+            vec![leaf("ID", "x", 3, 1), leaf("ASSIGN", "=", 3, 3), leaf("INT_LIT", "2", 3, 5)],
+        );
+        let tree = internal("programa", vec![declaracion, suma, asignacion]);
+
+        let mut type_tokens = HashMap::new();
+        type_tokens.insert("INT_LIT".to_string(), Type::Int);
+
+        let mut spec = spec_without_classes(
+            vec![DeclarationRule {
+                production: "var_decl".to_string(),
+                kind: SymbolKind::Variable,
+                name_child: None,
+                implicit: false,
+                type_child: Some(ChildLocator::Index(0)),
+                init_child: None,
+                immutable: false,
+            }],
+            vec![],
+            type_tokens,
+        );
+        spec.arith_tokens.insert("PLUS".to_string(), ArithmeticOperator::Add);
+        spec.assign = Some(AssignRule {
+            production: "assign_stmt".to_string(),
+            target_index: 0,
+            value_index: 2,
+        });
+
+        let result = analyze(&tree, &spec);
+        assert!(
+            result.errors.is_empty(),
+            "un tipo sin resolver no debe generar diagnósticos: {:?}",
+            result.errors
+        );
+        assert_eq!(result.table.lookup("x").unwrap().ty, Some(Type::Unknown));
     }
 
     #[test]

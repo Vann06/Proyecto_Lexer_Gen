@@ -71,7 +71,9 @@ lexer-generator/
     │   ├── scopes/            #   entornos global/función/clase/bloque
     │   ├── symbols/           #   tabla de símbolos y validación de asignaciones/const
     │   ├── types/             #   Type, tabla de compatibilidad y coerciones
-    │   └── spec/              #   reglas declarativas por gramática
+    │   ├── spec/              #   reglas declarativas por gramática
+    │   ├── flow/              #   condiciones, break/continue, pila de contexto
+    │   └── operators/         #   lógicas, comparaciones, unarias, operando-no-valor
     ├── api/                   # ── CAPA HTTP COMPARTIDA ── (lógica del servidor y los tests)
     └── bin/
         ├── api.rs                 # servidor HTTP (Axum) — expone api:: al IDE
@@ -96,6 +98,10 @@ política. Actualmente incluye:
   `float -> integer`.
 - Validación del valor inicial y de cada asignación contra el tipo declarado.
 - Inicializador obligatorio para constantes y rechazo de su reasignación.
+- `Unknown` ("esta fase no supo tipar la expresión") es NEUTRO: no participa
+  en ninguna incompatibilidad, ni como destino ni como valor. Es la diferencia
+  entre "no lo sé" y "está mal" — tratarlo como tipo real convertía cada hueco
+  de tipado en un diagnóstico falso.
 
 La tabla numérica compartida por los cuatro operadores es:
 
@@ -113,8 +119,12 @@ ejecutar de forma aislada con:
 cargo test --test type_system_tests
 ```
 
-La infraestructura semántica todavía no forma parte de la respuesta del
-pipeline HTTP; por ahora se consume como API Rust desde `semantico`.
+La infraestructura semántica **sí** forma parte de la respuesta del pipeline
+HTTP: `api::build_pipeline_response_named` corre el analizador sobre el árbol
+real y devuelve `problems`, `symbol_table` y `closures`
+(`src/api/pipeline.rs`). Se activa cuando el `.yalp` trae `%ident` y el modo no
+es `ll1` — LL(1) renombra producciones al factorizar, así que un `SemanticSpec`
+escrito contra los nombres originales dejaría de encontrarlas.
 
 ---
 

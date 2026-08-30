@@ -86,6 +86,71 @@ fn ejemplo_closures_cps_detects_the_expected_capture_and_typed_fields() {
     assert!(resp.symbol_table.contains("y: Variable, Int"), "{}", resp.symbol_table);
 }
 
+/// "Detección de redeclaración de funciones" era el único punto del
+/// entregable de funciones sin cobertura: `SymbolTable::declare` rechaza
+/// cualquier nombre repetido en el mismo ámbito sin mirar el `SymbolKind`, así
+/// que las funciones lo heredan gratis — pero nada lo verificaba, y "funciona
+/// por herencia de otro mecanismo" es exactamente el tipo de supuesto que se
+/// rompe en silencio. Redeclarar en un ÁMBITO DISTINTO sigue siendo legal
+/// (shadowing), y eso también se comprueba acá para no convertir el chequeo en
+/// uno demasiado agresivo.
+#[test]
+fn redeclaring_a_function_in_the_same_scope_is_reported_but_shadowing_is_not() {
+    let yal = read("workspace/compiscript.yal");
+    let yalp = read("workspace/compiscript.yalp");
+
+    let duplicada = "\
+function calcular(a: integer): integer {
+  return a;
+}
+
+function calcular(b: integer): integer {
+  return b;
+}
+";
+
+    let resp = api::build_pipeline_response_named(&yal, &yalp, duplicada, "lalr", "dup.cps")
+        .expect("el pipeline no debe fallar internamente");
+    assert!(resp.accepted, "debe ser sintácticamente válido: {:?}", resp.error);
+
+    let redeclaraciones: Vec<&serde_json::Value> =
+        resp.problems.iter().filter(|p| p["code"] == "S001").collect();
+    assert_eq!(
+        redeclaraciones.len(),
+        1,
+        "la segunda `calcular` debe reportar S001: {:#?}",
+        resp.problems
+    );
+    let err = redeclaraciones[0];
+    assert_eq!(err["line"].as_u64().unwrap(), 5, "debe señalar la SEGUNDA declaración");
+    assert!(err["loc"].as_str().unwrap().starts_with("dup.cps:"));
+
+    // Misma firma, distinto ámbito: la interna hace shadowing de la global.
+    let anidada = "\
+function externa(): integer {
+  function interna(a: integer): integer {
+    return a;
+  }
+  return 0;
+}
+
+function interna(b: integer): integer {
+  return b;
+}
+";
+
+    let resp = api::build_pipeline_response_named(&yal, &yalp, anidada, "lalr", "shadow.cps")
+        .expect("el pipeline no debe fallar internamente");
+    assert!(resp.accepted, "debe ser sintácticamente válido: {:?}", resp.error);
+    let redeclaraciones: Vec<&serde_json::Value> =
+        resp.problems.iter().filter(|p| p["code"] == "S001").collect();
+    assert!(
+        redeclaraciones.is_empty(),
+        "declarar el mismo nombre en ámbitos distintos es shadowing, no redeclaración: {:#?}",
+        resp.problems
+    );
+}
+
 #[test]
 fn a_grammar_without_ident_directive_still_works_with_no_semantic_analysis() {
     // miniprog.yalp no trae %ident — el pipeline debe seguir funcionando

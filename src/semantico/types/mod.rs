@@ -20,6 +20,16 @@ pub enum Type {
     Unknown,
 }
 
+impl Type {
+    /// `integer` y `float` — los dos tipos sobre los que operan la tabla
+    /// aritmética y los operadores de orden (`< <= > >=`). Vive acá, y no en
+    /// `operators`, para que exista UN solo lugar que decida qué cuenta como
+    /// numérico.
+    pub fn is_numeric(&self) -> bool {
+        matches!(self, Type::Int | Type::Float)
+    }
+}
+
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -188,6 +198,23 @@ impl CompatibilityTable {
         left: &Type,
         right: &Type,
     ) -> Result<ArithmeticResolution, TypeError> {
+        // `Unknown` no es un tipo: es "esta fase todavía no sabe tipar esto".
+        // Con un operando así no se puede AFIRMAR que la operación sea
+        // inválida, y reportarla igual produce un diagnóstico inventado
+        // encima de la causa real. El resultado también queda `Unknown` y se
+        // propaga hacia arriba, que es la respuesta honesta.
+        //
+        // Misma política que ya aplican `flow::validate_condition` (deja
+        // pasar `Unknown`) y `classes::resolve_expr_type` (devuelve `None`
+        // en vez de adivinar).
+        if matches!(left, Type::Unknown) || matches!(right, Type::Unknown) {
+            return Ok(ArithmeticResolution {
+                result: Type::Unknown,
+                left_coercion: Coercion::Exact,
+                right_coercion: Coercion::Exact,
+            });
+        }
+
         ARITHMETIC_RULES
             .iter()
             .find(|rule| &rule.left == left && &rule.right == right)
@@ -205,12 +232,24 @@ impl CompatibilityTable {
 
     /// Comprueba una asignación contra el tipo declarado.
     pub fn assignment(&self, expected: &Type, found: &Type) -> Result<Coercion, TypeError> {
+        // `Unknown` de CUALQUIERA de los dos lados se deja pasar, por el mismo
+        // motivo que en `arithmetic`: significa "no lo sabemos todavía", no un
+        // tipo incompatible. Antes solo se aceptaba `Unknown` contra `Unknown`,
+        // y eso convertía cada hueco de tipado en un error falso — un `%type_of`
+        // que apunta a un terminal sin `%type_token`, o un `const K = f();`
+        // cuyo inicializador no se sabe tipar, hacían que toda declaración,
+        // asignación, argumento o `return` de ese símbolo reportara S006/S014/
+        // S016. `functions::validate_return` llegó a llevar un parche local
+        // para tapar su parte del problema; la regla vive acá, que es donde el
+        // resto de las fases la consultan.
+        if matches!(expected, Type::Unknown) || matches!(found, Type::Unknown) {
+            return Ok(Coercion::Exact);
+        }
+
         // Los tipos compuestos y nominales son compatibles únicamente cuando
         // son exactamente iguales. Los primitivos viven explícitamente en la
         // tabla para que toda coerción siga centralizada y sea auditable.
-        if matches!(expected, Type::Named(_) | Type::Array(_) | Type::Unknown)
-            && expected == found
-        {
+        if matches!(expected, Type::Named(_) | Type::Array(_)) && expected == found {
             return Ok(Coercion::Exact);
         }
 

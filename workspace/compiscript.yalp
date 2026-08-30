@@ -79,6 +79,25 @@ IGNORE COMMENT
 %arith TIMES multiply
 %arith DIV   divide
 
+/* Operadores logicos, comparaciones y unarios prefijos (fase de `operators`).
+ * Igual que %arith, se declaran por TOKEN: el walker reconoce la expresion por
+ * su forma (tres hijos con el operador en el medio, o dos con el operador
+ * adelante), no por el nombre de la produccion -- asi no hay que enumerar
+ * or_expr / and_expr / equality_expr / relational_expr. */
+%logic AND and
+%logic OR  or
+
+%compare EQ  eq
+%compare NEQ neq
+%compare LT  lt
+%compare LTE lte
+%compare GT  gt
+%compare GTE gte
+
+/* `unary: MINUS unary | NOT unary | primary` */
+%unary NOT   not
+%unary MINUS negate
+
 %type_token BOOL_T  bool
 %type_token INT_T   integer
 %type_token STR_T   string

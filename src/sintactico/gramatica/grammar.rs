@@ -123,6 +123,12 @@ pub struct Grammar {
     /// `(token del operador, nombre de la operación)`, uno por línea
     /// `%arith` — p.ej. `%arith PLUS add`.
     pub arith_directives: Vec<(String, String)>,
+    /// `%logic <token> <and|or>` -- operadores logicos binarios.
+    pub logic_directives: Vec<(String, String)>,
+    /// `%compare <token> <eq|neq|lt|lte|gt|gte>` -- comparaciones.
+    pub compare_directives: Vec<(String, String)>,
+    /// `%unary <token> <not|negate>` -- operadores unarios prefijos.
+    pub unary_directives: Vec<(String, String)>,
     /// Token de `this`, de la única línea `%this` (p.ej. `%this THIS`).
     pub this_token: Option<String>,
     /// `(producción, token de `.`)`, una por línea `%member_access` — puede
@@ -262,6 +268,9 @@ impl Grammar {
             immutable_directives: Vec::new(),
             assign: None,
             arith_directives: Vec::new(),
+            logic_directives: Vec::new(),
+            compare_directives: Vec::new(),
+            unary_directives: Vec::new(),
             this_token: None,
             member_access_directives: Vec::new(),
             instantiation: None,
@@ -893,6 +902,21 @@ impl Grammar {
                 let mut parts = line[6..].split_whitespace();
                 if let (Some(token), Some(op)) = (parts.next(), parts.next()) {
                     self.arith_directives.push((token.to_string(), op.to_string()));
+                }
+            } else if line.starts_with("%logic") {
+                let mut parts = line[6..].split_whitespace();
+                if let (Some(token), Some(op)) = (parts.next(), parts.next()) {
+                    self.logic_directives.push((token.to_string(), op.to_string()));
+                }
+            } else if line.starts_with("%compare") {
+                let mut parts = line[8..].split_whitespace();
+                if let (Some(token), Some(op)) = (parts.next(), parts.next()) {
+                    self.compare_directives.push((token.to_string(), op.to_string()));
+                }
+            } else if line.starts_with("%unary") {
+                let mut parts = line[6..].split_whitespace();
+                if let (Some(token), Some(op)) = (parts.next(), parts.next()) {
+                    self.unary_directives.push((token.to_string(), op.to_string()));
                 }
             } else if line.starts_with("%call") {
                 let mut parts = line[5..].split_whitespace();

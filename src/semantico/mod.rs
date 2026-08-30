@@ -24,6 +24,10 @@
 // `closures` acumula qué función anidada captura qué variables libres de su
 // entorno de definición.
 // `flow` valida condiciones booleanas y el contexto de los saltos de bucle.
+// `operators` valida las expresiones binarias y unarias que la tabla
+// aritmetica no cubre -- logicas (`&& || !`), comparaciones (`== != < <= >
+// >=`) -- y el sentido semantico de un operando (una funcion o una clase
+// nombradas a secas no son valores).
 //
 // Los tipos registro (structs) definidos por el usuario reusan casi toda la
 // maquinaria de clases: `SymbolKind::Struct`/`ScopeKind::Struct` los
@@ -60,6 +64,7 @@ pub mod closures;
 pub mod errors;
 pub mod flow;
 pub mod functions;
+pub mod operators;
 pub mod scopes;
 pub mod spec;
 pub mod symbols;

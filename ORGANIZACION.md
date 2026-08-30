@@ -456,17 +456,20 @@ el reparto completo):
 | `types` | enum de tipos, tabla de compatibilidad y coerciones |
 | `spec` | la config declarativa por gramática (`SemanticSpec`) |
 | `analyzer` | el walker genérico; no menciona ninguna producción concreta |
-| `errors` | `Diagnostic` + códigos `S001`–`S024` + `ErrorCollector` |
+| `errors` | `Diagnostic` + códigos `S001`–`S031` + `ErrorCollector` |
 | `classes` | miembros con `.` (con herencia), `this`, constructor, literal de struct |
 | `functions` | firmas, argumentos (`check_arguments`) y `return` |
 | `closures` | captura de variables libres del entorno de definición |
+| `flow` | condiciones booleanas y contexto de `break`/`continue` |
+| `operators` | expresiones binarias/unarias: lógicas, comparaciones y sentido semántico del operando |
 
 **Agnosticismo a la gramática.** Nada de esto está atado a Compiscript: toda
 la especificidad llega por directivas en el `.yalp` — `%ident`, `%declare`,
 `%scope`, `%type_of`, `%type_token`, `%init_of`, `%immutable`, `%assign`,
 `%arith`, `%this`, `%member_access`, `%new`, `%call`, `%arg_list_symbol`,
 `%constructor`, `%return`, `%struct_literal`, `%field_list_symbol`,
-`%field_init`. Se parsean en un único lugar
+`%field_init`, `%condition`, `%loop`, `%break`, `%continue`, `%logic`,
+`%compare`, `%unary`. Se parsean en un único lugar
 (`Grammar::parse_tokens_section`) y se traducen a `SemanticSpec` en
 `SemanticSpec::from_grammar`. La prueba empírica vive en
 dos gramáticas de prueba independientes, que producen exactamente los mismos
@@ -498,6 +501,14 @@ declara un tipo registro; se usa como anotación de tipo, se construye con un
 literal de campos nombrados (`Punto { x: 1, y: 2 }`) que valida campo
 inexistente, faltante, repetido y mal tipado, y sus campos se acceden con `.`
 ya tipados. Reusa la maquinaria de clases; lo único propio es el literal.
+
+**Operadores (`operators/`).** Lógicas (`&& || !`) sobre `bool`, comparaciones
+(`== != < <= > >=`) con compatibilidad de operandos —el orden exige numéricos,
+la igualdad delega en la tabla de `types`—, y el sentido semántico del
+operando: una función o una clase NOMBRADA A SECAS no es un valor (`f * 2` con
+`f` función es `S031`). Sin esa última regla el caso pasa desapercibido, porque
+el tipo de la hoja `f` es el tipo de RETORNO de `f`. Ver
+`src/semantico/operators/README.md`.
 
 **Lo que falta:** detectar "función con tipo declarado que nunca retorna"
 (necesita análisis de flujo de control), y arreglos/listas — `Type::Array`

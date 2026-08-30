@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 
 use crate::semantico::flow::FlowError;
 use crate::semantico::functions::FunctionError;
+use crate::semantico::operators::OperatorError;
 use crate::semantico::symbols::SemanticError;
 
 /// Categoría del error, según las familias de reglas que pide la rúbrica del
@@ -170,6 +171,29 @@ impl From<&FlowError> for Diagnostic {
     }
 }
 
+/// `S028..S031` son de expresiones binarias/unarias (`operators`). Van a
+/// `ErrorKind::Tipos` y no a una categoría propia porque los cuatro son
+/// fallos de compatibilidad de tipos: qué operandos admite un operador, y qué
+/// puede aparecer como operando.
+impl From<&OperatorError> for Diagnostic {
+    fn from(err: &OperatorError) -> Self {
+        let (code, line, col) = match err {
+            OperatorError::LogicalOperandNotBoolean { line, col, .. } => ("S028", *line, *col),
+            OperatorError::IncompatibleComparison { line, col, .. } => ("S029", *line, *col),
+            OperatorError::UnaryOperandMismatch { line, col, .. } => ("S030", *line, *col),
+            OperatorError::NonValueOperand { line, col, .. } => ("S031", *line, *col),
+        };
+        Diagnostic {
+            kind: ErrorKind::Tipos,
+            code: code.to_string(),
+            message: err.to_string(),
+            line,
+            col,
+            severity: Severity::Error,
+        }
+    }
+}
+
 /// Acumula diagnósticos durante un recorrido — lo que `Visitor::enter`/`exit`
 /// va llenando en vez de detenerse en el primer error (mismo espíritu que el
 /// modo pánico del parser LR: reportar todo lo que se pueda en una pasada).
@@ -200,6 +224,12 @@ impl ErrorCollector {
     }
 
     pub fn push_flow(&mut self, err: &FlowError) {
+        self.push(Diagnostic::from(err));
+    }
+
+    /// Igual que los anteriores, para `operators` (expresiones binarias y
+    /// unarias, y el sentido semántico de un operando).
+    pub fn push_operator(&mut self, err: &OperatorError) {
         self.push(Diagnostic::from(err));
     }
 

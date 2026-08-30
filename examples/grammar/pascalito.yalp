@@ -60,6 +60,13 @@ IGNORE COMENT
 %arith STAR  multiply
 %arith SLASH divide
 
+/* Comparaciones: mismas directivas que compiscript, apuntando a tokens
+ * distintos (GT/LT) sobre una produccion que se llama `comparacion` y no
+ * `relational_expr`. Pascalito no tiene operadores logicos ni `!`, asi que
+ * %logic/%unary no aparecen aca -- son opcionales, como todo lo demas. */
+%compare LT lt
+%compare GT gt
+
 /* OJO: el lado derecho de %type_token es vocabulario FIJO del enum
  * Type de src/semantico/types - integer, float, string, bool, void.
  * El lado izquierdo si es libre. */

@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::semantico::scopes::ScopeKind;
 use crate::semantico::symbols::SymbolKind;
+use crate::semantico::operators::{ComparisonOperator, LogicalOperator, UnaryOperator};
 use crate::semantico::types::{ArithmeticOperator, Type};
 use crate::sintactico::gramatica::grammar::Grammar;
 
@@ -65,6 +66,18 @@ pub struct SemanticSpec {
     /// tipo con `types::resolve_arithmetic`. Vacío: no se tipa ni se valida
     /// ninguna expresión aritmética.
     pub arith_tokens: HashMap<String, ArithmeticOperator>,
+    /// Tokens de los operadores logicos binarios (`%logic`). Un nodo de tres
+    /// hijos cuyo hijo del medio este aca se valida con
+    /// `operators::resolve_logical`. Vacio: la gramatica no tiene `&&`/`||`,
+    /// y no se valida ninguno.
+    pub logic_tokens: HashMap<String, LogicalOperator>,
+    /// Tokens de comparacion (`%compare`), mismo mecanismo de tres hijos.
+    /// Vacio: no se valida ninguna comparacion --y, como antes de que este
+    /// campo existiera, `resolve_expr_type` sigue sin saber tiparlas.
+    pub compare_tokens: HashMap<String, ComparisonOperator>,
+    /// Tokens de los operadores unarios prefijos (`%unary`): un nodo de DOS
+    /// hijos cuyo primero este aca (`unary: NOT unary | MINUS unary`).
+    pub unary_tokens: HashMap<String, UnaryOperator>,
     /// Configuración del literal de struct (`Punto { x: 1, y: 2 }`).
     /// `None`: la gramática no tiene literales de struct y el walker no
     /// tipa ni valida ninguno.
@@ -380,6 +393,21 @@ impl SemanticSpec {
                 .iter()
                 .filter_map(|(token, op)| arith_operator_from_directive(op).map(|o| (token.clone(), o)))
                 .collect(),
+            logic_tokens: grammar
+                .logic_directives
+                .iter()
+                .filter_map(|(token, op)| logical_operator_from_directive(op).map(|o| (token.clone(), o)))
+                .collect(),
+            compare_tokens: grammar
+                .compare_directives
+                .iter()
+                .filter_map(|(token, op)| comparison_operator_from_directive(op).map(|o| (token.clone(), o)))
+                .collect(),
+            unary_tokens: grammar
+                .unary_directives
+                .iter()
+                .filter_map(|(token, op)| unary_operator_from_directive(op).map(|o| (token.clone(), o)))
+                .collect(),
             struct_literal: grammar.struct_literal.clone().map(
                 |(production, open_brace_token, type_name_index, field_list_index)| StructLiteralRule {
                     production,
@@ -451,6 +479,37 @@ fn arith_operator_from_directive(op: &str) -> Option<ArithmeticOperator> {
     }
 }
 
+/// Las tres siguen el criterio de `arith_operator_from_directive`: un
+/// operador no reconocido no se mapea a un default arbitrario, simplemente esa
+/// linea se ignora y ese token no se trata como operador.
+fn logical_operator_from_directive(op: &str) -> Option<LogicalOperator> {
+    match op {
+        "and" => Some(LogicalOperator::And),
+        "or" => Some(LogicalOperator::Or),
+        _ => None,
+    }
+}
+
+fn comparison_operator_from_directive(op: &str) -> Option<ComparisonOperator> {
+    match op {
+        "eq" => Some(ComparisonOperator::Eq),
+        "neq" => Some(ComparisonOperator::Neq),
+        "lt" => Some(ComparisonOperator::Lt),
+        "lte" => Some(ComparisonOperator::Lte),
+        "gt" => Some(ComparisonOperator::Gt),
+        "gte" => Some(ComparisonOperator::Gte),
+        _ => None,
+    }
+}
+
+fn unary_operator_from_directive(op: &str) -> Option<UnaryOperator> {
+    match op {
+        "not" => Some(UnaryOperator::Not),
+        "negate" => Some(UnaryOperator::Negate),
+        _ => None,
+    }
+}
+
 fn type_from_directive(kind: &str) -> Type {
     match kind {
         "bool" => Type::Bool,
@@ -515,6 +574,9 @@ mod tests {
             immutable_directives: Vec::new(),
             assign: None,
             arith_directives: Vec::new(),
+            logic_directives: Vec::new(),
+            compare_directives: Vec::new(),
+            unary_directives: Vec::new(),
             struct_literal: None,
             field_list_symbol: None,
             field_init: None,

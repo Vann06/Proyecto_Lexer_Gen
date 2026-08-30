@@ -315,9 +315,12 @@ impl FunctionContext {
             // un `%type_token` cuyo lado derecho cae fuera del vocabulario
             // fijo del enum `Type`). Sin un tipo esperado real no se puede
             // comprobar nada sin inventar diagnósticos: silencio deliberado.
-            // Cuidado: `resolve_assignment` NO es permisivo con `Unknown`
-            // —solo acepta `Unknown` contra `Unknown`—, así que sin este
-            // brazo cada `return` de esa función daría un error falso.
+            //
+            // El brazo sigue haciendo falta aunque `resolve_assignment` ya sea
+            // permisivo con `Unknown`: sin él, un `return;` (found == None)
+            // contra un retorno declarado `Unknown` caería en el brazo
+            // `(expected, None)` de más abajo y daría un `MissingReturnValue`
+            // falso, exigiendo un valor de un tipo que ni siquiera conocemos.
             (Type::Unknown, _) => Ok(None),
             (Type::Void, None) => Ok(None),
             (Type::Void, Some(found)) => Err(FunctionError::UnexpectedReturnValue {

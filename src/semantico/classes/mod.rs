@@ -13,6 +13,7 @@
 use std::collections::HashSet;
 
 use crate::semantico::functions::{self, ArgProblem};
+use crate::semantico::operators;
 use crate::semantico::spec::SemanticSpec;
 use crate::semantico::symbols::{SemanticError, Signature, Symbol, SymbolKind, SymbolTable};
 use crate::semantico::types::{resolve_arithmetic, resolve_assignment, ArithmeticOperator, Type};
@@ -176,6 +177,31 @@ pub fn resolve_expr_type(node: &ParseNode, table: &SymbolTable, spec: &SemanticS
         // no sabemos tipar. El diagnóstico lo emite `analyzer::enter` al
         // visitar este nodo, no esta función (que es silenciosa por diseño).
         return resolve_arithmetic(op, &left_ty, &right_ty).ok().map(|r| r.result);
+    }
+
+    // Lógicas, comparaciones y unarias — mismo contrato silencioso que la rama
+    // aritmética: acá solo se TIPA la expresión; el diagnóstico lo emite
+    // `analyzer::enter` al visitar el nodo.
+    //
+    // Que una comparación tipe como `bool` no es cosmético: antes de esto
+    // `x > 4` caía en el `None` de abajo, así que una directiva `%condition`
+    // sobre un `if`/`while` nunca veía el tipo real de su condición y se
+    // rendía en silencio.
+    if let Some((op, left, right)) = operators::find_logical(node, spec) {
+        let left_ty = resolve_expr_type(left, table, spec)?;
+        let right_ty = resolve_expr_type(right, table, spec)?;
+        return operators::resolve_logical(op, &left_ty, &right_ty, node.line, node.col).ok();
+    }
+
+    if let Some((op, left, right)) = operators::find_comparison(node, spec) {
+        let left_ty = resolve_expr_type(left, table, spec)?;
+        let right_ty = resolve_expr_type(right, table, spec)?;
+        return operators::resolve_comparison(op, &left_ty, &right_ty, node.line, node.col).ok();
+    }
+
+    if let Some((op, operand)) = operators::find_unary(node, spec) {
+        let operand_ty = resolve_expr_type(operand, table, spec)?;
+        return operators::resolve_unary(op, &operand_ty, node.line, node.col).ok();
     }
 
     None
