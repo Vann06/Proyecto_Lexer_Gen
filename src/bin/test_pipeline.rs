@@ -1,4 +1,7 @@
-// Pipeline end-to-end: archivo fuente → lexer → parser → árbol de derivación.
+// Pipeline end-to-end por consola: archivo fuente → lexer → parser →
+// árbol → análisis semántico. Muestra lo que ENTREGA cada fase a la
+// siguiente, que es lo que no se ve ni en los tests (comprueban resultados)
+// ni en el IDE (devuelve JSON).
 //
 // Uso:
 //   cargo run --bin test_pipeline -- <gramatica.yalp> <lexer.yal> <fuente> [--ll1|--lalr|--slr]
@@ -12,8 +15,11 @@
 //   4. Filtra tokens ignorables (Whitespace, Comment, Ignored).
 //   5. Mapea Vec<Token> a Vec<ParseToken> usando el kind extraído del lexer.
 //   6. Llama parse_tree y muestra el árbol en ASCII + escribe DOT a output/.
+//   7. Corre el análisis semántico e imprime los ámbitos tal como se fueron
+//      cerrando (única forma de ver lo declarado dentro de un bloque), la
+//      tabla global, los diagnósticos y las closures.
 
-use lexer_generator::{sintactico, lexico};
+use lexer_generator::{lexico, semantico, sintactico};
 
 use std::env;
 use std::fs;
@@ -29,9 +35,9 @@ use sintactico::runtime::parser_lr::LRParser;
 use sintactico::runtime::ll1::LL1Parser;
 use sintactico::runtime::parse_tree::{ParseToken, print_ascii, to_dot};
 
-use crate::lexico::spec::parser::parse_yalex;
-use crate::lexico::spec::expand::expand_definitions;
-use crate::lexico::regex::parser::parse_regex;
+use crate::lexico::pipeline;
+use crate::semantico::analyzer::analyze;
+use crate::semantico::spec::SemanticSpec;
 use crate::lexico::runtime::simulator::{Simulator, LexResult, Token};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,11 +59,15 @@ fn main() {
         _ => None,
     }).unwrap_or(Mode::LALR);
 
-    println!("=== PIPELINE LEXER → PARSER → ÁRBOL ===");
+    println!("=== PIPELINE LEXICO → SINTACTICO → SEMANTICO ===");
     println!("  gramática : {}", yalp_path);
     println!("  lexer     : {}", yal_path);
     println!("  fuente    : {}", src_path);
     println!("  modo      : {:?}\n", mode);
+
+    println!("╔══════════════════════════════════════════════════════════╗");
+    println!("║  FASE LEXICA — de texto a tokens                         ║");
+    println!("╚══════════════════════════════════════════════════════════╝");
 
     // ── 1. Construir tabla del lexer ────────────────────────────────────────
     let lexer_table = build_lexer_table(yal_path);
@@ -96,8 +106,8 @@ fn main() {
     });
 
     let mut significant: Vec<(String, String, usize, usize)> = raw_tokens.iter()
-        .map(|t| (normalize_kind(&t.kind), t.lexeme.clone(), t.line, t.col))
-        .filter(|(k, ..)| !is_ignored(k, &grammar))
+        .map(|t| (t.kind.to_uppercase(), t.lexeme.clone(), t.line, t.col))
+        .filter(|(k, ..)| !grammar.ignores_kind(k))
         .collect();
 
     // Gramáticas sensibles a indentación (Python-style) necesitan un
@@ -118,9 +128,22 @@ fn main() {
         .map(|(kind, lexeme, line, col)| ParseToken { kind, lexeme, line, col })
         .collect();
 
-    println!("✓ Tras filtrar ignorables: {} tokens al parser.", parse_tokens.len());
-    println!("  tokens: {:?}\n",
-             parse_tokens.iter().map(|t| t.kind.clone()).collect::<Vec<_>>());
+    println!(
+        "✓ Tras filtrar ignorables: {} tokens al parser ({} descartados).",
+        parse_tokens.len(),
+        raw_tokens.len().saturating_sub(parse_tokens.len())
+    );
+    // Lo que el parser recibe de verdad, no solo los nombres: es el contrato
+    // entre la fase lexica y la sintactica.
+    println!("\n  {:<14} {:<18} {}", "KIND", "LEXEMA", "LINEA:COL");
+    println!("  {}", "-".repeat(48));
+    for t in &parse_tokens {
+        let lexeme: String = t.lexeme.chars().take(16).collect();
+        println!("  {:<14} {:<18} {}:{}", t.kind, lexeme, t.line, t.col);
+    }
+    println!();
+
+    println!("== FASE SINTACTICA - de tokens a arbol ==");
 
     // ── 4. Construir parser y parsear ───────────────────────────────────────
     let tree = match mode {
@@ -178,6 +201,8 @@ fn main() {
                 println!("\n✓ DOT escrito en {} (genera PNG con: dot -Tpng {} -o tree.png)",
                          dot_path, dot_path);
             }
+
+            run_semantic_phase(&t, &grammar, mode, src_path);
         }
         Err(e) => {
             eprintln!("\n✗ Error de parseo: {}", e);
@@ -186,50 +211,86 @@ fn main() {
     }
 }
 
-/// Compila un .yal a una tabla de transición usando las mismas fases que main.rs.
+/// Compila un .yal a una tabla de transición. La construcción real vive en
+/// `lexico::pipeline::build_table`; acá solo queda la política de este
+/// binario: ante un error, informar y salir con código distinto de cero.
 fn build_lexer_table(yal_path: &str) -> crate::lexico::table::transition_table::TransitionTable {
     let yal_src = fs::read_to_string(yal_path).unwrap_or_else(|e| {
         eprintln!("Error al leer .yal: {}", e);
         std::process::exit(1);
     });
-    let spec = parse_yalex(&yal_src).unwrap_or_else(|e| {
-        eprintln!("Error al parsear .yal: {}", e);
+    pipeline::build_table(&yal_src).unwrap_or_else(|e| {
+        eprintln!("{}", e);
         std::process::exit(1);
-    });
-    let expanded = expand_definitions(&spec);
+    })
+}
 
-    let mut id_counter = 0;
-    let mut nfas = Vec::new();
-    for rule in &expanded {
-        let ast = parse_regex(&rule.pattern_expanded).unwrap_or_else(|e| {
-            eprintln!("Error en regex '{}': {}", rule.pattern_expanded, e);
-            std::process::exit(1);
-        });
-        let mut nfa = crate::lexico::automata::nfa::build_nfa_from_ast(&ast, &mut id_counter);
-        if let Some(fs) = nfa.states.get_mut(&nfa.end_state) {
-            fs.accept_action = Some((rule.priority, rule.action_code.clone()));
+/// Tercera fase: recorre el árbol que acaba de construir el parser y muestra
+/// todo lo que produce el análisis semántico — los ámbitos tal como se fueron
+/// cerrando, la tabla global que queda al final, los diagnósticos y las
+/// closures.
+fn run_semantic_phase(
+    tree: &crate::sintactico::runtime::parse_tree::ParseNode,
+    grammar: &Grammar,
+    mode: Mode,
+    src_path: &str,
+) {
+    println!("\n== FASE SEMANTICA - del arbol a la tabla de simbolos ==");
+
+    // Dos motivos legítimos para no correrla. Se dicen en voz alta en vez de
+    // no imprimir nada, que parecería un error.
+    if mode == Mode::LL1 {
+        println!("  omitida en modo LL(1): factorizar la gramatica renombra las");
+        println!("  producciones, asi que las directivas semanticas -escritas");
+        println!("  contra los nombres originales- dejarian de encontrarlas.");
+        return;
+    }
+    let spec = match SemanticSpec::from_grammar(grammar) {
+        Some(spec) => spec,
+        None => {
+            println!("  omitida: la gramatica no declara `%ident`, asi que no hay");
+            println!("  forma de saber que token es un identificador.");
+            return;
         }
-        nfas.push(nfa);
-    }
-    let master = crate::lexico::automata::nfa::combine_nfas(nfas, &mut id_counter);
-    let dfa     = crate::lexico::automata::subset::build_dfa_from_nfa(&master);
-    let min_dfa = crate::lexico::automata::minimize::minimize_dfa(&dfa);
-    crate::lexico::table::transition_table::build(&min_dfa)
-}
+    };
 
-/// Normaliza el kind del lexer a UPPERCASE para que coincida con los tokens
-/// declarados en el .yalp (que siguen la convención ALL_CAPS de yacc/bison).
-/// Ejemplo: "Id" → "ID", "NumInt" → "NUMINT", "LParen" → "LPAREN".
-fn normalize_kind(kind: &str) -> String {
-    kind.to_uppercase()
-}
+    let result = analyze(tree, &spec);
 
-/// Token a omitir antes de pasarlo al parser: whitespace, comentarios y los
-/// tokens declarados como IGNORE en la gramática .yalp.
-fn is_ignored(kind: &str, grammar: &Grammar) -> bool {
-    let lower = kind.to_lowercase();
-    if lower.contains("whitespace") || lower.contains("comment") || lower == "ignored" {
-        return true;
+    // Los ámbitos, en el orden en que se cerraron (el más interno primero).
+    // Es la única forma de ver lo declarado dentro de un bloque: la tabla
+    // final solo conserva el Global.
+    println!("\n--- AMBITOS (en orden de cierre: del mas interno al mas externo) ---");
+    if result.scopes.is_empty() {
+        println!("  (el programa no abrio ningun ambito propio)");
+    } else {
+        print!("{}", result.scopes.dump());
     }
-    grammar.ignores.contains(kind)
+
+    println!("\n--- TABLA DE SIMBOLOS GLOBAL (al terminar el recorrido) ---");
+    print!("{}", result.table.dump());
+    println!("  nota: los ambitos de arriba ya estan cerrados; aca solo queda el");
+    println!("  Global, con lo de funciones y clases anidado en sus miembros.");
+
+    let problems = result.errors.to_problems(src_path);
+    println!("\n--- DIAGNOSTICOS SEMANTICOS ---");
+    if problems.is_empty() {
+        println!("  ninguno");
+    } else {
+        for p in &problems {
+            println!(
+                "  [{}] {} -- {}",
+                p["code"].as_str().unwrap_or("?"),
+                p["msg"].as_str().unwrap_or(""),
+                p["loc"].as_str().unwrap_or("")
+            );
+        }
+    }
+
+    println!("\n--- CLOSURES (captura del entorno de definicion) ---");
+    if result.closures.is_empty() {
+        println!("  (ninguna funcion anidada captura variables de su entorno)");
+    } else {
+        print!("{}", result.closures.dump());
+    }
+    println!();
 }

@@ -187,6 +187,23 @@ pub struct Grammar {
 }
 
 impl Grammar {
+    /// ¿Este kind de token debe omitirse antes de pasárselo al parser?
+    ///
+    /// Son dos cosas a la vez: los tokens que la gramática declara con
+    /// `IGNORE`, y la convención de que cualquier cosa que se llame
+    /// whitespace/comment/ignored se descarta aunque no se haya declarado.
+    /// Vive acá —y no en `lexico`— porque la respuesta sale de `self.ignores`:
+    /// es una pregunta sobre la GRAMÁTICA, no sobre el lexer. Antes estaba
+    /// duplicada palabra por palabra en `api::lexico` y en
+    /// `bin/test_pipeline.rs`.
+    pub fn ignores_kind(&self, kind: &str) -> bool {
+        let lower = kind.to_lowercase();
+        lower.contains("whitespace")
+            || lower.contains("comment")
+            || lower == "ignored"
+            || self.ignores.contains(kind)
+    }
+
     /// Lee un archivo YAPar y construye la gramática en memoria.
     /// Aplica eliminación de ambigüedad (recursión izquierda + left-factoring).
     /// USA ESTO SOLO para parsers LL(1).

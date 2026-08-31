@@ -90,3 +90,72 @@ fn pipeline_reports_more_than_one_syntax_error_via_panic_mode_recovery() {
         syntax_errors.len(), resp.problems
     );
 }
+
+/// El endpoint expone los ambitos parciales, no solo la tabla global.
+///
+/// Lo que se comprueba de verdad es que aparezca una variable declarada DENTRO
+/// DE UN BLOQUE: la tabla global no la lleva (al terminar el recorrido solo
+/// queda el Global) y `symbol_table` solo anida lo de funciones y clases, asi
+/// que sin este campo el frontend no tiene forma de mostrarla.
+#[test]
+fn pipeline_exposes_partial_scopes_including_block_locals() {
+    let yal = std::fs::read_to_string("workspace/compiscript.yal").expect("lexer");
+    let yalp = std::fs::read_to_string("workspace/compiscript.yalp").expect("gramatica");
+    let source = std::fs::read_to_string("workspace/ejemplo.cps").expect("fuente");
+
+    let resp = api::build_pipeline_response_named(&yal, &yalp, &source, "lalr", "ejemplo.cps")
+        .expect("el pipeline no debe fallar");
+
+    assert!(!resp.scopes.is_empty(), "debe haber ambitos: {:#?}", resp.scopes);
+
+    // `resultado` vive en el bloque del cuerpo de `suma`.
+    let bloque = resp
+        .scopes
+        .iter()
+        .find(|s| {
+            s["symbols"]
+                .as_array()
+                .map(|syms| syms.iter().any(|y| y["name"] == "resultado"))
+                .unwrap_or(false)
+        })
+        .unwrap_or_else(|| panic!("`resultado` debe aparecer en algun ambito: {:#?}", resp.scopes));
+
+    assert_eq!(bloque["kind"], "Block", "vive en un bloque, no en la funcion");
+    let sym = bloque["symbols"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|y| y["name"] == "resultado")
+        .unwrap();
+    assert_eq!(sym["ty"], "integer", "llega tipado, no solo declarado");
+    assert!(sym["line"].as_u64().unwrap() > 0 && sym["col"].as_u64().unwrap() > 0);
+
+    // Y NO esta en la tabla global: es justo el hueco que este campo tapa.
+    assert!(
+        !resp.symbol_table.contains("resultado"),
+        "la tabla global no lo lleva; por eso hacen falta los ambitos:\n{}",
+        resp.symbol_table
+    );
+
+    // El ambito con nombre trae su etiqueta, para poder mostrarlo en el IDE.
+    assert!(
+        resp.scopes.iter().any(|s| s["kind"] == "Function" && s["label"] == "suma"),
+        "el ambito de `suma` debe venir etiquetado: {:#?}",
+        resp.scopes
+    );
+}
+
+/// Sin `%ident` no hay analisis semantico, asi que tampoco ambitos — igual que
+/// pasa con `symbol_table` y `closures`.
+#[test]
+fn pipeline_without_ident_directive_returns_no_scopes() {
+    let yal = std::fs::read_to_string("workspace/miniprog.yal").expect("lexer");
+    let yalp = std::fs::read_to_string("workspace/miniprog.yalp").expect("gramatica");
+    let source = std::fs::read_to_string("workspace/miniprog_test.txt").expect("fuente");
+
+    let resp = api::build_pipeline_response_named(&yal, &yalp, &source, "lalr", "miniprog.txt")
+        .expect("el pipeline no debe fallar");
+
+    assert!(resp.scopes.is_empty(), "miniprog.yalp no trae %ident");
+    assert!(resp.symbol_table.is_empty());
+}

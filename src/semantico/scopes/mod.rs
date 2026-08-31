@@ -4,6 +4,7 @@
 // permitido (redeclarar, buscar de adentro hacia afuera, etc.); eso vive
 // en `super::symbols::SymbolTable`, que es quien realmente conoce las
 // reglas semánticas y usa este stack como estructura de soporte.
+use serde_json::{json, Value};
 use std::collections::HashMap;
 
 use super::symbols::Symbol;
@@ -156,6 +157,136 @@ impl Default for ScopeStack {
     }
 }
 
+/// Foto de un ámbito en el momento en que se cerró.
+///
+/// Existe porque la tabla viva no conserva nada de un ámbito cerrado: lo que
+/// se declaró dentro de una función o una clase sobrevive anidado en
+/// `Symbol::members`, pero **lo declarado dentro de un ámbito ANÓNIMO (un
+/// bloque) se descarta**. Sin estas fotos, un `let` dentro de un `if` no
+/// aparece en ninguna salida del proyecto, que es justo lo que confunde al
+/// mirar el resultado del análisis.
+#[derive(Debug, Clone)]
+pub struct ScopeSnapshot {
+    /// Orden de CIERRE: 1 es el primer ámbito que se cerró, o sea el más
+    /// interno de los que se cerraron primero.
+    pub order: usize,
+    pub kind: ScopeKind,
+    pub label: Option<String>,
+    /// Profundidad que ocupaba en la pila cuando se cerró (0 = Global).
+    pub depth: usize,
+    /// Los símbolos declarados DIRECTAMENTE en él, ordenados por nombre.
+    pub symbols: Vec<Symbol>,
+}
+
+/// Acumula un `ScopeSnapshot` por cada ámbito que se cierra durante el
+/// recorrido — mismo espíritu que `closures::ClosureCollector` y
+/// `errors::ErrorCollector`: observa y guarda, sin participar de ninguna
+/// decisión.
+///
+/// **No toca la tabla viva.** Ese era el motivo por el que esto no se había
+/// hecho: aplanar los ámbitos anónimos hacia arriba reinsertándolos en la
+/// tabla filtraría la visibilidad de esos nombres más allá de su bloque y
+/// rompería el `lookup` con scoping correcto. Guardar copias aparte no corre
+/// ese riesgo.
+///
+/// El ámbito Global NUNCA aparece acá: no se cierra nunca, así que se consulta
+/// directamente en la tabla al terminar (`SymbolTable::dump`).
+#[derive(Debug, Default)]
+pub struct ScopeCollector {
+    snapshots: Vec<ScopeSnapshot>,
+}
+
+impl ScopeCollector {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Registra un ámbito recién cerrado. `depth` es la profundidad que
+    /// ocupaba (la que tenía la pila ANTES de desapilarlo, menos uno).
+    pub fn record(&mut self, scope: &Scope, depth: usize) {
+        let mut symbols: Vec<Symbol> = scope.symbols().cloned().collect();
+        symbols.sort_by(|a, b| a.name.cmp(&b.name));
+        self.snapshots.push(ScopeSnapshot {
+            order: self.snapshots.len() + 1,
+            kind: scope.kind(),
+            label: scope.label().map(str::to_string),
+            depth,
+            symbols,
+        });
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.snapshots.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.snapshots.len()
+    }
+
+    /// En orden de cierre: primero el que se cerró primero.
+    pub fn snapshots(&self) -> &[ScopeSnapshot] {
+        &self.snapshots
+    }
+
+    /// Volcado legible, con el MISMO formato de símbolo que
+    /// `SymbolTable::dump()` — se reusan sus helpers en vez de inventar otro.
+    /// Forma `[{order, kind, label, depth, symbols:[...]}]` -- la que consume
+    /// `/api/pipeline` para la pestana de ambitos del IDE. Mismo criterio que
+    /// `ClosureCollector::to_json`: datos estructurados y no el texto del
+    /// volcado, para que el frontend pueda ordenar y filtrar sin parsear
+    /// cadenas.
+    pub fn to_json(&self) -> Vec<Value> {
+        self.snapshots
+            .iter()
+            .map(|snap| {
+                json!({
+                    "order": snap.order,
+                    "kind": format!("{:?}", snap.kind),
+                    "label": snap.label,
+                    "depth": snap.depth,
+                    "symbols": snap.symbols.iter().map(|sym| json!({
+                        "name": sym.name,
+                        "kind": format!("{:?}", sym.kind),
+                        "ty": sym.ty.as_ref().map(|t| t.to_string()),
+                        "mutable": sym.mutable,
+                        "initialized": sym.initialized,
+                        "line": sym.line,
+                        "col": sym.col,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect()
+    }
+
+    pub fn dump(&self) -> String {
+        let mut out = String::new();
+        for snap in &self.snapshots {
+            out.push_str(&format!(
+                "#{} {} (profundidad {})
+",
+                snap.order,
+                crate::semantico::symbols::scope_header_of(snap.kind, snap.label.as_deref()),
+                snap.depth
+            ));
+            if snap.symbols.is_empty() {
+                out.push_str("      (sin declaraciones propias)
+");
+            }
+            for sym in &snap.symbols {
+                out.push_str(&format!(
+                    "      {}: {} @{}:{}
+",
+                    sym.name,
+                    crate::semantico::symbols::describe(sym),
+                    sym.line,
+                    sym.col
+                ));
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,6 +309,43 @@ mod tests {
         stack.exit().expect("hay un scope Function para desapilar");
         assert_eq!(stack.depth(), 1);
         assert_eq!(stack.current().kind(), ScopeKind::Global);
+    }
+
+    #[test]
+    fn collector_records_one_snapshot_per_closed_scope_in_closing_order() {
+        let mut stack = ScopeStack::new();
+        let mut collector = ScopeCollector::new();
+
+        // Global > Function("f") > Block
+        stack.enter(ScopeKind::Function, Some("f".to_string()));
+        stack.enter(ScopeKind::Block, None);
+
+        // Se cierran de adentro hacia afuera, que es como los cierra el walker.
+        let block = stack.exit().expect("hay Block");
+        collector.record(&block, stack.depth());
+        let func = stack.exit().expect("hay Function");
+        collector.record(&func, stack.depth());
+
+        assert_eq!(collector.len(), 2);
+        let snaps = collector.snapshots();
+
+        // El primero en cerrarse es el más interno.
+        assert_eq!(snaps[0].order, 1);
+        assert_eq!(snaps[0].kind, ScopeKind::Block);
+        assert_eq!(snaps[0].label, None);
+        assert_eq!(snaps[0].depth, 2, "el Block ocupaba la profundidad 2");
+
+        assert_eq!(snaps[1].order, 2);
+        assert_eq!(snaps[1].kind, ScopeKind::Function);
+        assert_eq!(snaps[1].label, Some("f".to_string()));
+        assert_eq!(snaps[1].depth, 1, "la Function ocupaba la profundidad 1");
+
+        // El Global no se cierra nunca, así que no puede aparecer.
+        assert!(
+            !snaps.iter().any(|s| s.kind == ScopeKind::Global),
+            "el Global nunca se desapila: se consulta en la tabla, no acá"
+        );
+        assert_eq!(stack.depth(), 1, "queda solo el Global");
     }
 
     #[test]

@@ -1,4 +1,5 @@
 // Análisis léxico: .yal → SpecIR → regex/AST → NFA → DFA → tabla → simulación/codegen.
+pub mod pipeline;
 pub mod spec;
 pub mod regex;
 pub mod automata;

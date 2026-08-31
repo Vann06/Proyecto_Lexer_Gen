@@ -508,9 +508,16 @@ impl Default for SymbolTable {
 }
 
 fn scope_header(scope: &Scope) -> String {
-    match scope.label() {
-        Some(label) => format!("{:?}({label})", scope.kind()),
-        None => format!("{:?}", scope.kind()),
+    scope_header_of(scope.kind(), scope.label())
+}
+
+/// El encabezado de un ámbito a partir de sus datos sueltos, para que
+/// `ScopeCollector` —que guarda snapshots, no `Scope`s vivos— imprima con el
+/// MISMO formato que `dump()` en vez de inventar otro.
+pub(crate) fn scope_header_of(kind: ScopeKind, label: Option<&str>) -> String {
+    match label {
+        Some(label) => format!("{kind:?}({label})"),
+        None => format!("{kind:?}"),
     }
 }
 
@@ -518,7 +525,7 @@ fn scope_header(scope: &Scope) -> String {
 /// anotaciones solo cuando se apartan del default (tiene tipo, es const,
 /// se marcó como usado) — así un símbolo recién declarado (el caso común en
 /// los tests existentes) se ve igual que antes de agregar estos campos.
-fn describe(sym: &Symbol) -> String {
+pub(crate) fn describe(sym: &Symbol) -> String {
     let mut parts = vec![format!("{:?}", sym.kind)];
     if let Some(ty) = &sym.ty {
         parts.push(format!("{ty:?}"));

@@ -16,9 +16,9 @@ pub use codegen::build_codegen_response;
 pub use pipeline::{build_pipeline_response, build_pipeline_response_named};
 pub use sintactico::{build_compile_response, build_parse_response};
 // Re-exportada porque tests/semantic_analysis_tests.rs la necesita para
-// construir un árbol real (parse .yal → expandir → NFA → DFA → tabla) sin
-// duplicar ese pipeline una cuarta vez (ya está triplicado entre main.rs,
-// test_pipeline.rs y este módulo — ver ORGANIZACION.md § "Fases futuras").
+// construir un árbol real. El pipeline en sí ya no vive acá: es un envoltorio
+// de `lexico::pipeline::build_all`, que es el único lugar donde existe (antes
+// estaba copiado en main.rs y en bin/test_pipeline.rs).
 pub use lexico::build_lexer_artifacts;
 
 use serde::Serialize;
@@ -68,6 +68,16 @@ pub struct ParseResponse {
     /// variables/parámetros de su entorno de definición. Vacío si el .yalp no
     /// trae `%ident` o si ninguna función anidada captura nada.
     pub closures: Vec<Value>,
+    /// `ScopeCollector::to_json()`: una foto de CADA ambito en el momento en
+    /// que se cerro, en orden de cierre -- `[{order, kind, label, depth,
+    /// symbols:[...]}]`.
+    ///
+    /// Es lo unico que deja ver lo declarado dentro de un ambito ANONIMO: al
+    /// terminar el recorrido la tabla solo conserva el Global, y
+    /// `symbol_table` muestra anidado solo lo de funciones y clases, asi que
+    /// un `let` dentro de un `if` no aparece por ningun otro lado. Vacio si el
+    /// .yalp no trae `%ident` o si el programa no abrio ningun ambito propio.
+    pub scopes: Vec<Value>,
 }
 
 #[derive(Serialize)]

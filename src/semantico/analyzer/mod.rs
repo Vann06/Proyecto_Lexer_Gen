@@ -16,7 +16,7 @@ use crate::semantico::errors::ErrorCollector;
 use crate::semantico::flow::{self, FlowContext};
 use crate::semantico::functions::FunctionContext;
 use crate::semantico::operators;
-use crate::semantico::scopes::ScopeKind;
+use crate::semantico::scopes::{ScopeCollector, ScopeKind};
 use crate::semantico::spec::{SemanticSpec, ChildLocator};
 use crate::semantico::symbols::{SemanticError, Signature, SymbolKind, SymbolTable};
 use crate::semantico::types::{resolve_arithmetic, resolve_assignment, Type};
@@ -30,6 +30,11 @@ pub struct AnalysisResult {
     /// Funciones anidadas que capturan variables/parámetros de una función
     /// encerradora (no globales, no propios) — ver `closures::ClosureCollector`.
     pub closures: ClosureCollector,
+    /// Una foto de cada ámbito en el momento en que se cerró, en orden de
+    /// cierre. Es la ÚNICA forma de ver lo declarado dentro de un ámbito
+    /// anónimo: `table` solo conserva el Global, y `Symbol::members` solo
+    /// cubre los ámbitos con nombre. Ver `scopes::ScopeCollector`.
+    pub scopes: ScopeCollector,
 }
 
 /// Punto de entrada: recorre `tree` según `spec` y devuelve la tabla de
@@ -40,7 +45,12 @@ pub fn analyze(tree: &ParseNode, spec: &SemanticSpec) -> AnalysisResult {
     let mut analyzer = Analyzer::new(spec);
     visitor::walk(tree, &mut analyzer);
     analyzer.report_unknown_named_types();
-    AnalysisResult { table: analyzer.table, errors: analyzer.errors, closures: analyzer.closures }
+    AnalysisResult {
+        table: analyzer.table,
+        errors: analyzer.errors,
+        closures: analyzer.closures,
+        scopes: analyzer.scopes,
+    }
 }
 
 /// Estado que `enter` deja para que el `exit` del MISMO nodo lo recoja — un
@@ -73,6 +83,7 @@ struct Analyzer<'a> {
     table: SymbolTable,
     errors: ErrorCollector,
     closures: ClosureCollector,
+    scopes: ScopeCollector,
     frames: Vec<Frame>,
     /// Pila de funciones activas: `(profundidad ABSOLUTA del scope propio de
     /// la función, su nombre)`. El tope es la función que se está recorriendo
@@ -113,6 +124,7 @@ impl<'a> Analyzer<'a> {
             table: SymbolTable::new(),
             errors: ErrorCollector::new(),
             closures: ClosureCollector::new(),
+            scopes: ScopeCollector::new(),
             frames: Vec::new(),
             function_stack: Vec::new(),
             declared_type_names: HashSet::new(),
@@ -831,6 +843,17 @@ impl<'a> Visitor for Analyzer<'a> {
                 .table
                 .exit_scope()
                 .expect("el scope recién abierto por este nodo debe poder cerrarse");
+            // Profundidad que OCUPABA: `depth()` cuenta los scopes de la pila,
+            // así que DESPUÉS de desapilar coincide con el índice que tenía el
+            // que se acaba de cerrar (0 = Global). Medirla antes daría uno de
+            // más, porque el que se cierra todavía estaría contado.
+            let closed_depth = self.table.depth();
+
+            // Foto antes de descartarlo. Es lo único que deja rastro de un
+            // ámbito ANÓNIMO: lo declarado en un bloque no sobrevive ni en la
+            // tabla (que al terminar solo tiene el Global) ni en `members`
+            // (que solo puebla los ámbitos con nombre).
+            self.scopes.record(&closed, closed_depth);
 
             // Límite conocido, no arreglado a propósito: si el cuerpo tiene un
             // scope anónimo anidado adentro (p.ej. un `bloque` que no declara
@@ -838,13 +861,17 @@ impl<'a> Visitor for Analyzer<'a> {
             // se aplana hacia arriba — un local declarado dos niveles adentro
             // de una función no aparece en `members` de la función, solo lo
             // que cuelga directo de su propio scope (sus parámetros).
-            // Aplanarlo "hacia arriba a través de scopes anónimos" es viable
-            // pero corre el riesgo real de filtrar la visibilidad de ese
-            // nombre más allá de su bloque si se hace reinsertándolo en la
-            // tabla viva (rompería el lookup con scoping correcto que ya está
-            // bien probado) — se deja pendiente para cuando haga falta de
-            // verdad, con un mecanismo de acumulación aparte de la tabla de
-            // lookup.
+            // Aplanarlo "hacia arriba a través de scopes anónimos" sigue sin
+            // hacerse, y a propósito: reinsertar esos nombres en la tabla viva
+            // filtraría su visibilidad más allá de su bloque y rompería el
+            // lookup con scoping correcto, que ya está bien probado.
+            //
+            // Lo que SÍ existe ya es el mecanismo de acumulación aparte que
+            // este comentario anticipaba: `scopes::ScopeCollector` guarda una
+            // foto de cada ámbito al cerrarse (ver el `record` de más abajo),
+            // así que lo declarado en un bloque deja rastro sin tocar la
+            // tabla. `members` no cambia; quien quiera ver un ámbito anónimo
+            // mira `AnalysisResult::scopes`.
             if let Some(name) = &frame.declared_name {
                 if let Some(sym) = self.table.lookup_mut(name) {
                     sym.members = Some(closed.symbols().cloned().collect());
