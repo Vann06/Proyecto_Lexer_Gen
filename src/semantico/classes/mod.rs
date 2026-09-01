@@ -155,6 +155,25 @@ pub fn resolve_expr_type(node: &ParseNode, table: &SymbolTable, spec: &SemanticS
         return Some(Type::Named(struct_name));
     }
 
+    // Literal de lista: su tipo es `Array(tipo común de sus elementos)`. El
+    // diagnóstico de heterogeneidad lo emite `analyzer::enter` al visitar
+    // este nodo directamente, no esta función (silenciosa por diseño, igual
+    // que el resto de `classes`).
+    if let Some(elements_node) = crate::semantico::collections::find_array_literal(node, spec) {
+        let elements = crate::semantico::collections::flatten_array_elements(elements_node, spec);
+        let (ty, _errors) = crate::semantico::collections::resolve_array_literal(&elements, table, spec);
+        return ty;
+    }
+
+    // Acceso indexado: el tipo es el del ELEMENTO, no el del arreglo —
+    // permite que `arr[0] + 1` y `matrix[0][1]` sigan tipando normalmente.
+    // Silencioso ante una base que no es arreglo: el diagnóstico lo emite
+    // `analyzer::enter`, no esta función.
+    if let Some((base, _index)) = crate::semantico::collections::find_index_access(node, spec) {
+        let base_ty = resolve_expr_type(base, table, spec);
+        return crate::semantico::collections::validate_index_access(base_ty.as_ref(), None, 0, 0).ok().flatten();
+    }
+
     if node.children.is_empty() {
         if node.symbol == spec.identifier_token {
             let name = node.lexeme.as_deref().unwrap_or(&node.symbol);

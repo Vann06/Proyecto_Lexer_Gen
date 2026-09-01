@@ -12,6 +12,7 @@
 // mientras el walker ya recorre scopes de función anidados.
 use crate::semantico::classes;
 use crate::semantico::closures::ClosureCollector;
+use crate::semantico::collections;
 use crate::semantico::errors::ErrorCollector;
 use crate::semantico::flow::{self, FlowContext};
 use crate::semantico::functions::FunctionContext;
@@ -359,6 +360,31 @@ impl<'a> Visitor for Analyzer<'a> {
         for operand in operand_nodes {
             if let Some(e) = operators::non_value_operand(operand, &self.table, self.spec) {
                 self.errors.push_operator(&e);
+            }
+        }
+
+        // 2b-quater. Literal de lista (`atom: LBRACKET arg_list RBRACKET`,
+        // según `spec.array_literal`): valida que todos los elementos sean
+        // de un tipo compatible entre sí. No hace early-return: los
+        // elementos siguen recorriéndose para que sus identificadores se
+        // validen como usos normales.
+        if let Some(elements_node) = collections::find_array_literal(node, self.spec) {
+            let elements = collections::flatten_array_elements(elements_node, self.spec);
+            let (_, errs) = collections::resolve_array_literal(&elements, &self.table, self.spec);
+            for e in errs {
+                self.errors.push_semantic(&e);
+            }
+        }
+
+        // Acceso indexado (`primary: primary LBRACKET expr RBRACKET`, según
+        // `spec.index_access`): la base debe ser un arreglo y el índice,
+        // integer. Tampoco hace early-return: base e índice son expresiones
+        // reales que siguen recorriéndose.
+        if let Some((base, index)) = collections::find_index_access(node, self.spec) {
+            let base_ty = classes::resolve_expr_type(base, &self.table, self.spec);
+            let index_ty = classes::resolve_expr_type(index, &self.table, self.spec);
+            if let Err(e) = collections::validate_index_access(base_ty.as_ref(), index_ty.as_ref(), index.line, index.col) {
+                self.errors.push_semantic(&e);
             }
         }
 
@@ -914,6 +940,16 @@ fn resolve_declared_type(node: &ParseNode, spec: &SemanticSpec) -> Type {
     if node.symbol == spec.identifier_token {
         let name = node.lexeme.as_deref().unwrap_or(&node.symbol);
         return Type::Named(name.to_string());
+    }
+    // Tipo de arreglo (`tipo: tipo LBRACKET RBRACKET`, según
+    // `spec.array_type_token`): el primer hijo es el tipo del elemento —
+    // recursivo, así que `int[][]` se resuelve solo anidando dos veces.
+    if let Some(marker) = &spec.array_type_token {
+        if node.children.iter().any(|c| &c.symbol == marker) {
+            if let Some(first) = node.children.first() {
+                return Type::Array(Box::new(resolve_declared_type(first, spec)));
+            }
+        }
     }
     if let Some(first) = node.children.first() {
         return resolve_declared_type(first, spec);

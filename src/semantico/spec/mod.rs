@@ -97,6 +97,17 @@ pub struct SemanticSpec {
     pub returns: Vec<ReturnRule>,
     /// Reglas de control de flujo declaradas por la gramática.
     pub flow: FlowSpec,
+    /// Token que marca un nodo de tipo como arreglo (`%array_type`), p.ej.
+    /// "LBRACKET" para `tipo: tipo LBRACKET RBRACKET`. `None`: la gramática
+    /// no tiene tipos de arreglo — `analyzer::resolve_declared_type` nunca
+    /// produce `Type::Array`.
+    pub array_type_token: Option<String>,
+    /// Configuración del literal de lista (`[1, 2, 3]`). `None`: la
+    /// gramática no tiene literales de lista.
+    pub array_literal: Option<ArrayLiteralRule>,
+    /// Configuración del acceso indexado (`arr[i]`). `None`: la gramática no
+    /// tiene indexación.
+    pub index_access: Option<IndexAccessRule>,
 }
 
 /// "La producción `production` asigna el valor de `value_index` a la
@@ -205,6 +216,29 @@ pub struct FieldInitRule {
 pub struct ReturnRule {
     pub production: String,
     pub value_child: ChildLocator,
+}
+
+/// "La producción `production` tiene una alternativa que construye un
+/// literal de lista" — p.ej. `atom: LBRACKET arg_list RBRACKET`, con
+/// `elements_index` apuntando al `arg_list`. Se reconoce por la FORMA, igual
+/// que `StructLiteralRule`: solo la alternativa del literal trae
+/// `open_bracket_token` como hijo directo.
+pub struct ArrayLiteralRule {
+    pub production: String,
+    pub open_bracket_token: String,
+    pub elements_index: usize,
+}
+
+/// "La producción `production` tiene una alternativa que indexa lo que
+/// precede al corchete de apertura" — p.ej.
+/// `primary: primary LBRACKET expr RBRACKET`, con `base_index`/`index_index`
+/// los índices de la base y del subíndice entre los hijos DIRECTOS. Mismo
+/// criterio de reconocimiento por forma que `CallRule`.
+pub struct IndexAccessRule {
+    pub production: String,
+    pub open_bracket_token: String,
+    pub base_index: usize,
+    pub index_index: usize,
 }
 
 #[derive(Debug, Default)]
@@ -443,6 +477,13 @@ impl SemanticSpec {
                 breaks: grammar.break_directives.clone(),
                 continues: grammar.continue_directives.clone(),
             },
+            array_type_token: grammar.array_type_token.clone(),
+            array_literal: grammar.array_literal.clone().map(|(production, open_bracket_token, elements_index)| {
+                ArrayLiteralRule { production, open_bracket_token, elements_index }
+            }),
+            index_access: grammar.index_access.clone().map(|(production, open_bracket_token, base_index, index_index)| {
+                IndexAccessRule { production, open_bracket_token, base_index, index_index }
+            }),
         })
     }
 }
@@ -585,6 +626,9 @@ mod tests {
             loop_directives: Vec::new(),
             break_directives: Vec::new(),
             continue_directives: Vec::new(),
+            array_type_token: None,
+            array_literal: None,
+            index_access: None,
         }
     }
 

@@ -109,6 +109,9 @@ impl From<&SemanticError> for Diagnostic {
             SemanticError::StructFieldTypeMismatch { line, col, .. } => (ErrorKind::Tipos, "S022", *line, *col),
             SemanticError::MissingStructField { line, col, .. } => (ErrorKind::Tipos, "S023", *line, *col),
             SemanticError::DuplicateStructField { line, col, .. } => (ErrorKind::Tipos, "S024", *line, *col),
+            SemanticError::HeterogeneousArrayElements { line, col, .. } => (ErrorKind::Listas, "S032", *line, *col),
+            SemanticError::IndexNotInteger { line, col, .. } => (ErrorKind::Listas, "S033", *line, *col),
+            SemanticError::NotIndexable { line, col, .. } => (ErrorKind::Listas, "S034", *line, *col),
         };
         Diagnostic { kind, code: code.to_string(), message, line, col, severity: Severity::Error }
     }

@@ -230,6 +230,20 @@ pub enum SemanticError {
         line: usize,
         col: usize,
     },
+
+    #[error("el literal de lista mezcla tipos: se esperaba {expected}, se encontró {found}")]
+    HeterogeneousArrayElements {
+        expected: Type,
+        found: Type,
+        line: usize,
+        col: usize,
+    },
+
+    #[error("el índice de un acceso a lista debe ser integer, se encontró {found}")]
+    IndexNotInteger { found: Type, line: usize, col: usize },
+
+    #[error("no se puede indexar un valor de tipo {found}")]
+    NotIndexable { found: Type, line: usize, col: usize },
 }
 
 impl From<PopGlobalScope> for SemanticError {

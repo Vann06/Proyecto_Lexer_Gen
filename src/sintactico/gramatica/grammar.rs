@@ -184,6 +184,19 @@ pub struct Grammar {
     pub loop_directives: Vec<String>,
     pub break_directives: Vec<String>,
     pub continue_directives: Vec<String>,
+    /// Token que marca un nodo de tipo como arreglo (p.ej. "LBRACKET" para
+    /// `tipo: tipo LBRACKET RBRACKET`), de la única línea `%array_type` —
+    /// p.ej. `%array_type LBRACKET`. `None`: la gramática no tiene tipos de
+    /// arreglo.
+    pub array_type_token: Option<String>,
+    /// `(producción, token de corchete de apertura, índice de la lista de
+    /// elementos)`, de la única línea `%array_literal` — p.ej.
+    /// `%array_literal atom LBRACKET 1` para `atom: LBRACKET arg_list RBRACKET`.
+    pub array_literal: Option<(String, String, usize)>,
+    /// `(producción, token de corchete de apertura, índice de la base, índice
+    /// del subíndice)`, de la única línea `%index` — p.ej.
+    /// `%index primary LBRACKET 0 2` para `primary: primary LBRACKET expr RBRACKET`.
+    pub index_access: Option<(String, String, usize, usize)>,
 }
 
 impl Grammar {
@@ -302,6 +315,9 @@ impl Grammar {
             loop_directives: Vec::new(),
             break_directives: Vec::new(),
             continue_directives: Vec::new(),
+            array_type_token: None,
+            array_literal: None,
+            index_access: None,
         };
 
         grammar.parse_tokens_section(sections[0]);
@@ -996,6 +1012,28 @@ impl Grammar {
             } else if line.starts_with("%continue") {
                 if let Some(production) = line[9..].split_whitespace().next() {
                     self.continue_directives.push(production.to_string());
+                }
+            } else if line.starts_with("%array_type") {
+                if let Some(tok) = line[11..].split_whitespace().next() {
+                    self.array_type_token = Some(tok.to_string());
+                }
+            } else if line.starts_with("%array_literal") {
+                let mut parts = line[14..].split_whitespace();
+                if let (Some(production), Some(open_bracket), Some(elements_idx)) =
+                    (parts.next(), parts.next(), parts.next())
+                {
+                    if let Ok(elements_idx) = elements_idx.parse::<usize>() {
+                        self.array_literal = Some((production.to_string(), open_bracket.to_string(), elements_idx));
+                    }
+                }
+            } else if line.starts_with("%index") {
+                let mut parts = line[6..].split_whitespace();
+                if let (Some(production), Some(open_bracket), Some(base_idx), Some(index_idx)) =
+                    (parts.next(), parts.next(), parts.next(), parts.next())
+                {
+                    if let (Ok(base_idx), Ok(index_idx)) = (base_idx.parse::<usize>(), index_idx.parse::<usize>()) {
+                        self.index_access = Some((production.to_string(), open_bracket.to_string(), base_idx, index_idx));
+                    }
                 }
             }
         }
