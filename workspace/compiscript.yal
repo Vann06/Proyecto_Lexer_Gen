@@ -135,6 +135,8 @@ rule tokens =
   | ','         { "COMMA" }
   | ':'         { "COLON" }
   | '.'         { "DOT" }
+  | '['         { "LBRACKET" }
+  | ']'         { "RBRACKET" }
 
     (* 8. Blancos: ignorados silenciosamente *)
   | ws          {}

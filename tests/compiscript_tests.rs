@@ -167,3 +167,87 @@ fn a_grammar_without_ident_directive_still_works_with_no_semantic_analysis() {
     assert!(!resp.parse_tree_dot.is_empty(), "el árbol se construye igual, con o sin %ident");
     assert!(resp.symbol_table.is_empty(), "sin %ident no debe haber tabla de símbolos");
 }
+
+/// Listas y arreglos (Proyecto 2): tipo homogéneo de los elementos,
+/// validación de índices, arrays multidimensionales y tipado de literales.
+/// Ver `src/semantico/collections/mod.rs`.
+mod arrays {
+    use super::*;
+
+    fn run(source: &str) -> lexer_generator::api::ParseResponse {
+        let yal = read("workspace/compiscript.yal");
+        let yalp = read("workspace/compiscript.yalp");
+        api::build_pipeline_response_named(&yal, &yalp, source, "lalr", "arr.cps")
+            .expect("el pipeline no debe fallar internamente")
+    }
+
+    fn semantic_codes(resp: &lexer_generator::api::ParseResponse) -> Vec<String> {
+        resp.problems
+            .iter()
+            .filter(|p| p["code"].as_str().unwrap_or("").starts_with('S'))
+            .map(|p| p["code"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn homogeneous_literal_declared_and_indexed_without_errors() {
+        let resp = run(
+            "let arr: integer[] = [1, 2, 3];\n\
+             let primero: integer = arr[0];\n",
+        );
+        assert!(resp.accepted, "{:?}", resp.error);
+        assert!(semantic_codes(&resp).is_empty(), "no debería haber errores semánticos: {:#?}", resp.problems);
+    }
+
+    #[test]
+    fn heterogeneous_literal_reports_s032() {
+        let resp = run("let arr = [1, \"dos\"];\n");
+        assert!(resp.accepted, "{:?}", resp.error);
+        assert_eq!(semantic_codes(&resp), vec!["S032"], "problemas: {:#?}", resp.problems);
+    }
+
+    #[test]
+    fn mixed_integer_and_float_literal_widens_without_error() {
+        // El literal debe tipar como float[] (ensanchado), no reportar S032.
+        let resp = run("let arr: integer[] = [1, 2, 3];\nlet otro = [1, 2];\n");
+        assert!(resp.accepted, "{:?}", resp.error);
+        assert!(semantic_codes(&resp).is_empty(), "{:#?}", resp.problems);
+    }
+
+    #[test]
+    fn indexing_with_a_non_integer_reports_s033() {
+        let resp = run(
+            "let arr: integer[] = [1, 2, 3];\n\
+             let x = arr[\"a\"];\n",
+        );
+        assert!(resp.accepted, "{:?}", resp.error);
+        assert_eq!(semantic_codes(&resp), vec!["S033"], "problemas: {:#?}", resp.problems);
+    }
+
+    #[test]
+    fn indexing_a_non_array_reports_s034() {
+        let resp = run(
+            "let x: integer = 5;\n\
+             let y = x[0];\n",
+        );
+        assert!(resp.accepted, "{:?}", resp.error);
+        assert_eq!(semantic_codes(&resp), vec!["S034"], "problemas: {:#?}", resp.problems);
+    }
+
+    #[test]
+    fn two_dimensional_array_indexes_twice_to_the_element_type() {
+        let resp = run(
+            "let m: integer[][] = [[1, 2], [3, 4]];\n\
+             let x: integer = m[0][1];\n",
+        );
+        assert!(resp.accepted, "{:?}", resp.error);
+        assert!(semantic_codes(&resp).is_empty(), "{:#?}", resp.problems);
+    }
+
+    #[test]
+    fn assigning_a_mistyped_literal_to_a_declared_array_type_reports_s006() {
+        let resp = run("let arr: integer[] = [\"a\", \"b\"];\n");
+        assert!(resp.accepted, "{:?}", resp.error);
+        assert_eq!(semantic_codes(&resp), vec!["S006"], "problemas: {:#?}", resp.problems);
+    }
+}

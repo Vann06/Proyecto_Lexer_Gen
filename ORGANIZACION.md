@@ -490,9 +490,15 @@ desactivan en silencio — ver `examples/grammar/objetos_es.README.md`.
 **Bloqueos históricos, ya resueltos:** el pipeline HTTP sí construye el árbol
 y sí corre el análisis (`api::pipeline`, gated a `mode != "ll1"` y a que el
 `.yalp` traiga `%ident`), y `errors::Diagnostic` es el tipo de diagnóstico
-compartido que faltaba. Sigue en pie la **deuda de shift-reduce duplicado**
-(5 variantes del mismo driver entre `parser_lr.rs` y
-`api::sintactico::parse_with_trace_lr`), y las **acciones semánticas por
+compartido que faltaba. La **deuda de shift-reduce duplicado ya está saldada**: el bucle vive
+una sola vez en `sintactico::runtime::driver`, y los cuatro consumidores
+—traza, árbol, recuperación en modo pánico y traza JSON del IDE— son
+observadores (`ParseObserver`), mismo patrón que `semantico::visitor` una capa
+más abajo. (La doc afirmaba "5 variantes"; al contarlas resultaron ser 4 — el
+quinto `let top` era el desapilado del modo pánico, no un motor.) También se
+unificó el pipeline `.yal`→tabla, que estaba triplicado, en
+`lexico::pipeline::build_all`, y la construcción de la tabla LR, que se hacía
+DOS veces por petición del IDE. Las **acciones semánticas por
 producción al estilo yacc** siguen sin implementarse — las directivas
 declarativas cubrieron el caso de uso sin necesitarlas.
 

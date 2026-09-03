@@ -7,10 +7,11 @@
  * simple/this/acceso a miembros (lectura y asignacion)/
  * instanciacion con new, bloques, if/while/return/print y la
  * jerarquia completa de expresiones con precedencia
- * ( ||  &&  ==/!=  </<=/>/>=  +/-  * / %  unario - ! ).
+ * ( ||  &&  ==/!=  </<=/>/>=  +/-  * / %  unario - ! ), y listas/arreglos
+ * (literal, indexado, multidimensional).
  *
  * Fuera de este subconjunto (siguiente iteracion): switch, try/catch,
- * foreach, ternario, listas/arreglos.
+ * foreach, ternario.
  *
  * Dos ambiguedades de la .g4 original resueltas al traducir:
  *  - 'assignment' (Identifier '=' expr) duplicaba lo que ya cubre
@@ -26,7 +27,7 @@
 %token ID INT_LIT STR_LIT COMMENT
 %token EQ NEQ LTE GTE AND OR
 %token ASSIGN PLUS MINUS TIMES DIV MOD LT GT NOT
-%token LPAREN RPAREN LBRACE RBRACE SEMI COMMA COLON DOT
+%token LPAREN RPAREN LBRACE RBRACE SEMI COMMA COLON DOT LBRACKET RBRACKET
 
 /* Comentarios ignorados: el parser nunca los ve */
 IGNORE COMMENT
@@ -139,6 +140,15 @@ IGNORE COMMENT
 %field_list_symbol field_init_list
 %field_init field_init 0 2
 
+/* Listas/arreglos: tipo (`tipo: tipo LBRACKET RBRACKET`, marcado por el
+ * corchete), literal (`atom: LBRACKET arg_list RBRACKET`, reusa la misma
+ * lista separada por comas que args_list_symbol) y acceso indexado
+ * (`primary: primary LBRACKET expr RBRACKET`). Multidimensional
+ * (`int[][]`) sale gratis de anidar ambas reglas. */
+%array_type LBRACKET
+%array_literal atom LBRACKET 1
+%index primary LBRACKET 0 2
+
 %%
 
 /* ============================================================
@@ -183,6 +193,7 @@ tipo:
   | INT_T
   | STR_T
   | ID
+  | tipo LBRACKET RBRACKET
 ;
 
 /* ============================================================
@@ -398,6 +409,7 @@ primary:
     atom
   | primary LPAREN arg_list RPAREN
   | primary DOT ID
+  | primary LBRACKET expr RBRACKET
 ;
 
 atom:
@@ -411,6 +423,7 @@ atom:
   | NEW ID LPAREN arg_list RPAREN
   | ID LBRACE field_inits RBRACE
   | LPAREN expr RPAREN
+  | LBRACKET arg_list RBRACKET
 ;
 
 /* Literal de struct: Punto { x: 1, y: 2 } */

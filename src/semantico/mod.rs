@@ -61,6 +61,7 @@
 pub mod analyzer;
 pub mod classes;
 pub mod closures;
+pub mod collections;
 pub mod errors;
 pub mod flow;
 pub mod functions;

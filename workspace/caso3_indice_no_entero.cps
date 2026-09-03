@@ -1,0 +1,1 @@
+let arr2: integer[] = [1,2,3]; let idx = arr2["a"];

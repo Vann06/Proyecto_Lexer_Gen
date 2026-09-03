@@ -4,13 +4,14 @@
 // que consume el frontend.
 use crate::sintactico::gramatica::first::calculate_first;
 use crate::sintactico::gramatica::follow::calculate_follow;
-use crate::sintactico::gramatica::grammar::{body_to_string, Grammar};
+use crate::sintactico::gramatica::grammar::{body_to_string, Grammar, Symbol};
 use crate::sintactico::automatas::lalr::{merge_by_core, LALRItem};
 use crate::sintactico::runtime::ll1::LL1Parser;
 use crate::sintactico::automatas::lr0::{LR0Automaton, LR0Item};
 use crate::sintactico::automatas::lr1::LR1Automaton;
 use crate::sintactico::runtime::parse_tree::{ParseNode, ParseToken};
-use crate::sintactico::runtime::parser_lr::LRParser;
+use crate::sintactico::runtime::driver::{self, DriveError, ErrorCause, OnError, ParseObserver};
+use crate::sintactico::runtime::parser_lr::{tokens_from_kinds, LRParser};
 use crate::sintactico::tablas::{format_expected_tokens, Action, Conflict, LRTable};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -79,6 +80,83 @@ pub fn build_compile_response(content: &str, mode: &str) -> Result<CompileRespon
     })
 }
 
+/// Construye la tabla ACTION/GOTO para `mode`. Punto único: la misma cadena
+/// (FIRST → autómata → tabla) estaba escrita tal cual en `build_parse_response`,
+/// `build_real_parse_tree` y `collect_lr_syntax_errors`, y como cada una la
+/// rehacía desde cero, UNA petición del IDE construía el autómata dos veces.
+pub(crate) fn build_lr_table(grammar: &Grammar, mode: &str) -> LRTable {
+    let first_sets = calculate_first(grammar);
+    if mode == "slr" {
+        let follow_sets = calculate_follow(grammar, &first_sets);
+        let lr0 = LR0Automaton::build(grammar);
+        LRTable::build_from_slr(&lr0, grammar, &follow_sets)
+    } else {
+        let lr1 = LR1Automaton::build(grammar, &first_sets);
+        let lalr = merge_by_core(lr1);
+        LRTable::build_from_lalr(&lalr, grammar)
+    }
+}
+
+/// Convierte el `token_map` del pipeline a los tokens que consume el parser.
+pub(crate) fn to_parse_tokens(token_map: &[(String, String, usize, usize)]) -> Vec<ParseToken> {
+    token_map
+        .iter()
+        .map(|(k, lx, line, col)| ParseToken { kind: k.clone(), lexeme: lx.clone(), line: *line, col: *col })
+        .collect()
+}
+
+/// La parte LR de `build_parse_response`, con la tabla YA construida.
+pub(crate) fn build_parse_response_with(table: &LRTable, tokens: Vec<String>) -> ParseResponse {
+    let trace = parse_with_trace_lr(table, tokens);
+    let accepted = trace
+        .last()
+        .and_then(|s| s["action"].as_str())
+        .map(|a| a == "acc")
+        .unwrap_or(false);
+    let error = if !accepted {
+        trace.last().and_then(|s| s["desc"].as_str()).map(String::from)
+    } else {
+        None
+    };
+    ParseResponse { trace, accepted, error, ..Default::default() }
+}
+
+/// El árbol real, con la tabla YA construida. Solo LR: el camino LL(1) rearma
+/// su propia gramática porque la factoriza y renombra producciones.
+pub(crate) fn build_real_parse_tree_with(
+    table: &LRTable,
+    token_map: &[(String, String, usize, usize)],
+) -> Option<ParseNode> {
+    LRParser::new(table).parse_tree(to_parse_tokens(token_map)).ok()
+}
+
+/// Los errores sintácticos en modo pánico, con la tabla YA construida.
+pub(crate) fn collect_lr_syntax_errors_with(
+    table: &LRTable,
+    grammar: &Grammar,
+    token_map: &[(String, String, usize, usize)],
+) -> Vec<(String, String, usize, usize, String)> {
+    // Cualquier token declarado sirve como punto de sincronización: en cuanto se
+    // descarta la entrada hasta encontrar UNO que el estado recuperado pueda
+    // aceptar, se reintenta desde ahí — una heurística genérica razonable sin
+    // conocer de antemano la estructura de la gramática (p. ej. cuál token hace
+    // de separador de sentencias).
+    let sync: Vec<&str> = grammar.tokens.iter().map(|t| t.as_str()).collect();
+    let (_, errors) = LRParser::new(table).parse_recovering_with_pos(to_parse_tokens(token_map), &sync);
+
+    errors
+        .into_iter()
+        .map(|e| {
+            let (kind, lexeme, line, col) = token_map
+                .get(e.pos)
+                .cloned()
+                .or_else(|| token_map.last().cloned())
+                .unwrap_or_else(|| (e.token.clone(), String::new(), 1, 1));
+            (kind, lexeme, line, col, e.msg)
+        })
+        .collect()
+}
+
 pub fn build_parse_response(
     content: &str,
     tokens: Vec<String>,
@@ -118,36 +196,8 @@ pub fn build_parse_response(
     }
 
     let grammar = Grammar::parse_for_lr_from_str(content)?;
-    let first_sets = calculate_first(&grammar);
-    let follow_sets = calculate_follow(&grammar, &first_sets);
-
-    let table = if mode == "slr" {
-        let lr0 = LR0Automaton::build(&grammar);
-        LRTable::build_from_slr(&lr0, &grammar, &follow_sets)
-    } else {
-        let lr1 = LR1Automaton::build(&grammar, &first_sets);
-        let lalr = merge_by_core(lr1);
-        LRTable::build_from_lalr(&lalr, &grammar)
-    };
-
-    let trace = parse_with_trace_lr(&table, tokens);
-    let accepted = trace
-        .last()
-        .and_then(|s| s["action"].as_str())
-        .map(|a| a == "acc")
-        .unwrap_or(false);
-    let error = if !accepted {
-        trace.last().and_then(|s| s["desc"].as_str()).map(String::from)
-    } else {
-        None
-    };
-
-    Ok(ParseResponse {
-        trace,
-        accepted,
-        error,
-        ..Default::default()
-    })
+    let table = build_lr_table(&grammar, mode);
+    Ok(build_parse_response_with(&table, tokens))
 }
 
 fn build_compile_ll1(content: &str) -> Result<CompileResponse, String> {
@@ -268,42 +318,8 @@ pub(crate) fn collect_lr_syntax_errors(
         return Vec::new();
     }
     let Ok(grammar) = Grammar::parse_for_lr_from_str(yalp) else { return Vec::new(); };
-    let first_sets = calculate_first(&grammar);
-    let table = if mode == "slr" {
-        let follow_sets = calculate_follow(&grammar, &first_sets);
-        let lr0 = LR0Automaton::build(&grammar);
-        LRTable::build_from_slr(&lr0, &grammar, &follow_sets)
-    } else {
-        let lr1 = LR1Automaton::build(&grammar, &first_sets);
-        let lalr = merge_by_core(lr1);
-        LRTable::build_from_lalr(&lalr, &grammar)
-    };
-
-    let parse_tokens: Vec<ParseToken> = token_map
-        .iter()
-        .map(|(k, lx, line, col)| ParseToken { kind: k.clone(), lexeme: lx.clone(), line: *line, col: *col })
-        .collect();
-    // Cualquier token declarado sirve como punto de sincronización: en cuanto se
-    // descarta la entrada hasta encontrar UNO que el estado recuperado pueda
-    // aceptar, se reintenta desde ahí — una heurística genérica razonable sin
-    // conocer de antemano la estructura de la gramática (p. ej. cuál token hace
-    // de separador de sentencias).
-    let sync: Vec<&str> = grammar.tokens.iter().map(|t| t.as_str()).collect();
-
-    let parser = LRParser::new(&table);
-    let (_, errors) = parser.parse_recovering_with_pos(parse_tokens, &sync);
-
-    errors
-        .into_iter()
-        .map(|e| {
-            let (kind, lexeme, line, col) = token_map
-                .get(e.pos)
-                .cloned()
-                .or_else(|| token_map.last().cloned())
-                .unwrap_or_else(|| (e.token.clone(), String::new(), 1, 1));
-            (kind, lexeme, line, col, e.msg)
-        })
-        .collect()
+    let table = build_lr_table(&grammar, mode);
+    collect_lr_syntax_errors_with(&table, &grammar, token_map)
 }
 
 /// Enriquece un error de sintaxis con una sugerencia de token por distancia de
@@ -383,117 +399,125 @@ pub(crate) fn build_real_parse_tree(
         Some((grammar, tree))
     } else {
         let grammar = Grammar::parse_for_lr_from_str(yalp).ok()?;
-        let first_sets = calculate_first(&grammar);
-        let table = if mode == "slr" {
-            let follow_sets = calculate_follow(&grammar, &first_sets);
-            let lr0 = LR0Automaton::build(&grammar);
-            LRTable::build_from_slr(&lr0, &grammar, &follow_sets)
-        } else {
-            let lr1 = LR1Automaton::build(&grammar, &first_sets);
-            let lalr = merge_by_core(lr1);
-            LRTable::build_from_lalr(&lalr, &grammar)
-        };
+        let table = build_lr_table(&grammar, mode);
         let tree = LRParser::new(&table).parse_tree(parse_tokens).ok()?;
         Some((grammar, tree))
     }
 }
 
-fn parse_with_trace_lr(table: &LRTable, tokens: Vec<String>) -> Vec<Value> {
-    let mut state_stack: Vec<usize> = vec![table.start_state];
-    let mut symbol_stack: Vec<String> = Vec::new();
-    let mut input: Vec<String> = tokens;
-    input.push("$".to_string());
-    let mut ip = 0usize;
-    let mut done = false;
-    let mut trace: Vec<Value> = Vec::new();
+/// Traza paso a paso para el IDE. Es el CUARTO consumidor del motor
+/// shift-reduce; como los otros tres, ya no reimplementa el bucle: lo obtiene
+/// de `sintactico::runtime::driver` y solo aporta qué anotar en cada evento.
+///
+/// Lo que lo distingue de los demás es que necesita una FOTO de la pila y de
+/// lo que queda por consumir ANTES de cada acción — de ahí el callback
+/// `before_step` del observador.
+struct JsonTraceObserver {
+    trace: Vec<Value>,
+    /// Pila de símbolos en paralelo a la de estados del driver, para poder
+    /// mostrarlas intercaladas como hace el IDE.
+    symbols: Vec<String>,
+    /// Última foto tomada en `before_step`, que es la que acompaña a la
+    /// entrada de traza de esta iteración.
+    snapshot_stack: Vec<Value>,
+    snapshot_remaining: Vec<Value>,
+}
 
-    while !done {
-        let s = *state_stack.last().unwrap();
-        // `$` is rejected as a token name at grammar-parse time (Grammar::validate),
-        // so no Shift can ever advance `ip` past it — but index defensively instead
-        // of panicking the request thread if that invariant is ever broken (A5).
-        let a = match input.get(ip) {
-            Some(t) => t.clone(),
-            None => {
-                trace.push(json!({
-                    "stack": Value::Null,
-                    "remaining": Value::Array(vec![]),
-                    "action": "error",
-                    "desc": "Error interno: se agotó la entrada de forma inesperada.",
-                }));
-                break;
-            }
-        };
-
-        // Snapshot BEFORE the action
-        let remaining: Vec<Value> = input[ip..].iter().map(|t| json!(t)).collect();
-        let mut stack_val: Vec<Value> = Vec::new();
-        for i in 0..state_stack.len() {
-            stack_val.push(json!(state_stack[i]));
-            if i < symbol_stack.len() {
-                stack_val.push(json!(symbol_stack[i]));
-            }
+impl JsonTraceObserver {
+    fn new() -> Self {
+        JsonTraceObserver {
+            trace: Vec::new(),
+            symbols: Vec::new(),
+            snapshot_stack: Vec::new(),
+            snapshot_remaining: Vec::new(),
         }
+    }
 
-        // Clone to release the borrow on table.action before accessing table.goto
-        let action_cloned = table.action.get(&(s, a.clone())).cloned();
-
-        let (action_str, desc) = match action_cloned {
-            Some(Action::Shift(t)) => {
-                state_stack.push(t);
-                symbol_stack.push(a.clone());
-                ip += 1;
-                (format!("s{}", t), format!("Shift '{}' → I{}", a, t))
-            }
-            Some(Action::Reduce { head, body }) => {
-                let body_str = body_to_string(&body);
-                for _ in 0..body.len() {
-                    state_stack.pop();
-                    symbol_stack.pop();
-                }
-                let top = *state_stack.last().unwrap();
-                match table.goto.get(&(top, head.clone())) {
-                    Some(&next) => {
-                        state_stack.push(next);
-                        symbol_stack.push(head.clone());
-                        ("r".to_string(), format!("{} → {}", head, body_str))
-                    }
-                    None => {
-                        // Tabla interna inconsistente: sin esto, el bucle seguía con la
-                        // pila ya reducida pero sin avanzar, creciendo `trace` sin fin (A12).
-                        done = true;
-                        (
-                            "error".to_string(),
-                            format!("Error interno: GOTO[I{}, {}] no definido tras reducción.", top, head),
-                        )
-                    }
-                }
-            }
-            Some(Action::Accept) => {
-                done = true;
-                ("acc".to_string(), "Cadena aceptada".to_string())
-            }
-            None => {
-                done = true;
-                let expected_str = format_expected_tokens(&table.expected_tokens(s));
-                (
-                    "error".to_string(),
-                    format!(
-                        "Error sintáctico en I{}, token '{}'. Esperado: {}",
-                        s, a, expected_str
-                    ),
-                )
-            }
-        };
-
-        trace.push(json!({
-            "stack": stack_val,
-            "remaining": remaining,
-            "action": action_str,
+    fn push_entry(&mut self, action: &str, desc: String) {
+        self.trace.push(json!({
+            "stack": self.snapshot_stack.clone(),
+            "remaining": self.snapshot_remaining.clone(),
+            "action": action,
             "desc": desc,
         }));
     }
-    trace
+}
+
+impl ParseObserver for JsonTraceObserver {
+    fn before_step(&mut self, states: &[usize], remaining: &[ParseToken]) {
+        self.snapshot_remaining = remaining.iter().map(|t| json!(t.kind)).collect();
+        let mut stack_val: Vec<Value> = Vec::new();
+        for (i, st) in states.iter().enumerate() {
+            stack_val.push(json!(st));
+            if i < self.symbols.len() {
+                stack_val.push(json!(self.symbols[i]));
+            }
+        }
+        self.snapshot_stack = stack_val;
+    }
+
+    fn on_shift(&mut self, next_state: usize, token: &ParseToken) {
+        self.symbols.push(token.kind.clone());
+        self.push_entry(
+            &format!("s{}", next_state),
+            format!("Shift '{}' → I{}", token.kind, next_state),
+        );
+    }
+
+    fn on_reduce(&mut self, head: &str, body: &[Symbol], _goto: usize) {
+        let body_str = body_to_string(body);
+        for _ in 0..body.len() {
+            self.symbols.pop();
+        }
+        self.symbols.push(head.to_string());
+        self.push_entry("r", format!("{} → {}", head, body_str));
+    }
+
+    fn on_accept(&mut self) {
+        self.push_entry("acc", "Cadena aceptada".to_string());
+    }
+
+    fn on_error(
+        &mut self,
+        _cause: ErrorCause,
+        state: usize,
+        _ip: usize,
+        token: &ParseToken,
+        table: &LRTable,
+    ) -> OnError {
+        let expected_str = format_expected_tokens(&table.expected_tokens(state));
+        self.push_entry(
+            "error",
+            format!(
+                "Error sintáctico en I{}, token '{}'. Esperado: {}",
+                state, token.kind, expected_str
+            ),
+        );
+        OnError::Abort
+    }
+}
+
+fn parse_with_trace_lr(table: &LRTable, tokens: Vec<String>) -> Vec<Value> {
+    let mut obs = JsonTraceObserver::new();
+    let result = driver::drive(table, tokens_from_kinds(tokens), &[], &mut obs);
+
+    // `Syntax` ya dejó su entrada en `on_error`; los otros dos cortes son
+    // internos y el driver no avisa por callback, así que se anotan acá.
+    match result {
+        Err(DriveError::MissingGoto { top, head, .. }) => {
+            obs.push_entry("error", DriveError::missing_goto_msg(top, &head));
+        }
+        Err(DriveError::InputExhausted) => {
+            obs.trace.push(json!({
+                "stack": Value::Null,
+                "remaining": Value::Array(vec![]),
+                "action": "error",
+                "desc": DriveError::exhausted_msg(),
+            }));
+        }
+        _ => {}
+    }
+    obs.trace
 }
 
 fn lalr_states_to_data(states: &[crate::sintactico::automatas::lalr::LALRState]) -> Vec<StateData> {

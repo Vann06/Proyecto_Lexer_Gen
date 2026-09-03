@@ -1,3 +1,4 @@
+pub mod driver;
 // Ejecutan las tablas construidas por `gramatica`/`automatas`/`tablas`: el
 // parser LR dirigido por tabla, el parser LL(1) recursivo por tabla, y el
 // árbol de derivación que ambos producen.

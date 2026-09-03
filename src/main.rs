@@ -52,9 +52,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use crate::lexico::spec::expand::expand_definitions;
-use crate::lexico::spec::parser::parse_yalex;
-use crate::lexico::regex::parser::parse_regex;
+use crate::lexico::pipeline;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -81,13 +79,19 @@ fn main() {
         }
     };
 
-    let spec = match parse_yalex(&input) {
-        Ok(s) => s,
+    // Todo el pipeline léxico corre acá, de una sola vez
+    // (`lexico::pipeline::build_all`). Este binario ya no lo reimplementa: lo
+    // que aporta es RELATAR cada fase, y para eso `build_all` devuelve todos
+    // los artefactos intermedios, no solo la tabla final.
+    let artifacts = match pipeline::build_all(&input) {
+        Ok(a) => a,
         Err(err) => {
-            eprintln!("Error al parsear '{}': {}", path, err);
+            eprintln!("Error al procesar '{}': {}", path, err);
             std::process::exit(1);
         }
     };
+    let spec = &artifacts.spec;
+    let expanded = &artifacts.expanded;
 
     println!("✓ Especificación '{}' parseada con éxito.", path);
     if let Some(h) = &spec.header {
@@ -100,14 +104,13 @@ fn main() {
     }
 
     // ── Fase 2: Expansión de macros ─────────────────────────────────────────
-    let expanded = expand_definitions(&spec);
-
-    println!("\n╔══════════════════════════════════════════╗");
+    println!("
+╔══════════════════════════════════════════╗");
     println!("║      FASE 2: EXPANSIÓN DE MACROS         ║");
     println!("╚══════════════════════════════════════════╝");
 
     println!("✓ {} reglas expandidas.", expanded.len());
-    for rule in &expanded {
+    for rule in expanded {
         println!("  - [{}] {}  =>  {{...}}",
             rule.priority, rule.pattern_expanded);
     }
@@ -117,43 +120,17 @@ fn main() {
     println!("║ FASE 3 Y 7: ASTs y CONSTRUCCIÓN DE NFAs  ║");
     println!("╚══════════════════════════════════════════╝");
     
-    let mut grandote_ast: Option<crate::lexico::regex::ast::RegexAst> = None;
-    let mut all_ok = true;
-    let mut id_counter = 0; 
-    let mut nfas_list = Vec::new();
-
-    for rule in expanded.iter() {
-        match parse_regex(&rule.pattern_expanded) {
-            Ok(ast) => {
-                grandote_ast = match grandote_ast {
-                    None => Some(ast.clone()),
-                    Some(prev) => Some(crate::lexico::regex::ast::RegexAst::Union(Box::new(prev), Box::new(ast.clone())))
-                };
-
-                let mut rule_nfa = crate::lexico::automata::nfa::build_nfa_from_ast(&ast, &mut id_counter);
-                
-                if let Some(final_state) = rule_nfa.states.get_mut(&rule_nfa.end_state) {
-                    final_state.accept_action = Some((rule.priority, rule.action_code.clone()));
-                }
-                
-                nfas_list.push(rule_nfa);
-            },
-            Err(e) => {
-                eprintln!("  ✗ Error al parsear regex '{}': {}", rule.pattern_expanded, e);
-                all_ok = false;
-            }
-        }
-    }
-
-    if !all_ok {
-        eprintln!("\nError: Se encontraron problemas en las expresiones regulares. Abortando.");
-        std::process::exit(1);
-    }
-
     println!("✓ Todos los ASTs y NFAs por regla fueron construidos.");
 
     // ── Generación de Gráficos (Opcional pero útil) ────────────────────────
+    // El AST consolidado es la unión de los ASTs por regla, que `build_all`
+    // conserva justamente para poder graficarlos acá.
     fs::create_dir_all("graphs").ok();
+    let grandote_ast = artifacts
+        .asts
+        .iter()
+        .cloned()
+        .reduce(|acc, ast| crate::lexico::regex::ast::RegexAst::Union(Box::new(acc), Box::new(ast)));
     if let Some(big_ast) = &grandote_ast {
         let dot_path = "graphs/ast_grandote.dot";
         if crate::lexico::graph::dot::write_ast_dot(dot_path, big_ast).is_ok() {
@@ -161,30 +138,27 @@ fn main() {
             println!("    (Puedes generar PNG usando: dot -Tpng {} -o graphs/ast_grandote.png)", dot_path);
         }
     }
-        
-    // ── FASE 7 (Final): Juntamos los NFAs en uno solo ───────────────────────
-    let master_nfa = crate::lexico::automata::nfa::combine_nfas(nfas_list, &mut id_counter);
-    println!("✓ Super-NFA maestro construido con {} estados.", master_nfa.states.len());
-    
+
+    println!("✓ Super-NFA maestro construido con {} estados.", artifacts.master_nfa.states.len());
+
     // ── FASE 8 Y 9: Construcción del DFA ────────────────────────────────────
-    println!("\n╔══════════════════════════════════════════╗");
+    println!("
+╔══════════════════════════════════════════╗");
     println!("║      FASE 8 Y 9: CONSTRUCCIÓN DE DFA     ║");
     println!("╚══════════════════════════════════════════╝");
-    
-    let dfa = crate::lexico::automata::subset::build_dfa_from_nfa(&master_nfa);
-    println!("✓ DFA construido con {} estados mediante construcción de subconjuntos.", dfa.states.len());
-    
+    println!("✓ DFA construido con {} estados mediante construcción de subconjuntos.", artifacts.dfa.states.len());
+
     // ── FASE 10: Minimizamos el AFD ─────────────────────────────────────────
-    println!("\n╔══════════════════════════════════════════╗");
+    println!("
+╔══════════════════════════════════════════╗");
     println!("║      FASE 10: MINIMIZACIÓN DE DFA        ║");
     println!("╚══════════════════════════════════════════╝");
-    
-    let min_dfa = crate::lexico::automata::minimize::minimize_dfa(&dfa);
+    let min_dfa = &artifacts.min_dfa;
     println!("✓ DFA minimizado a {} estados.", min_dfa.states.len());
 
     // ── Generar gráfico del DFA final ──────────────────────────────────────
     let dfa_dot_path = "graphs/dfa.dot";
-    if crate::lexico::graph::dot::write_dfa_dot(dfa_dot_path, &min_dfa).is_ok() {
+    if crate::lexico::graph::dot::write_dfa_dot(dfa_dot_path, min_dfa).is_ok() {
         println!("  - DFA final exportado a '{}'.", dfa_dot_path);
         println!("    (Puedes generar PNG usando: dot -Tpng {} -o graphs/dfa.png)", dfa_dot_path);
     }

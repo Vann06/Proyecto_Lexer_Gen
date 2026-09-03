@@ -11,7 +11,11 @@ use crate::sintactico::runtime::parse_tree::to_dot;
 use serde_json::{json, Value};
 
 use super::lexico::{build_lexer_table_from_str, lex_is_ignored, lex_normalize_kind};
-use super::sintactico::{build_parse_response, build_real_parse_tree, collect_lr_syntax_errors, push_syntax_problem};
+use super::sintactico::{
+    build_lr_table, build_parse_response, build_parse_response_with, build_real_parse_tree,
+    build_real_parse_tree_with, collect_lr_syntax_errors, collect_lr_syntax_errors_with,
+    push_syntax_problem,
+};
 use super::ParseResponse;
 
 /// Punto de entrada usado por los binarios/tests existentes: mismo contrato
@@ -43,7 +47,17 @@ pub fn build_pipeline_response_named(
 
     // Lex the source (normalize CRLF to LF to avoid treating '\r' as invalid char)
     let source_clean = source.replace('\r', "");
+    // Una sola lectura de la gramática y una sola construcción de la tabla para
+    // toda la petición. Antes se parseaba tres veces y el autómata LR se
+    // construía dos: una en `build_parse_response` y otra en
+    // `build_real_parse_tree`/`collect_lr_syntax_errors`, cada una desde cero.
+    // Construir el autómata LR(1) es la parte cara del pipeline.
+    //
+    // Solo para LALR/SLR: el camino LL(1) usa OTRA gramática (la factorizada,
+    // con producciones renombradas) y su propia tabla, así que no puede
+    // compartir esta.
     let grammar_for_filter = Grammar::parse_for_lr_from_str(yalp)?;
+    let lr_table = if mode != "ll1" { Some(build_lr_table(&grammar_for_filter, mode)) } else { None };
     let mut sim = Simulator::new(&lexer_table, &source_clean);
     let mut token_map: Vec<(String, String, usize, usize)> = Vec::new();
     let mut lex_problems: Vec<Value> = Vec::new();
@@ -104,7 +118,10 @@ pub fn build_pipeline_response_named(
     response.accepted = true;
 
     if !token_kinds.is_empty() {
-        let resp = build_parse_response(yalp, token_kinds.clone(), mode)?;
+        let resp = match &lr_table {
+            Some(table) => build_parse_response_with(table, token_kinds.clone()),
+            None => build_parse_response(yalp, token_kinds.clone(), mode)?,
+        };
         response.accepted = resp.accepted;
 
         // Attach the source line of the token each step is about to consume, for the
@@ -141,7 +158,10 @@ pub fn build_pipeline_response_named(
             // called it). Fall back to the single first-error report — using the
             // same "which token was the driver stuck on" heuristic as before — when
             // recovery isn't available or finds nothing (e.g. LL(1) mode).
-            let recovered = collect_lr_syntax_errors(yalp, &token_map, mode);
+            let recovered = match &lr_table {
+                Some(table) => collect_lr_syntax_errors_with(table, &grammar_for_filter, &token_map),
+                None => collect_lr_syntax_errors(yalp, &token_map, mode),
+            };
             if !recovered.is_empty() {
                 for (kind, lexeme, line, col, msg) in &recovered {
                     push_syntax_problem(&mut lex_problems, kind, lexeme, *line, *col, msg, &grammar_for_filter.tokens, source_name);
@@ -178,13 +198,21 @@ pub fn build_pipeline_response_named(
             // izquierda y factorización, que renombra producciones — un
             // `SemanticSpec` escrito contra los nombres originales del .yalp
             // dejaría de encontrarlas y generaría diagnósticos falsos.
-            if let Some((grammar, tree)) = build_real_parse_tree(yalp, &token_map, mode) {
+            // En LALR/SLR el árbol sale de la MISMA tabla que ya se usó para la
+            // traza; solo LL(1) tiene que rearmar su gramática factorizada.
+            let real_tree = match &lr_table {
+                Some(table) => build_real_parse_tree_with(table, &token_map)
+                    .map(|tree| (grammar_for_filter.clone(), tree)),
+                None => build_real_parse_tree(yalp, &token_map, mode),
+            };
+            if let Some((grammar, tree)) = real_tree {
                 response.parse_tree_dot = to_dot(&tree);
                 if mode != "ll1" {
                     if let Some(spec) = SemanticSpec::from_grammar(&grammar) {
                         let analysis = analyze(&tree, &spec);
                         response.symbol_table = analysis.table.dump();
                         response.closures = analysis.closures.to_json();
+                        response.scopes = analysis.scopes.to_json();
                         lex_problems.extend(analysis.errors.to_problems(source_name));
                     }
                 }

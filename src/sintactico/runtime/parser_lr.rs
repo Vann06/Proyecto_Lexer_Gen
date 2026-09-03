@@ -1,7 +1,14 @@
-// Driver shift-reduce GENÉRICO para cualquier parser LR.
+// Los tres consumidores del motor shift-reduce que viven en la fase
+// sintáctica. El bucle en sí NO está acá: vive una sola vez en
+// `super::driver`. Acá quedan tres observadores —traza, árbol y árbol con
+// recuperación— y las funciones públicas que los envuelven, con las MISMAS
+// firmas de siempre para que ningún llamador se entere del cambio.
 use crate::sintactico::gramatica::grammar::Symbol;
+use crate::sintactico::runtime::driver::{
+    self, DriveError, ErrorCause, OnError, ParseObserver,
+};
 use crate::sintactico::runtime::parse_tree::{ParseNode, ParseToken};
-use crate::sintactico::tablas::{Action, LRTable};
+use crate::sintactico::tablas::LRTable;
 
 #[derive(Debug, Clone)]
 pub enum ParseStep {
@@ -21,6 +28,124 @@ pub struct LRParser<'a> {
     pub table: &'a LRTable,
 }
 
+/// Envuelve una lista de kinds en `ParseToken`s sin posición, para los dos
+/// caminos que solo reciben nombres de terminal (`parse` y la traza del IDE).
+pub(crate) fn tokens_from_kinds(kinds: Vec<String>) -> Vec<ParseToken> {
+    kinds
+        .into_iter()
+        .map(|kind| ParseToken { kind, lexeme: String::new(), line: 0, col: 0 })
+        .collect()
+}
+
+/// Traduce el corte del driver al `String` de error que devolvían `parse` y
+/// `parse_tree`.
+fn drive_error_msg(err: &DriveError, table: &LRTable) -> String {
+    match err {
+        DriveError::Syntax { state, token, .. } => format_error(*state, &token.kind, table),
+        DriveError::MissingGoto { top, head, .. } => DriveError::missing_goto_msg(*top, head),
+        DriveError::InputExhausted => DriveError::exhausted_msg(),
+        DriveError::Unrecovered => "Error sintáctico irrecuperable.".to_string(),
+    }
+}
+
+// ── Observador 1: solo la traza de pasos ────────────────────────────────────
+
+#[derive(Default)]
+struct TraceObserver {
+    trace: Vec<ParseStep>,
+}
+
+impl ParseObserver for TraceObserver {
+    fn on_shift(&mut self, next_state: usize, token: &ParseToken) {
+        self.trace.push(ParseStep::Shift { state: next_state, token: token.kind.clone() });
+    }
+    fn on_reduce(&mut self, head: &str, body: &[Symbol], _goto: usize) {
+        self.trace.push(ParseStep::Reduce { head: head.to_string(), body: body.to_vec() });
+    }
+    fn on_accept(&mut self) {
+        self.trace.push(ParseStep::Accept);
+    }
+}
+
+// ── Observador 2: construcción del árbol ────────────────────────────────────
+
+#[derive(Default)]
+struct TreeObserver {
+    nodes: Vec<ParseNode>,
+}
+
+impl TreeObserver {
+    /// Reduce sobre la pila de nodos: saca los `k` hijos y apila el nodo
+    /// interno. Una reducción de cuerpo VACÍO deja una hoja ε visible en el
+    /// árbol — es la diferencia real entre este observador y el de traza, y
+    /// hay que conservarla.
+    fn reduce(&mut self, head: &str, k: usize) {
+        let split_at = self.nodes.len().saturating_sub(k);
+        let children: Vec<ParseNode> = self.nodes.drain(split_at..).collect();
+        let children = if children.is_empty() {
+            vec![ParseNode::epsilon_leaf()]
+        } else {
+            children
+        };
+        self.nodes.push(ParseNode::internal(head.to_string(), children));
+    }
+}
+
+impl ParseObserver for TreeObserver {
+    fn on_shift(&mut self, _next_state: usize, token: &ParseToken) {
+        self.nodes.push(ParseNode::leaf(token));
+    }
+    fn on_reduce(&mut self, head: &str, body: &[Symbol], _goto: usize) {
+        self.reduce(head, body.len());
+    }
+    fn on_discard_state(&mut self) {
+        self.nodes.pop();
+    }
+}
+
+// ── Observador 3: árbol + recuperación en modo pánico ───────────────────────
+
+struct RecoveringObserver<'t> {
+    tree: TreeObserver,
+    errors: Vec<ParseErrorDetail>,
+    table: &'t LRTable,
+}
+
+impl<'t> ParseObserver for RecoveringObserver<'t> {
+    fn on_shift(&mut self, next_state: usize, token: &ParseToken) {
+        self.tree.on_shift(next_state, token);
+    }
+    fn on_reduce(&mut self, head: &str, body: &[Symbol], goto: usize) {
+        self.tree.on_reduce(head, body, goto);
+    }
+    fn on_discard_state(&mut self) {
+        // `TreeObserver::on_discard_state` desapila incondicionalmente; acá la
+        // pila puede estar vacía si el error llegó antes de apilar nada.
+        if !self.tree.nodes.is_empty() {
+            self.tree.nodes.pop();
+        }
+    }
+    fn on_error(
+        &mut self,
+        cause: ErrorCause,
+        state: usize,
+        ip: usize,
+        token: &ParseToken,
+        _table: &LRTable,
+    ) -> OnError {
+        let msg = match cause {
+            ErrorCause::NoAction => format_error(state, &token.kind, self.table),
+            ErrorCause::LoopGuard => format!(
+                "Error sintáctico irrecuperable en la posición actual \
+                 (token '{}'); se descarta para evitar un bucle sin fin.",
+                token.kind
+            ),
+        };
+        self.errors.push(ParseErrorDetail { pos: ip, token: token.kind.clone(), msg });
+        OnError::Recover
+    }
+}
+
 impl<'a> LRParser<'a> {
     pub fn new(table: &'a LRTable) -> Self {
         LRParser { table }
@@ -29,59 +154,10 @@ impl<'a> LRParser<'a> {
     /// Ejecuta shift-reduce. `tokens` debe ser una lista de terminales SIN el $ final.
     /// Devuelve la traza de pasos o un mensaje de error sintáctico.
     pub fn parse(&self, tokens: Vec<String>) -> Result<Vec<ParseStep>, String> {
-        let mut state_stack: Vec<usize> = vec![self.table.start_state];
-        let mut symbol_stack: Vec<Symbol> = Vec::new();
-
-        let mut input: Vec<String> = tokens;
-        input.push("$".to_string());
-        let mut ip = 0usize;
-
-        let mut trace: Vec<ParseStep> = Vec::new();
-
-        loop {
-            let s = *state_stack.last().unwrap();
-            // '$' is rejected as a token name at grammar-parse time, so no Shift can
-            // ever push `ip` past it — index defensively anyway instead of panicking (A5).
-            let a = input.get(ip).ok_or_else(|| {
-                "Error interno: se agotó la entrada de forma inesperada.".to_string()
-            })?;
-
-            match self.table.action.get(&(s, a.clone())) {
-                Some(Action::Shift(t)) => {
-                    let t = *t;
-                    trace.push(ParseStep::Shift { state: t, token: a.clone() });
-                    state_stack.push(t);
-                    symbol_stack.push(Symbol::Terminal(a.clone()));
-                    ip += 1;
-                }
-                Some(Action::Reduce { head, body }) => {
-                    let head = head.clone();
-                    let body = body.clone();
-
-                    trace.push(ParseStep::Reduce { head: head.clone(), body: body.clone() });
-
-                    for _ in 0..body.len() {
-                        state_stack.pop();
-                        symbol_stack.pop();
-                    }
-
-                    let top = *state_stack.last().unwrap();
-                    let next_state = self.table.goto.get(&(top, head.clone())).copied()
-                        .ok_or_else(|| format!(
-                            "Error interno: GOTO[I{}, {}] no definido tras reducción.", top, head
-                        ))?;
-
-                    state_stack.push(next_state);
-                    symbol_stack.push(Symbol::NonTerminal(head));
-                }
-                Some(Action::Accept) => {
-                    trace.push(ParseStep::Accept);
-                    return Ok(trace);
-                }
-                None => {
-                    return Err(format_error(s, a, &self.table));
-                }
-            }
+        let mut obs = TraceObserver::default();
+        match driver::drive(self.table, tokens_from_kinds(tokens), &[], &mut obs) {
+            Ok(()) => Ok(obs.trace),
+            Err(e) => Err(drive_error_msg(&e, self.table)),
         }
     }
 
@@ -91,222 +167,55 @@ impl<'a> LRParser<'a> {
     ///   - Reduce A → α (|α|=k) → pop k nodos, push interno(A, esos k nodos)
     ///   - Accept               → la pila contiene la raíz
     pub fn parse_tree(&self, tokens: Vec<ParseToken>) -> Result<ParseNode, String> {
-        let mut state_stack: Vec<usize> = vec![self.table.start_state];
-        let mut node_stack: Vec<ParseNode> = Vec::new();
-
-        let mut input = tokens;
-        // Centinela $ con lexema vacío (no aparece en el árbol porque Accept no lo consume).
-        input.push(ParseToken { kind: "$".to_string(), lexeme: String::new(), line: 0, col: 0 });
-        let mut ip = 0usize;
-
-        loop {
-            let s = *state_stack.last().unwrap();
-            // '$' is rejected as a token name at grammar-parse time, so no Shift can
-            // ever push `ip` past it — index defensively anyway instead of panicking (A5).
-            let current = input.get(ip).ok_or_else(|| {
-                "Error interno: se agotó la entrada de forma inesperada.".to_string()
-            })?;
-            let a = &current.kind;
-
-            match self.table.action.get(&(s, a.clone())) {
-                Some(Action::Shift(t)) => {
-                    let t = *t;
-                    node_stack.push(ParseNode::leaf(current));
-                    state_stack.push(t);
-                    ip += 1;
-                }
-                Some(Action::Reduce { head, body }) => {
-                    let head = head.clone();
-                    let k = body.len();
-
-                    // Pop k nodos hijos en el orden en que están en el cuerpo.
-                    let split_at = node_stack.len().saturating_sub(k);
-                    let children: Vec<ParseNode> = node_stack.drain(split_at..).collect();
-
-                    for _ in 0..k {
-                        state_stack.pop();
-                    }
-
-                    let top = *state_stack.last().unwrap();
-                    let next_state = self.table.goto.get(&(top, head.clone())).copied()
-                        .ok_or_else(|| format!(
-                            "Error interno: GOTO[I{}, {}] no definido tras reducción.", top, head
-                        ))?;
-
-                    // Si el cuerpo era ε, añadir un nodo ε visible en el árbol.
-                    let children = if children.is_empty() {
-                        vec![ParseNode::epsilon_leaf()]
-                    } else {
-                        children
-                    };
-
-                    node_stack.push(ParseNode::internal(head, children));
-                    state_stack.push(next_state);
-                }
-                Some(Action::Accept) => {
-                    // La pila debe contener exactamente el árbol del símbolo inicial.
-                    return node_stack.pop()
-                        .ok_or_else(|| "Error interno: Accept con pila de nodos vacía.".to_string());
-                }
-                None => {
-                    return Err(format_error(s, a, &self.table));
-                }
-            }
+        let mut obs = TreeObserver::default();
+        match driver::drive(self.table, tokens, &[], &mut obs) {
+            Ok(()) => obs
+                .nodes
+                .pop()
+                .ok_or_else(|| "Error interno: Accept con pila de nodos vacía.".to_string()),
+            Err(e) => Err(drive_error_msg(&e, self.table)),
         }
     }
 
-  
+    /// Parseo con recuperación en modo pánico:
     ///   1. Registra el error.
     ///   2. Descarta tokens del input hasta encontrar un símbolo de sincronización.
     ///   3. Desapila estados hasta encontrar uno que acepte ese símbolo.
     ///   4. Retoma el parseo desde ahí.
-    pub fn parse_recovering(
-        &self,
-        tokens: Vec<ParseToken>,
-        sync: &[&str],
-    ) -> (Option<ParseNode>, Vec<String>) {
-        let (tree, errors) = self.parse_recovering_with_pos(tokens, sync);
-        (tree, errors.into_iter().map(|e| e.msg).collect())
-    }
-
+    ///
+    /// Devuelve el árbol (si logró llegar a Accept) y TODOS los errores
+    /// encontrados, no solo el primero.
     pub fn parse_recovering_with_pos(
         &self,
         tokens: Vec<ParseToken>,
         sync: &[&str],
     ) -> (Option<ParseNode>, Vec<ParseErrorDetail>) {
-        let mut errors: Vec<ParseErrorDetail> = Vec::new();
-        let mut state_stack: Vec<usize> = vec![self.table.start_state];
-        let mut node_stack: Vec<ParseNode> = Vec::new();
+        let mut obs = RecoveringObserver {
+            tree: TreeObserver::default(),
+            errors: Vec::new(),
+            table: self.table,
+        };
 
-        let mut input = tokens;
-        input.push(ParseToken { kind: "$".to_string(), lexeme: String::new(), line: 0, col: 0 });
-        let mut ip = 0usize;
-        // Recuerda la posición de la última vez que entramos en modo pánico SIN que
-        // ningún Shift haya consumido input desde entonces. Si volvemos a entrar en
-        // pánico exactamente en la misma posición, es que la recuperación anterior
-        // (desapilar hasta un estado con acción para el símbolo de sync) llevó a un
-        // ε-reduce que no avanza `ip` y vuelve a fallar — un ciclo real sin cota
-        // (A10). Forzar el avance de un token rompe el ciclo garantizando progreso.
-        let mut last_panic_ip: Option<usize> = None;
-
-        loop {
-            let s = *state_stack.last().unwrap();
-            // '$' is rejected as a token name at grammar-parse time, so no Shift can
-            // ever push `ip` past it — index defensively anyway instead of panicking (A5).
-            let current = match input.get(ip) {
-                Some(t) => t,
-                None => {
-                    errors.push(ParseErrorDetail {
-                        pos: ip,
-                        token: String::new(),
-                        msg: "Error interno: se agotó la entrada de forma inesperada.".to_string(),
-                    });
-                    return (None, errors);
-                }
-            };
-            let a = current.kind.clone();
-
-            match self.table.action.get(&(s, a.clone())) {
-                Some(Action::Shift(t)) => {
-                    let t = *t;
-                    node_stack.push(ParseNode::leaf(current));
-                    state_stack.push(t);
-                    ip += 1;
-                    last_panic_ip = None; // progreso real: se consumió un token
-                }
-                Some(Action::Reduce { head, body }) => {
-                    let head = head.clone();
-                    let k = body.len();
-                    let split_at = node_stack.len().saturating_sub(k);
-                    let children: Vec<ParseNode> = node_stack.drain(split_at..).collect();
-                    for _ in 0..k { state_stack.pop(); }
-                    let top = *state_stack.last().unwrap();
-                    let next_state = match self.table.goto.get(&(top, head.clone())).copied() {
-                        Some(ns) => ns,
-                        None => {
-                            errors.push(ParseErrorDetail {
-                                pos: ip,
-                                token: a.clone(),
-                                msg: format!(
-                                    "Error interno: GOTO[I{}, {}] no definido.", top, head
-                                ),
-                            });
-                            return (None, errors);
-                        }
-                    };
-                    let children = if children.is_empty() {
-                        vec![ParseNode::epsilon_leaf()]
-                    } else { children };
-                    node_stack.push(ParseNode::internal(head, children));
-                    state_stack.push(next_state);
-                }
-                Some(Action::Accept) => {
-                    return (node_stack.pop(), errors);
-                }
-                None => {
-                    // ── Modo pánico ──────────────────────────────────────────
-                    if last_panic_ip == Some(ip) {
-                        // Ya entramos en pánico en esta MISMA posición sin haber
-                        // consumido ningún token desde entonces: la recuperación
-                        // anterior llevó a un ε-reduce que no avanzó `ip` y volvió a
-                        // fallar. Forzar el avance rompe el ciclo (A10).
-                        errors.push(ParseErrorDetail {
-                            pos: ip,
-                            token: a.clone(),
-                            msg: format!(
-                                "Error sintáctico irrecuperable en la posición actual \
-                                 (token '{}'); se descarta para evitar un bucle sin fin.",
-                                a
-                            ),
-                        });
-                        ip += 1;
-                        last_panic_ip = None;
-                        if ip >= input.len() {
-                            return (None, errors);
-                        }
-                        continue;
-                    }
-                    last_panic_ip = Some(ip);
-
-                    errors.push(ParseErrorDetail {
-                        pos: ip,
-                        token: a.clone(),
-                        msg: format_error(s, &a, &self.table),
-                    });
-
-                    // 1. Avanzar el input hasta encontrar un símbolo de sincronización
-                    while ip < input.len()
-                        && !sync.contains(&input[ip].kind.as_str())
-                        && input[ip].kind != "$"
-                    {
-                        ip += 1;
-                    }
-
-                    if ip >= input.len() || input[ip].kind == "$" {
-                        // No hay punto de recuperación — abortamos
-                        return (None, errors);
-                    }
-
-                    let sync_kind = input[ip].kind.clone();
-
-                    // 2. Desapilar estados hasta encontrar uno con acción para sync_kind
-                    let mut recovered = false;
-                    while state_stack.len() > 1 {
-                        let top = *state_stack.last().unwrap();
-                        if self.table.action.contains_key(&(top, sync_kind.clone())) {
-                            recovered = true;
-                            break;
-                        }
-                        state_stack.pop();
-                        if !node_stack.is_empty() { node_stack.pop(); }
-                    }
-
-                    if !recovered {
-                        return (None, errors);
-                    }
-                    // 3. Continuar desde el punto de sincronización
-                }
+        match driver::drive(self.table, tokens, sync, &mut obs) {
+            Ok(()) => (obs.tree.nodes.pop(), obs.errors),
+            Err(DriveError::MissingGoto { top, head, ip, token }) => {
+                obs.errors.push(ParseErrorDetail {
+                    pos: ip,
+                    token: token.kind,
+                    msg: DriveError::missing_goto_msg(top, &head),
+                });
+                (None, obs.errors)
             }
+            Err(DriveError::InputExhausted) => {
+                obs.errors.push(ParseErrorDetail {
+                    pos: usize::MAX,
+                    token: String::new(),
+                    msg: DriveError::exhausted_msg(),
+                });
+                (None, obs.errors)
+            }
+            // `Unrecovered` y `Syntax` ya dejaron su diagnóstico en `on_error`.
+            Err(_) => (None, obs.errors),
         }
     }
 }
