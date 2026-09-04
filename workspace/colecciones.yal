@@ -1,0 +1,84 @@
+(* ============================================================ *)
+(*  colecciones.yal  -  Lexico de la gramatica de colecciones    *)
+(*                                                                *)
+(*  Lenguaje minimo cuyo unico proposito es ejercitar los cuatro  *)
+(*  tipos de coleccion del analizador: arreglo, mapa, conjunto y  *)
+(*  tupla. Compiscript no tiene esta sintaxis; esta gramatica     *)
+(*  existe para probar que el soporte es agnostico y ya esta      *)
+(*  listo para cualquier .yalp que la traiga.                     *)
+(* ============================================================ *)
+
+(* --- Caracteres base --- *)
+let digit  = ['0'-'9']
+let lower  = ['a'-'z']
+let upper  = ['A'-'Z']
+let letter = lower | upper
+let alnum  = letter | digit
+
+(* --- Blancos --- *)
+let ws = [' ''\t''\n''\r']+
+
+(* --- Identificadores --- *)
+let id = (letter | '_')(alnum | '_')*
+
+(* --- Literales --- *)
+let num_lit  = digit+
+let str_safe = alnum | [' ''.''!''?'','':'';''-''_']
+let txt_lit  = '"' str_safe* '"'
+
+(* --- Comentario de una linea --- *)
+let cmt_char = alnum | [' ''.''!''?'','':'';''_''=''-']
+let comentario = '/''/' cmt_char*
+
+(* --- Palabras reservadas --- *)
+let kw_var       = var
+let kw_entero    = entero
+let kw_texto     = texto
+let kw_bool      = bool
+let kw_verdadero = verdadero
+let kw_falso     = falso
+let kw_mapa      = mapa
+let kw_conj      = conj
+let kw_tupla     = tupla
+let kw_para      = para
+let kw_en        = en
+let kw_imprime   = imprime
+
+(* ============================================================ *)
+(*  REGLAS LEXICAS                                               *)
+(*  Prioridad: keywords > id > literales > delimitadores         *)
+(* ============================================================ *)
+rule tokens =
+    kw_var       { "VAR" }
+  | kw_entero    { "ENTERO_T" }
+  | kw_texto     { "TEXTO_T" }
+  | kw_bool      { "BOOL_T" }
+  | kw_verdadero { "VERDADERO" }
+  | kw_falso     { "FALSO" }
+  | kw_mapa      { "MAPA" }
+  | kw_conj      { "CONJ" }
+  | kw_tupla     { "TUPLA" }
+  | kw_para      { "PARA" }
+  | kw_en        { "EN" }
+  | kw_imprime   { "IMPRIME" }
+
+  | id           { "ID" }
+
+  | num_lit      { "NUM_LIT" }
+  | txt_lit      { "TXT_LIT" }
+  | comentario   { "COMENT" }
+
+  | '='          { "ASSIGN" }
+  | '<'          { "LT" }
+  | '>'          { "GT" }
+  | '('          { "LPAREN" }
+  | ')'          { "RPAREN" }
+  | '{'          { "LBRACE" }
+  | '}'          { "RBRACE" }
+  | '['          { "LBRACKET" }
+  | ']'          { "RBRACKET" }
+  | ';'          { "SEMI" }
+  | ','          { "COMMA" }
+  | ':'          { "COLON" }
+
+  | ws           {}

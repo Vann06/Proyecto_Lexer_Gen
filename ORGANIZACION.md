@@ -464,7 +464,7 @@ diagnósticos, estructuras de datos y límites conocidos):
 | `closures` | captura de variables libres del entorno de definición |
 | `flow` | condiciones booleanas y contexto de `break`/`continue` |
 | `operators` | expresiones binarias/unarias: lógicas, comparaciones y sentido semántico del operando |
-| `collections` | literales de lista homogéneos, índices y arreglos multidimensionales |
+| `collections` | las cuatro colecciones: arreglo, conjunto, mapa y tupla |
 | `duplicates` | declaraciones repetidas y símbolos declarados pero nunca leídos |
 | `deadcode` | instrucciones inalcanzables tras `return`/`break`/`continue` |
 
@@ -475,7 +475,9 @@ la especificidad llega por directivas en el `.yalp` — `%ident`, `%declare`,
 `%constructor`, `%return`, `%struct_literal`, `%field_list_symbol`,
 `%field_init`, `%condition`, `%loop`, `%break`, `%continue`, `%logic`,
 `%compare`, `%unary`, `%array_type`, `%array_literal`, `%index`, `%switch`,
-`%case`, `%foreach`, `%stmt_list`, `%warn_unused`. Se parsean en un único lugar
+`%case`, `%foreach`, `%stmt_list`, `%map_type`, `%map_literal`, `%map_entry`,
+`%map_list_symbol`, `%set_type`, `%set_literal`, `%tuple_type`,
+`%tuple_literal`, `%warn_unused`. Se parsean en un único lugar
 (`Grammar::parse_tokens_section`) y se traducen a `SemanticSpec` en
 `SemanticSpec::from_grammar`. La prueba empírica vive en
 dos gramáticas de prueba independientes, que producen exactamente los mismos
@@ -522,10 +524,14 @@ operando: una función o una clase NOMBRADA A SECAS no es un valor (`f * 2` con
 el tipo de la hoja `f` es el tipo de RETORNO de `f`. Ver
 `src/semantico/operators/README.md`.
 
-**Listas y arreglos (`collections/`).** Literales homogéneos (`S032` si se
-mezclan tipos), índice entero obligatorio (`S033`), indexar algo que no es
-arreglo (`S034`) y multidimensionales, que salen de anidar `Type::Array`. Se
-declaran con `%array_type`, `%array_literal` e `%index`.
+**Colecciones (`collections/`).** Cuatro tipos compuestos: arreglo, conjunto,
+mapa y tupla. Literales homogéneos (`S032`), índice entero para un arreglo
+(`S033`), indexar algo no indexable —un conjunto, entre otros— (`S034`), clave
+de mapa con el tipo declarado (`S037`) e índice literal de tupla dentro de rango
+(`S038`). Iterar recorre los elementos de un arreglo o conjunto y las claves de
+un mapa; una tupla no es iterable (`S036`). Todo se declara con directivas
+(`%array_*`, `%map_*`, `%set_*`, `%tuple_*`, `%index`), y como Compiscript solo
+tiene arreglos, las otras tres se prueban con `workspace/colecciones.yalp`.
 
 **Duplicados y no usados (`duplicates/`).** Redeclaración en el mismo ámbito
 para variables y parámetros (`S001`, conservando la primera declaración) y la

@@ -1,0 +1,190 @@
+/* ============================================================
+ * colecciones.yalp  -  Gramatica LALR para probar las cuatro
+ * colecciones del analizador semantico.
+ *
+ * Compiscript no tiene sintaxis de mapa, conjunto ni tupla. Esta
+ * gramatica existe para demostrar que el soporte del analizador es
+ * agnostico a la gramatica: las mismas reglas de src/semantico/
+ * validan colecciones aqui sin una sola linea de Rust especifica
+ * de este lenguaje.
+ *
+ * Decision de forma: cada literal de coleccion lleva un TOKEN
+ * MARCADOR distinto al frente (MAPA / CONJ / TUPLA). Hacen dos
+ * trabajos a la vez:
+ *  - evitan la ambiguedad LALR de una tupla `( ... )` contra la
+ *    expresion entre parentesis `( expr )`;
+ *  - evitan que el reconocimiento POR FORMA confunda el literal de
+ *    mapa con el de conjunto, ya que los dos usarian LBRACE como
+ *    hijo directo y el analizador solo pregunta "tengo este token
+ *    entre mis hijos".
+ * ============================================================ */
+
+%token VAR ENTERO_T TEXTO_T BOOL_T VERDADERO FALSO
+%token MAPA CONJ TUPLA PARA EN IMPRIME
+%token ID NUM_LIT TXT_LIT COMENT
+%token ASSIGN LT GT
+%token LPAREN RPAREN LBRACE RBRACE LBRACKET RBRACKET SEMI COMMA COLON
+
+IGNORE COMENT
+
+/* ============================================================
+ * Directivas semanticas
+ * ============================================================ */
+%ident ID
+
+%declare decl variable
+%scope   bloque    block
+%scope   para_stmt block
+
+%type_of decl tipo
+%init_of decl expr
+
+%type_token ENTERO_T  integer
+%type_token TEXTO_T   string
+%type_token BOOL_T    bool
+%type_token NUM_LIT   integer
+%type_token TXT_LIT   string
+%type_token VERDADERO bool
+%type_token FALSO     bool
+
+/* Arreglo: la maquinaria que ya existia. */
+%array_type    LBRACKET
+%array_literal atom LBRACKET 1
+%index         primary LBRACKET 0 2
+%arg_list_symbol args
+
+/* Mapa: `mapa<clave, valor>` como tipo y `mapa{ k: v, ... }` como
+ * literal. El tipo lleva DOS hijos de tipo, por eso necesita dos
+ * indices en vez del unico marcador que le basta al arreglo. */
+%map_type        MAPA 2 4
+%map_literal     atom MAPA 2
+%map_entry       entrada 0 2
+%map_list_symbol entrada_list
+
+/* Conjunto: `conj<T>` y `conj{ ... }`. Un conjunto NO es indexable. */
+%set_type    CONJ 2
+%set_literal atom CONJ 2
+
+/* Tupla: `tupla<T1, T2, ...>` y `tupla( e1, e2, ... )`. Longitud fija
+ * y tipos heterogeneos, asi que indexarla exige un literal constante
+ * para saber que tipo devuelve. */
+%tuple_type    TUPLA 2 lista_tipos
+%tuple_literal atom TUPLA 2
+
+/* Iterar: recorre los elementos de un arreglo o conjunto, y las
+ * CLAVES de un mapa. Una tupla no es iterable. */
+%foreach para_stmt 2 4
+
+%%
+
+programa:
+    stmt_list
+;
+
+stmt_list:
+    stmt_list stmt
+  | stmt
+;
+
+stmt:
+    decl SEMI
+  | imprime_stmt SEMI
+  | bloque
+  | para_stmt
+  | expr SEMI
+;
+
+decl:
+    VAR ID COLON tipo ASSIGN expr
+  | VAR ID ASSIGN expr
+;
+
+imprime_stmt:
+    IMPRIME LPAREN expr RPAREN
+;
+
+bloque:
+    LBRACE stmt_list RBRACE
+  | LBRACE RBRACE
+;
+
+para_stmt:
+    PARA LPAREN ID EN expr RPAREN bloque
+;
+
+/* ============================================================
+ * Tipos
+ * ============================================================ */
+
+tipo:
+    ENTERO_T
+  | TEXTO_T
+  | BOOL_T
+  | ID
+  | tipo LBRACKET RBRACKET
+  | MAPA LT tipo COMMA tipo GT
+  | CONJ LT tipo GT
+  | TUPLA LT tipos_tupla GT
+;
+
+/* `tipos_tupla` es un envoltorio de un solo hijo, igual que `arg_list` lo es
+ * de `args`: el aplanado de listas del analizador espera ese nivel extra —
+ * recibe el envoltorio y baja a la produccion recursiva que se le nombra. */
+tipos_tupla:
+    lista_tipos
+;
+
+lista_tipos:
+    lista_tipos COMMA tipo
+  | tipo
+;
+
+/* ============================================================
+ * Expresiones
+ * ============================================================ */
+
+expr:
+    primary
+;
+
+primary:
+    atom
+  | primary LBRACKET expr RBRACKET
+;
+
+atom:
+    ID
+  | NUM_LIT
+  | TXT_LIT
+  | VERDADERO
+  | FALSO
+  | LBRACKET arg_list RBRACKET
+  | MAPA LBRACE entradas RBRACE
+  | CONJ LBRACE arg_list RBRACE
+  | TUPLA LPAREN arg_list RPAREN
+  | LPAREN expr RPAREN
+;
+
+arg_list:
+    args
+  | /* vacio */
+;
+
+args:
+    args COMMA expr
+  | expr
+;
+
+entradas:
+    entrada_list
+  | /* vacio */
+;
+
+entrada_list:
+    entrada_list COMMA entrada
+  | entrada
+;
+
+entrada:
+    expr COLON expr
+;

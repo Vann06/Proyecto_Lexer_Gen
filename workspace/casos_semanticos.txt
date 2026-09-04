@@ -42,3 +42,4 @@
 { let n: integer = 1; switch (n) { case "d": print(1); } }
 { let n: integer = 5; foreach (x in n) { print(x); } }
 { function f(): integer { return 1; print(2); } }
+{ let n: integer = 1; n(); }

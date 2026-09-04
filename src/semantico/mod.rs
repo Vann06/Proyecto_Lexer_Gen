@@ -23,6 +23,11 @@
 // validación de `return` contra el tipo declarado (`FunctionContext`).
 // `closures` acumula qué función anidada captura qué variables libres de su
 // entorno de definición.
+// `collections` cubre las cuatro colecciones —arreglo, conjunto, mapa y
+// tupla—: homogeneidad de los literales y qué significa el subíndice, que lo
+// decide el TIPO de la base y no la sintaxis (un arreglo pide un entero, un
+// mapa su tipo de clave, una tupla un literal constante porque cada posición
+// tiene su propio tipo, y un conjunto no se indexa).
 // `flow` valida condiciones booleanas y el contexto de los saltos de bucle.
 // `operators` valida las expresiones binarias y unarias que la tabla
 // aritmetica no cubre -- logicas (`&& || !`), comparaciones (`== != < <= >

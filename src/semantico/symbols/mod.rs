@@ -232,7 +232,10 @@ pub enum SemanticError {
         col: usize,
     },
 
-    #[error("el literal de lista mezcla tipos: se esperaba {expected}, se encontró {found}")]
+    /// Lo comparten las cuatro colecciones: elementos de un arreglo o
+    /// conjunto, y claves o valores de un mapa. Por eso el mensaje dice
+    /// "colección" y no "lista".
+    #[error("el literal de colección mezcla tipos: se esperaba {expected}, se encontró {found}")]
     HeterogeneousArrayElements {
         expected: Type,
         found: Type,
@@ -248,6 +251,26 @@ pub enum SemanticError {
 
     #[error("no se puede iterar sobre un valor de tipo {found}")]
     NotIterable { found: Type, line: usize, col: usize },
+
+    /// Indexar un mapa con una clave del tipo equivocado. Es un error propio y
+    /// no el `IndexNotInteger` del arreglo: un mapa no exige un entero, exige
+    /// el tipo de clave que declaró.
+    #[error("la clave debe ser de tipo {expected}, se encontró {found}")]
+    MapKeyTypeMismatch { expected: Type, found: Type, line: usize, col: usize },
+
+    /// Una tupla tiene longitud fija y conocida, así que un índice literal
+    /// fuera de rango es decidible en tiempo de compilación.
+    #[error("la tupla tiene {len} elemento(s): no existe la posición {index}")]
+    TupleIndexOutOfRange { index: usize, len: usize, line: usize, col: usize },
+
+    /// Se invocó algo que no es invocable: una variable, un parámetro, una
+    /// clase o un struct. Reusa a propósito el `S020` de
+    /// `functions::FunctionError::NotCallable` —es literalmente el mismo
+    /// error—, igual que `CallArityMismatch` reusa el `S013` de aquella.
+    /// Existe por duplicado porque el recorrido valida las llamadas a través
+    /// de `classes::validate_call`, que trabaja con `SemanticError`.
+    #[error("'{name}' no es una función o procedimiento invocable")]
+    NotCallable { name: String, line: usize, col: usize },
 }
 
 impl From<PopGlobalScope> for SemanticError {

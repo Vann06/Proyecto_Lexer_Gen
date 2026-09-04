@@ -17,6 +17,16 @@ pub enum Type {
     Void,
     Named(String),
     Array(Box<Type>),
+    /// Mapa/diccionario: tipo de la clave y tipo del valor. Indexarlo con una
+    /// clave compatible devuelve el valor.
+    Map(Box<Type>, Box<Type>),
+    /// Conjunto: elementos homogéneos, sin orden ni índice. NO es indexable —
+    /// esa es justo la diferencia con `Array` a nivel de tipos.
+    Set(Box<Type>),
+    /// Tupla: longitud fija y tipos HETEROGÉNEOS, uno por posición. Por eso
+    /// indexarla solo se puede tipar cuando el índice es un literal constante:
+    /// `t[0]` y `t[1]` pueden devolver tipos distintos.
+    Tuple(Vec<Type>),
     Unknown,
 }
 
@@ -40,6 +50,12 @@ impl fmt::Display for Type {
             Type::Void => write!(f, "void"),
             Type::Named(name) => write!(f, "{name}"),
             Type::Array(inner) => write!(f, "{inner}[]"),
+            Type::Map(key, value) => write!(f, "mapa<{key}, {value}>"),
+            Type::Set(inner) => write!(f, "conjunto<{inner}>"),
+            Type::Tuple(items) => {
+                let partes: Vec<String> = items.iter().map(|t| t.to_string()).collect();
+                write!(f, "tupla<{}>", partes.join(", "))
+            }
             Type::Unknown => write!(f, "unknown"),
         }
     }
@@ -249,7 +265,15 @@ impl CompatibilityTable {
         // Los tipos compuestos y nominales son compatibles únicamente cuando
         // son exactamente iguales. Los primitivos viven explícitamente en la
         // tabla para que toda coerción siga centralizada y sea auditable.
-        if matches!(expected, Type::Named(_) | Type::Array(_)) && expected == found {
+        //
+        // OJO al agregar un compuesto nuevo: si no se lo nombra acá, cae al
+        // `find` de abajo, no encuentra fila —las reglas solo cubren
+        // primitivos— y termina siendo incompatible HASTA CONSIGO MISMO.
+        if matches!(
+            expected,
+            Type::Named(_) | Type::Array(_) | Type::Map(_, _) | Type::Set(_) | Type::Tuple(_)
+        ) && expected == found
+        {
             return Ok(Coercion::Exact);
         }
 

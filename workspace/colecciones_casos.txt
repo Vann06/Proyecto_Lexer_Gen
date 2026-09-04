@@ -1,0 +1,22 @@
+{ var a: entero[] = [1, 2, 3]; imprime(a[0]); }
+{ var a = [1, "dos"]; }
+{ var a: entero[] = [1, 2]; imprime(a["x"]); }
+{ var m: entero[][] = [[1, 2], [3]]; imprime(m[0][1]); }
+{ var c: conj<entero> = conj{ 1, 2, 3 }; }
+{ var c = conj{ 1, "dos" }; }
+{ var c: conj<entero> = conj{ 1 }; imprime(c[0]); }
+{ var c: conj<texto> = conj{ 1, 2 }; }
+{ var d: mapa<texto, entero> = mapa{ "a": 1, "b": 2 }; imprime(d["a"]); }
+{ var d: mapa<texto, entero> = mapa{ "a": 1 }; imprime(d[5]); }
+{ var d = mapa{ "a": 1, 2: 3 }; }
+{ var d = mapa{ "a": 1, "b": "dos" }; }
+{ var d: mapa<texto, entero> = mapa{ "a": 1 }; var n: texto = d["a"]; }
+{ var t: tupla<texto, entero> = tupla( "x", 1 ); }
+{ var t: tupla<texto, entero> = tupla( "x", 1 ); var n: entero = t[1]; }
+{ var t: tupla<texto, entero> = tupla( "x", 1 ); var n: entero = t[0]; }
+{ var t: tupla<texto, entero> = tupla( "x", 1 ); imprime(t[5]); }
+{ var c: conj<entero> = conj{ 1, 2 }; para (x en c) { imprime(x); } }
+{ var d: mapa<texto, entero> = mapa{ "a": 1 }; para (k en d) { imprime(k); } }
+{ var t: tupla<texto, entero> = tupla( "x", 1 ); para (e en t) { imprime(e); } }
+{ var d: mapa<texto, entero[]> = mapa{ "a": [1, 2] }; imprime(d["a"][0]); }
+{ var c: conj<entero> = conj{ 1 }; var d: conj<texto> = c; }

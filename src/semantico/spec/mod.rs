@@ -114,7 +114,30 @@ pub struct SemanticSpec {
     pub array_literal: Option<ArrayLiteralRule>,
     /// Configuración del acceso indexado (`arr[i]`). `None`: la gramática no
     /// tiene indexación.
+    ///
+    /// Una sola directiva sirve para las tres colecciones indexables: qué
+    /// significa el subíndice lo decide el TIPO de la base, no la sintaxis
+    /// (ver `collections::validate_index_access`).
     pub index_access: Option<IndexAccessRule>,
+    /// `(token marcador, índice del tipo de clave, índice del tipo de valor)`
+    /// del tipo mapa (`%map_type`). `None`: la gramática no tiene mapas.
+    pub map_type: Option<(String, usize, usize)>,
+    /// Literal de mapa (`%map_literal`) y la forma de sus entradas
+    /// (`%map_entry`), más el símbolo de la lista que las encadena
+    /// (`%map_list_symbol`).
+    pub map_literal: Option<MapLiteralRule>,
+    pub map_entry: Option<MapEntryRule>,
+    pub map_list_symbol: Option<String>,
+    /// `(token marcador, índice del tipo de elemento)` del tipo conjunto.
+    pub set_type: Option<(String, usize)>,
+    /// Literal de conjunto (`%set_literal`); reusa `args_list_symbol`.
+    pub set_literal: Option<MarkedLiteralRule>,
+    /// `(token marcador, índice de la lista de tipos, símbolo de esa lista)`
+    /// del tipo tupla. La aridad es variable, así que sus tipos se aplanan en
+    /// vez de nombrarse por índice.
+    pub tuple_type: Option<(String, usize, String)>,
+    /// Literal de tupla (`%tuple_literal`); reusa `args_list_symbol`.
+    pub tuple_literal: Option<MarkedLiteralRule>,
 }
 
 /// "La producción `production` asigna el valor de `value_index` a la
@@ -234,6 +257,36 @@ pub struct ArrayLiteralRule {
     pub production: String,
     pub open_bracket_token: String,
     pub elements_index: usize,
+}
+
+/// "La producción `production` tiene una alternativa que construye un
+/// literal de conjunto o de tupla" — mismo reconocimiento POR FORMA que
+/// `ArrayLiteralRule`, pero con un token MARCADOR propio en vez del corchete.
+///
+/// El marcador tiene que ser distinto por colección: el reconocimiento solo
+/// pregunta "¿tengo este token entre mis hijos directos?", así que dos
+/// literales que compartieran delimitador (p.ej. mapa y conjunto usando
+/// ambos `{`) serían indistinguibles.
+pub struct MarkedLiteralRule {
+    pub production: String,
+    pub marker_token: String,
+    pub elements_index: usize,
+}
+
+/// "La producción `production` construye un literal de mapa, y sus entradas
+/// están en el hijo `entries_index`."
+pub struct MapLiteralRule {
+    pub production: String,
+    pub marker_token: String,
+    pub entries_index: usize,
+}
+
+/// "La producción `production` es una entrada `clave: valor` de un literal de
+/// mapa." Gemelo de `FieldInitRule` para los campos de un struct.
+pub struct MapEntryRule {
+    pub production: String,
+    pub key_index: usize,
+    pub value_index: usize,
 }
 
 /// "La producción `production` tiene una alternativa que indexa lo que
@@ -584,6 +637,22 @@ impl SemanticSpec {
             index_access: grammar.index_access.clone().map(|(production, open_bracket_token, base_index, index_index)| {
                 IndexAccessRule { production, open_bracket_token, base_index, index_index }
             }),
+            map_type: grammar.map_type.clone(),
+            map_literal: grammar.map_literal.clone().map(|(production, marker_token, entries_index)| {
+                MapLiteralRule { production, marker_token, entries_index }
+            }),
+            map_entry: grammar.map_entry.clone().map(|(production, key_index, value_index)| {
+                MapEntryRule { production, key_index, value_index }
+            }),
+            map_list_symbol: grammar.map_list_symbol.clone(),
+            set_type: grammar.set_type.clone(),
+            set_literal: grammar.set_literal.clone().map(|(production, marker_token, elements_index)| {
+                MarkedLiteralRule { production, marker_token, elements_index }
+            }),
+            tuple_type: grammar.tuple_type.clone(),
+            tuple_literal: grammar.tuple_literal.clone().map(|(production, marker_token, elements_index)| {
+                MarkedLiteralRule { production, marker_token, elements_index }
+            }),
         })
     }
 }
@@ -734,6 +803,14 @@ mod tests {
             array_type_token: None,
             array_literal: None,
             index_access: None,
+            map_type: None,
+            map_literal: None,
+            map_entry: None,
+            map_list_symbol: None,
+            set_type: None,
+            set_literal: None,
+            tuple_type: None,
+            tuple_literal: None,
         }
     }
 

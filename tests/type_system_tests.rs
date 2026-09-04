@@ -304,3 +304,55 @@ fn const_requires_a_compatible_initializer_and_cannot_be_reassigned() {
         })
     );
 }
+
+/// Los tipos compuestos son compatibles solo consigo mismos, y esa regla vive
+/// en UNA linea de `types::CompatibilityTable::assignment`. Un compuesto que
+/// se agregue al `enum Type` sin nombrarse ahi cae a la tabla de primitivos,
+/// no encuentra fila, y termina siendo incompatible HASTA CONSIGO MISMO —
+/// este test es la red que atrapa ese olvido.
+#[test]
+fn every_compound_type_is_compatible_with_itself_and_only_with_itself() {
+    let mapa = |k: Type, v: Type| Type::Map(Box::new(k), Box::new(v));
+    let conjunto = |t: Type| Type::Set(Box::new(t));
+    let arreglo = |t: Type| Type::Array(Box::new(t));
+
+    let iguales = [
+        (arreglo(Type::Int), arreglo(Type::Int)),
+        (conjunto(Type::Str), conjunto(Type::Str)),
+        (mapa(Type::Str, Type::Int), mapa(Type::Str, Type::Int)),
+        (
+            Type::Tuple(vec![Type::Str, Type::Int]),
+            Type::Tuple(vec![Type::Str, Type::Int]),
+        ),
+    ];
+    for (expected, found) in &iguales {
+        assert!(
+            resolve_assignment(expected, found).is_ok(),
+            "{expected} debe ser compatible consigo mismo"
+        );
+    }
+
+    let distintos = [
+        // Mismo constructor, parametro distinto.
+        (mapa(Type::Str, Type::Int), mapa(Type::Str, Type::Str)),
+        (conjunto(Type::Int), conjunto(Type::Str)),
+        // Misma "forma" pero constructor distinto: un conjunto de enteros no
+        // es un arreglo de enteros.
+        (conjunto(Type::Int), arreglo(Type::Int)),
+        // Tuplas de distinta aridad y de distinto orden.
+        (
+            Type::Tuple(vec![Type::Str, Type::Int]),
+            Type::Tuple(vec![Type::Str]),
+        ),
+        (
+            Type::Tuple(vec![Type::Str, Type::Int]),
+            Type::Tuple(vec![Type::Int, Type::Str]),
+        ),
+    ];
+    for (expected, found) in &distintos {
+        assert!(
+            resolve_assignment(expected, found).is_err(),
+            "{expected} NO debe aceptar {found}"
+        );
+    }
+}

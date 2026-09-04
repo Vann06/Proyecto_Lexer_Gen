@@ -440,6 +440,27 @@ impl<'a> Visitor for Analyzer<'a> {
             }
         }
 
+        // Conjunto, tupla y mapa: mismo trato que el literal de lista de
+        // arriba. Cada uno se reconoce por su token marcador propio, así que
+        // solo dispara el que corresponde.
+        if let Some(elements_node) = collections::find_set_literal(node, self.spec) {
+            let elements = collections::flatten_array_elements(elements_node, self.spec);
+            let (_, errs) = collections::resolve_set_literal(&elements, &self.table, self.spec);
+            for e in errs {
+                self.errors.push_semantic(&e);
+            }
+        }
+        if let Some(entries_node) = collections::find_map_literal(node, self.spec) {
+            let entries = collections::flatten_map_entries(entries_node, self.spec);
+            let (_, errs) = collections::resolve_map_literal(&entries, &self.table, self.spec);
+            for e in errs {
+                self.errors.push_semantic(&e);
+            }
+        }
+        // La tupla no valida homogeneidad —es heterogénea por definición—, así
+        // que no hay errores que empujar: su tipo lo resuelve
+        // `classes::resolve_expr_type` cuando alguien se lo pide.
+
         // Acceso indexado (`primary: primary LBRACKET expr RBRACKET`, según
         // `spec.index_access`): la base debe ser un arreglo y el índice,
         // integer. Tampoco hace early-return: base e índice son expresiones
@@ -447,7 +468,9 @@ impl<'a> Visitor for Analyzer<'a> {
         if let Some((base, index)) = collections::find_index_access(node, self.spec) {
             let base_ty = classes::resolve_expr_type(base, &self.table, self.spec);
             let index_ty = classes::resolve_expr_type(index, &self.table, self.spec);
-            if let Err(e) = collections::validate_index_access(base_ty.as_ref(), index_ty.as_ref(), index.line, index.col) {
+            if let Err(e) =
+                collections::validate_index_access(base_ty.as_ref(), index_ty.as_ref(), Some(index), index.line, index.col)
+            {
                 self.errors.push_semantic(&e);
             }
         }
@@ -1121,6 +1144,42 @@ fn resolve_declared_type(node: &ParseNode, spec: &SemanticSpec) -> Type {
     if node.symbol == spec.identifier_token {
         let name = node.lexeme.as_deref().unwrap_or(&node.symbol);
         return Type::Named(name.to_string());
+    }
+    // Mapa (`tipo: MAPA LT tipo COMMA tipo GT`): dos hijos de tipo, ubicados
+    // por índice. No alcanza con el marcador solo, como sí le basta al
+    // arreglo, porque hay que distinguir la clave del valor.
+    if let Some((marker, key_idx, value_idx)) = &spec.map_type {
+        if node.children.iter().any(|c| &c.symbol == marker) {
+            if let (Some(key), Some(value)) = (node.children.get(*key_idx), node.children.get(*value_idx)) {
+                return Type::Map(
+                    Box::new(resolve_declared_type(key, spec)),
+                    Box::new(resolve_declared_type(value, spec)),
+                );
+            }
+        }
+    }
+    // Conjunto (`tipo: CONJ LT tipo GT`): un solo hijo de tipo, por índice.
+    if let Some((marker, elem_idx)) = &spec.set_type {
+        if node.children.iter().any(|c| &c.symbol == marker) {
+            if let Some(elem) = node.children.get(*elem_idx) {
+                return Type::Set(Box::new(resolve_declared_type(elem, spec)));
+            }
+        }
+    }
+    // Tupla (`tipo: TUPLA LT lista_tipos GT`): aridad variable, así que sus
+    // tipos se aplanan de la lista recursiva en vez de nombrarse por índice.
+    if let Some((marker, list_idx, list_symbol)) = &spec.tuple_type {
+        if node.children.iter().any(|c| &c.symbol == marker) {
+            if let Some(list) = node.children.get(*list_idx) {
+                let items: Vec<Type> = classes::flatten_arg_list(list, list_symbol)
+                    .into_iter()
+                    .map(|t| resolve_declared_type(t, spec))
+                    .collect();
+                if !items.is_empty() {
+                    return Type::Tuple(items);
+                }
+            }
+        }
     }
     // Tipo de arreglo (`tipo: tipo LBRACKET RBRACKET`, según
     // `spec.array_type_token`): el primer hijo es el tipo del elemento —

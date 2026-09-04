@@ -4,10 +4,15 @@ Generador de analizadores léxicos (YALex) y sintácticos LR/LL (YAPar), con una
 API HTTP y un IDE web (`frontend/IDE/`) para compilar gramáticas y ver la
 traza de parseo paso a paso. Ver [GUIA_USO.md](GUIA_USO.md) para levantar el
 IDE + API, o seguir leyendo para el generador de lexers standalone (CLI).
-Cubre léxico y sintáctico (Fases 0–14 del libro del dragón) y ya inició la
-Fase 15 de semántica con tabla de símbolos, scopes y sistema de tipos. Código
-intermedio, código objetivo y la conexión de semántica con la API HTTP siguen
-en el roadmap — ver
+Cubre léxico y sintáctico (Fases 0–14 del libro del dragón) y el **análisis
+semántico completo** (Fase 15), ya conectado a la API y al IDE: tabla de
+símbolos con entornos anidados, sistema de tipos, clases y herencia, funciones
+y closures, control de flujo, colecciones, duplicados y código muerto — 40
+diagnósticos con línea y columna. Ver
+[ARQUITECTURA.md](ARQUITECTURA.md) para cómo está construida esa fase, incluida
+[la explicación de por qué el analizador sintáctico es propio y no
+ANTLR](ARQUITECTURA.md#por-qué-no-se-usó-antlr). Código intermedio y código
+objetivo siguen en el roadmap — ver
 [ORGANIZACION.md](ORGANIZACION.md#fases-futuras-no-implementadas).
 
 **¿Vas a escribir código?** Revisa primero

@@ -223,6 +223,39 @@ pub struct Grammar {
     /// del subíndice)`, de la única línea `%index` — p.ej.
     /// `%index primary LBRACKET 0 2` para `primary: primary LBRACKET expr RBRACKET`.
     pub index_access: Option<(String, String, usize, usize)>,
+    /// Colecciones compuestas además del arreglo. Mismo criterio que el resto
+    /// de las directivas: strings e índices tal como aparecen en el `.yalp`,
+    /// y `semantico::spec` los traduce.
+    ///
+    /// `(token marcador, índice del tipo de clave, índice del tipo de valor)`
+    /// de `%map_type` — p.ej. `%map_type MAPA 2 4` para
+    /// `tipo: MAPA LT tipo COMMA tipo GT`. El arreglo se conforma con un solo
+    /// marcador porque su tipo de elemento es siempre el primer hijo; un mapa
+    /// tiene DOS hijos de tipo, así que necesita ubicarlos.
+    pub map_type: Option<(String, usize, usize)>,
+    /// `(producción, token marcador, índice de la lista de entradas)` de
+    /// `%map_literal` — p.ej. `%map_literal atom MAPA 2`.
+    pub map_literal: Option<(String, String, usize)>,
+    /// `(producción, índice de la clave, índice del valor)` de `%map_entry` —
+    /// p.ej. `%map_entry entrada 0 2` para `entrada: expr COLON expr`. Es el
+    /// gemelo de `%field_init` para los campos de un literal de struct.
+    pub map_entry: Option<(String, usize, usize)>,
+    /// Símbolo de la producción recursiva que lista las entradas de un mapa,
+    /// de `%map_list_symbol` — el equivalente de `%field_list_symbol`.
+    pub map_list_symbol: Option<String>,
+    /// `(token marcador, índice del tipo de elemento)` de `%set_type`.
+    pub set_type: Option<(String, usize)>,
+    /// `(producción, token marcador, índice de los elementos)` de
+    /// `%set_literal`. Reusa la lista de `%arg_list_symbol`.
+    pub set_literal: Option<(String, String, usize)>,
+    /// `(token marcador, índice de la lista de tipos, símbolo de esa lista)`
+    /// de `%tuple_type` — p.ej. `%tuple_type TUPLA 2 lista_tipos`. Necesita el
+    /// símbolo porque la aridad es variable: no se puede nombrar cada tipo por
+    /// índice como hace el mapa.
+    pub tuple_type: Option<(String, usize, String)>,
+    /// `(producción, token marcador, índice de los elementos)` de
+    /// `%tuple_literal`. Reusa la lista de `%arg_list_symbol`.
+    pub tuple_literal: Option<(String, String, usize)>,
 }
 
 impl Grammar {
@@ -349,6 +382,14 @@ impl Grammar {
             array_type_token: None,
             array_literal: None,
             index_access: None,
+            map_type: None,
+            map_literal: None,
+            map_entry: None,
+            map_list_symbol: None,
+            set_type: None,
+            set_literal: None,
+            tuple_type: None,
+            tuple_literal: None,
         };
 
         grammar.parse_tokens_section(sections[0]);
@@ -1070,6 +1111,75 @@ impl Grammar {
             } else if line.starts_with("%stmt_list") {
                 if let Some(production) = line[10..].split_whitespace().next() {
                     self.stmt_list_directives.push(production.to_string());
+                }
+            } else if line.starts_with("%map_type") {
+                let mut parts = line[9..].split_whitespace();
+                if let (Some(marker), Some(key_idx), Some(value_idx)) =
+                    (parts.next(), parts.next(), parts.next())
+                {
+                    if let (Ok(key_idx), Ok(value_idx)) =
+                        (key_idx.parse::<usize>(), value_idx.parse::<usize>())
+                    {
+                        self.map_type = Some((marker.to_string(), key_idx, value_idx));
+                    }
+                }
+            } else if line.starts_with("%map_literal") {
+                let mut parts = line[12..].split_whitespace();
+                if let (Some(production), Some(marker), Some(entries_idx)) =
+                    (parts.next(), parts.next(), parts.next())
+                {
+                    if let Ok(entries_idx) = entries_idx.parse::<usize>() {
+                        self.map_literal = Some((production.to_string(), marker.to_string(), entries_idx));
+                    }
+                }
+            } else if line.starts_with("%map_list_symbol") {
+                if let Some(symbol) = line[16..].split_whitespace().next() {
+                    self.map_list_symbol = Some(symbol.to_string());
+                }
+            } else if line.starts_with("%map_entry") {
+                let mut parts = line[10..].split_whitespace();
+                if let (Some(production), Some(key_idx), Some(value_idx)) =
+                    (parts.next(), parts.next(), parts.next())
+                {
+                    if let (Ok(key_idx), Ok(value_idx)) =
+                        (key_idx.parse::<usize>(), value_idx.parse::<usize>())
+                    {
+                        self.map_entry = Some((production.to_string(), key_idx, value_idx));
+                    }
+                }
+            } else if line.starts_with("%set_type") {
+                let mut parts = line[9..].split_whitespace();
+                if let (Some(marker), Some(elem_idx)) = (parts.next(), parts.next()) {
+                    if let Ok(elem_idx) = elem_idx.parse::<usize>() {
+                        self.set_type = Some((marker.to_string(), elem_idx));
+                    }
+                }
+            } else if line.starts_with("%set_literal") {
+                let mut parts = line[12..].split_whitespace();
+                if let (Some(production), Some(marker), Some(elements_idx)) =
+                    (parts.next(), parts.next(), parts.next())
+                {
+                    if let Ok(elements_idx) = elements_idx.parse::<usize>() {
+                        self.set_literal = Some((production.to_string(), marker.to_string(), elements_idx));
+                    }
+                }
+            } else if line.starts_with("%tuple_type") {
+                let mut parts = line[11..].split_whitespace();
+                if let (Some(marker), Some(list_idx), Some(list_symbol)) =
+                    (parts.next(), parts.next(), parts.next())
+                {
+                    if let Ok(list_idx) = list_idx.parse::<usize>() {
+                        self.tuple_type = Some((marker.to_string(), list_idx, list_symbol.to_string()));
+                    }
+                }
+            } else if line.starts_with("%tuple_literal") {
+                let mut parts = line[14..].split_whitespace();
+                if let (Some(production), Some(marker), Some(elements_idx)) =
+                    (parts.next(), parts.next(), parts.next())
+                {
+                    if let Ok(elements_idx) = elements_idx.parse::<usize>() {
+                        self.tuple_literal = Some((production.to_string(), marker.to_string(), elements_idx));
+                    }
                 }
             } else if line.starts_with("%array_type") {
                 if let Some(tok) = line[11..].split_whitespace().next() {

@@ -17,7 +17,7 @@ const CASES: &str = include_str!("../workspace/casos_semanticos.txt");
 
 /// Lo que debe salir en cada línea, en orden. `None` = caso exitoso.
 /// Mantener alineado con `workspace/casos_semanticos.README.md`.
-const EXPECTED: [Option<&str>; 44] = [
+const EXPECTED: [Option<&str>; 45] = [
     None,           // 1  ámbito: declarar y leer
     Some("S002"),   // 2  variable no declarada
     Some("S001"),   // 3  redeclaración en el mismo ámbito
@@ -62,6 +62,7 @@ const EXPECTED: [Option<&str>; 44] = [
     Some("S035"),   // 42 case incompatible con el discriminante
     Some("S036"),   // 43 foreach sobre algo que no es una colección
     Some("W002"),   // 44 código inalcanzable tras un return
+    Some("S020"),   // 45 se invoca algo que no es una función
 ];
 
 #[test]
@@ -119,7 +120,8 @@ fn la_bateria_cubre_todos_los_codigos_que_el_analizador_puede_emitir() {
     for code in [
         "S001", "S002", "S005", "S006", "S007", "S008", "S009", "S010", "S011", "S012", "S013",
         "S014", "S015", "S016", "S017", "S018", "S019", "S022", "S023", "S024", "S025", "S026",
-        "S027", "S028", "S029", "S030", "S031", "S032", "S033", "S034", "S035", "S036", "W002",
+        "S020", "S027", "S028", "S029", "S030", "S031", "S032", "S033", "S034", "S035", "S036",
+        "W002",
     ] {
         assert!(cubiertos.contains(&code), "falta un caso para {code} en la batería");
     }

@@ -56,6 +56,21 @@ pub fn resolve_array_literal(
     table: &SymbolTable,
     spec: &SemanticSpec,
 ) -> (Option<Type>, Vec<SemanticError>) {
+    let (common, errors) = common_type(elements, table, spec);
+    (common.map(|t| Type::Array(Box::new(t))), errors)
+}
+
+/// Tipo común de una secuencia de elementos, ensanchando `integer -> float`
+/// igual que hace un literal de arreglo, más los errores de heterogeneidad.
+///
+/// Es el núcleo compartido por el arreglo, el conjunto y —dos veces— el
+/// mapa: sus claves y sus valores se comprueban con esta misma regla, cada
+/// grupo por separado.
+fn common_type(
+    elements: &[&ParseNode],
+    table: &SymbolTable,
+    spec: &SemanticSpec,
+) -> (Option<Type>, Vec<SemanticError>) {
     let mut errors = Vec::new();
     let mut common: Option<Type> = None;
 
@@ -67,11 +82,9 @@ pub fn resolve_array_literal(
             None => common = Some(found),
             Some(expected) => {
                 if resolve_assignment(expected, &found).is_ok() {
-                    // Compatible tal cual (incluida la ampliación normal
-                    // integer -> float ya cubierta por la propia tabla).
+                    // Compatible tal cual (incluida la ampliación integer -> float).
                 } else if resolve_assignment(&found, expected).is_ok() {
-                    // El elemento nuevo es el tipo más ancho (p.ej. el común
-                    // era integer y este es float): ensanchar el tipo común.
+                    // El elemento nuevo es el tipo más ancho: ensanchar.
                     common = Some(found);
                 } else {
                     errors.push(SemanticError::HeterogeneousArrayElements {
@@ -85,7 +98,128 @@ pub fn resolve_array_literal(
         }
     }
 
-    (common.map(|t| Type::Array(Box::new(t))), errors)
+    (common, errors)
+}
+
+/// Igual que `find_array_literal`, para la producción de literal de conjunto.
+pub fn find_set_literal<'a>(node: &'a ParseNode, spec: &SemanticSpec) -> Option<&'a ParseNode> {
+    let rule = spec.set_literal.as_ref()?;
+    if node.symbol != rule.production {
+        return None;
+    }
+    if !node.children.iter().any(|c| c.symbol == rule.marker_token) {
+        return None;
+    }
+    node.children.get(rule.elements_index)
+}
+
+/// Igual que `find_array_literal`, para la producción de literal de tupla.
+pub fn find_tuple_literal<'a>(node: &'a ParseNode, spec: &SemanticSpec) -> Option<&'a ParseNode> {
+    let rule = spec.tuple_literal.as_ref()?;
+    if node.symbol != rule.production {
+        return None;
+    }
+    if !node.children.iter().any(|c| c.symbol == rule.marker_token) {
+        return None;
+    }
+    node.children.get(rule.elements_index)
+}
+
+/// Igual que `find_array_literal`, para la producción de literal de mapa.
+pub fn find_map_literal<'a>(node: &'a ParseNode, spec: &SemanticSpec) -> Option<&'a ParseNode> {
+    let rule = spec.map_literal.as_ref()?;
+    if node.symbol != rule.production {
+        return None;
+    }
+    if !node.children.iter().any(|c| c.symbol == rule.marker_token) {
+        return None;
+    }
+    node.children.get(rule.entries_index)
+}
+
+/// Aplana la lista de entradas `clave: valor` de un literal de mapa, con el
+/// mismo mecanismo de lista recursiva que usan los argumentos y los campos de
+/// un literal de struct.
+pub fn flatten_map_entries<'a>(entries_node: &'a ParseNode, spec: &SemanticSpec) -> Vec<&'a ParseNode> {
+    match spec.map_list_symbol.as_deref() {
+        Some(symbol) => flatten_arg_list(entries_node, symbol),
+        None => Vec::new(),
+    }
+}
+
+/// Tipo de un literal de conjunto: `Set(tipo común)`, con la misma regla de
+/// homogeneidad y ensanchamiento que un arreglo.
+pub fn resolve_set_literal(
+    elements: &[&ParseNode],
+    table: &SymbolTable,
+    spec: &SemanticSpec,
+) -> (Option<Type>, Vec<SemanticError>) {
+    let (common, errors) = common_type(elements, table, spec);
+    (common.map(|t| Type::Set(Box::new(t))), errors)
+}
+
+/// Tipo de un literal de tupla: `Tuple([t0, t1, ...])`, en orden.
+///
+/// A diferencia del arreglo y el conjunto NO se busca un tipo común: una
+/// tupla es heterogénea por definición, así que mezclar tipos es lo normal y
+/// nunca produce un error de homogeneidad. Un elemento que no se puede tipar
+/// se registra como `Unknown` en vez de saltarse, para no correr de posición
+/// a los que vienen después — el índice es lo único que identifica a cada
+/// elemento de una tupla.
+pub fn resolve_tuple_literal(
+    elements: &[&ParseNode],
+    table: &SymbolTable,
+    spec: &SemanticSpec,
+) -> Option<Type> {
+    if elements.is_empty() {
+        return None;
+    }
+    let items: Vec<Type> = elements
+        .iter()
+        .map(|e| classes::resolve_expr_type(e, table, spec).unwrap_or(Type::Unknown))
+        .collect();
+    Some(Type::Tuple(items))
+}
+
+/// Tipo de un literal de mapa: `Map(clave común, valor común)`.
+///
+/// Las claves y los valores se comprueban por separado con la misma regla de
+/// homogeneidad del arreglo, así que `mapa{ "a": 1, 2: 3 }` reporta la clave
+/// incompatible y `mapa{ "a": 1, "b": "x" }` el valor.
+pub fn resolve_map_literal(
+    entries: &[&ParseNode],
+    table: &SymbolTable,
+    spec: &SemanticSpec,
+) -> (Option<Type>, Vec<SemanticError>) {
+    let Some(rule) = spec.map_entry.as_ref() else {
+        return (None, Vec::new());
+    };
+
+    let mut keys = Vec::new();
+    let mut values = Vec::new();
+    for entry in entries {
+        if entry.symbol != rule.production {
+            continue;
+        }
+        if let Some(key) = entry.children.get(rule.key_index) {
+            keys.push(key);
+        }
+        if let Some(value) = entry.children.get(rule.value_index) {
+            values.push(value);
+        }
+    }
+
+    let (key_ty, mut errors) = common_type(&keys, table, spec);
+    let (value_ty, value_errors) = common_type(&values, table, spec);
+    errors.extend(value_errors);
+
+    let ty = match (key_ty, value_ty) {
+        (Some(k), Some(v)) => Some(Type::Map(Box::new(k), Box::new(v))),
+        // Un mapa vacío, o uno cuyas claves/valores no se pudieron tipar, no
+        // tiene tipo inferible — igual que un arreglo vacío.
+        _ => None,
+    };
+    (ty, errors)
 }
 
 /// Si `node` es la producción de acceso indexado configurada en
@@ -105,45 +239,121 @@ pub fn find_index_access<'a>(node: &'a ParseNode, spec: &SemanticSpec) -> Option
     Some((base, index))
 }
 
-/// Valida `base[índice]`: la base debe ser un arreglo y el índice, integer.
-/// Devuelve el tipo del elemento (para que `resolve_expr_type` pueda seguir
-/// tipando `arr[0] + 1`, y `matrix[0][1]` indexando dos veces).
+/// Tipo de los elementos que produce ITERAR una colección.
 ///
-/// `None` en cualquiera de los dos tipos —no se pudo resolver la base o el
-/// índice— no reporta nada: mismo silencio que el resto de `classes`.
-/// Tipo de los elementos de una colección: `Array(T) -> T`.
+/// - `Array(T)`/`Set(T)` -> `T`.
+/// - `Map(K, _)` -> `K`: recorrer un mapa recorre sus CLAVES, como en Python
+///   o JavaScript. Iterar los valores es otra operación, no ésta.
+/// - `Tuple(..)` -> `None`: es heterogénea, no existe "el" tipo de sus
+///   elementos, así que iterarla no tiene un tipo que ofrecer.
 ///
-/// `None` significa "no se puede iterar/indexar esto": o no se resolvió el
-/// tipo (`None`/`Unknown`, y entonces callar es lo correcto), o el tipo es
-/// conocido pero no es un arreglo — el llamador distingue los dos casos
-/// mirando el tipo que pasó. Es la misma operación que hace por dentro
-/// `validate_index_access`; vive aquí para que `foreach` no la duplique.
+/// `None` significa "esto no se puede iterar": o no se resolvió el tipo
+/// (`None`/`Unknown`, y entonces callar es lo correcto), o el tipo es
+/// conocido y no es iterable — el llamador distingue los dos casos mirando el
+/// tipo que pasó. Vive aquí para que `foreach` no duplique la regla.
 pub fn element_type(ty: &Type) -> Option<Type> {
     match ty {
-        Type::Array(inner) => Some(inner.as_ref().clone()),
+        Type::Array(inner) | Type::Set(inner) => Some(inner.as_ref().clone()),
+        Type::Map(key, _) => Some(key.as_ref().clone()),
         _ => None,
     }
 }
 
+/// Índice literal constante de un subíndice, si lo es.
+///
+/// Baja por cadenas de un solo hijo hasta la hoja y parsea su lexema. Solo
+/// hace falta para la tupla: `t[0]` y `t[1]` devuelven tipos DISTINTOS, así
+/// que sin saber el valor no hay tipo que devolver. `t[i]` o `t[1+1]` dan
+/// `None` — y eso no es un error, es "no lo sabemos", igual que en el resto
+/// del módulo.
+fn constant_index(node: &ParseNode) -> Option<usize> {
+    let mut current = node;
+    while current.children.len() == 1 {
+        current = &current.children[0];
+    }
+    if !current.children.is_empty() {
+        return None;
+    }
+    current.lexeme.as_deref()?.parse::<usize>().ok()
+}
+
+/// Valida `base[subíndice]` y devuelve el tipo del resultado, para que
+/// `resolve_expr_type` pueda seguir tipando `arr[0] + 1` o `m[0][1]`.
+///
+/// Ramifica según lo que sea la base, que es lo que distingue a las cuatro
+/// colecciones al indexarlas:
+///
+/// | Base | Subíndice válido | Resultado | Si no |
+/// |---|---|---|---|
+/// | `Array(T)` | `integer` | `T` | `IndexNotInteger` |
+/// | `Map(K, V)` | compatible con `K` | `V` | `MapKeyTypeMismatch` |
+/// | `Tuple(ts)` | literal entero en rango | `ts[i]` | `TupleIndexOutOfRange` |
+/// | `Set(_)` y cualquier otro | — | — | `NotIndexable` |
+///
+/// Un conjunto NO es indexable a propósito: no tiene orden ni claves. Es la
+/// diferencia observable entre `Set(T)` y `Array(T)`.
+///
+/// `index_node` solo lo necesita la tupla; el resto de los casos se deciden
+/// con el tipo. `None` en cualquiera de los dos —base o subíndice sin
+/// resolver— no reporta nada: mismo silencio que el resto de `classes`.
 pub fn validate_index_access(
     base_ty: Option<&Type>,
     index_ty: Option<&Type>,
+    index_node: Option<&ParseNode>,
     line: usize,
     col: usize,
 ) -> Result<Option<Type>, SemanticError> {
-    let inner = match base_ty {
-        None | Some(Type::Unknown) => return Ok(None),
-        Some(Type::Array(inner)) => Some(inner.as_ref().clone()),
-        Some(other) => return Err(SemanticError::NotIndexable { found: other.clone(), line, col }),
-    };
+    match base_ty {
+        None | Some(Type::Unknown) => Ok(None),
 
-    if let Some(index_ty) = index_ty {
-        if !matches!(index_ty, Type::Int | Type::Unknown) {
-            return Err(SemanticError::IndexNotInteger { found: index_ty.clone(), line, col });
+        Some(Type::Array(inner)) => {
+            if let Some(index_ty) = index_ty {
+                if !matches!(index_ty, Type::Int | Type::Unknown) {
+                    return Err(SemanticError::IndexNotInteger { found: index_ty.clone(), line, col });
+                }
+            }
+            Ok(Some(inner.as_ref().clone()))
         }
-    }
 
-    Ok(inner)
+        Some(Type::Map(key, value)) => {
+            if let Some(index_ty) = index_ty {
+                if resolve_assignment(key, index_ty).is_err() {
+                    return Err(SemanticError::MapKeyTypeMismatch {
+                        expected: key.as_ref().clone(),
+                        found: index_ty.clone(),
+                        line,
+                        col,
+                    });
+                }
+            }
+            Ok(Some(value.as_ref().clone()))
+        }
+
+        Some(Type::Tuple(items)) => {
+            if let Some(index_ty) = index_ty {
+                if !matches!(index_ty, Type::Int | Type::Unknown) {
+                    return Err(SemanticError::IndexNotInteger { found: index_ty.clone(), line, col });
+                }
+            }
+            // Sin un índice constante no se puede decir QUÉ posición se está
+            // pidiendo, y cada posición tiene su propio tipo: se devuelve
+            // `None` (desconocido) en vez de inventar uno.
+            let Some(index) = index_node.and_then(constant_index) else {
+                return Ok(None);
+            };
+            match items.get(index) {
+                Some(ty) => Ok(Some(ty.clone())),
+                None => Err(SemanticError::TupleIndexOutOfRange {
+                    index,
+                    len: items.len(),
+                    line,
+                    col,
+                }),
+            }
+        }
+
+        Some(other) => Err(SemanticError::NotIndexable { found: other.clone(), line, col }),
+    }
 }
 
 #[cfg(test)]
@@ -242,27 +452,27 @@ mod tests {
     #[test]
     fn indexing_an_array_with_an_integer_returns_the_element_type() {
         let base_ty = Type::Array(Box::new(Type::Int));
-        let result = validate_index_access(Some(&base_ty), Some(&Type::Int), 2, 3);
+        let result = validate_index_access(Some(&base_ty), Some(&Type::Int), None, 2, 3);
         assert_eq!(result, Ok(Some(Type::Int)));
     }
 
     #[test]
     fn indexing_two_dimensional_array_once_returns_the_inner_array() {
         let base_ty = Type::Array(Box::new(Type::Array(Box::new(Type::Int))));
-        let result = validate_index_access(Some(&base_ty), Some(&Type::Int), 2, 3);
+        let result = validate_index_access(Some(&base_ty), Some(&Type::Int), None, 2, 3);
         assert_eq!(result, Ok(Some(Type::Array(Box::new(Type::Int)))));
     }
 
     #[test]
     fn indexing_with_a_non_integer_is_rejected() {
         let base_ty = Type::Array(Box::new(Type::Int));
-        let result = validate_index_access(Some(&base_ty), Some(&Type::Str), 2, 3);
+        let result = validate_index_access(Some(&base_ty), Some(&Type::Str), None, 2, 3);
         assert_eq!(result, Err(SemanticError::IndexNotInteger { found: Type::Str, line: 2, col: 3 }));
     }
 
     #[test]
     fn indexing_a_non_array_is_rejected() {
-        let result = validate_index_access(Some(&Type::Int), Some(&Type::Int), 2, 3);
+        let result = validate_index_access(Some(&Type::Int), Some(&Type::Int), None, 2, 3);
         assert_eq!(result, Err(SemanticError::NotIndexable { found: Type::Int, line: 2, col: 3 }));
     }
 
@@ -277,5 +487,102 @@ mod tests {
 
         let other = ParseNode::internal("atom".into(), vec![leaf("ID", "x", 1, 1)]);
         assert!(find_array_literal(&other, &spec).is_none());
+    }
+
+    // ---------- mapa, conjunto y tupla ----------
+    //
+    // Estos tests trabajan directo sobre los tipos, sin árbol: lo que se
+    // valida acá es la POLÍTICA (qué acepta cada colección al indexarse y qué
+    // devuelve), no el reconocimiento por forma, que ya está probado arriba y
+    // end-to-end en `tests/colecciones_tests.rs`.
+
+    fn mapa(k: Type, v: Type) -> Type {
+        Type::Map(Box::new(k), Box::new(v))
+    }
+
+    #[test]
+    fn indexing_a_map_with_the_declared_key_returns_the_value_type() {
+        let base = mapa(Type::Str, Type::Int);
+        let got = validate_index_access(Some(&base), Some(&Type::Str), None, 1, 1)
+            .expect("clave correcta");
+        assert_eq!(got, Some(Type::Int), "devuelve el VALOR, no la clave");
+    }
+
+    #[test]
+    fn indexing_a_map_with_the_wrong_key_type_is_rejected() {
+        let base = mapa(Type::Str, Type::Int);
+        let err = validate_index_access(Some(&base), Some(&Type::Int), None, 2, 3).unwrap_err();
+        assert!(
+            matches!(err, SemanticError::MapKeyTypeMismatch { .. }),
+            "una clave del tipo equivocado no es un 'índice no entero': {err:?}"
+        );
+    }
+
+    #[test]
+    fn a_set_is_not_indexable() {
+        // Es la diferencia observable entre `Set(T)` y `Array(T)`: mismos
+        // elementos, pero el conjunto no tiene orden ni claves.
+        let base = Type::Set(Box::new(Type::Int));
+        let err = validate_index_access(Some(&base), Some(&Type::Int), None, 1, 1).unwrap_err();
+        assert!(matches!(err, SemanticError::NotIndexable { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn indexing_a_tuple_types_by_position() {
+        let base = Type::Tuple(vec![Type::Str, Type::Int]);
+        let cero = leaf("INT_LIT", "0", 1, 1);
+        let uno = leaf("INT_LIT", "1", 1, 1);
+
+        assert_eq!(
+            validate_index_access(Some(&base), Some(&Type::Int), Some(&cero), 1, 1).unwrap(),
+            Some(Type::Str),
+            "la posición 0 de esta tupla es texto"
+        );
+        assert_eq!(
+            validate_index_access(Some(&base), Some(&Type::Int), Some(&uno), 1, 1).unwrap(),
+            Some(Type::Int),
+            "y la 1 es entero — por eso hace falta el valor del literal"
+        );
+    }
+
+    #[test]
+    fn a_constant_tuple_index_out_of_range_is_rejected() {
+        let base = Type::Tuple(vec![Type::Str, Type::Int]);
+        let cinco = leaf("INT_LIT", "5", 4, 9);
+        let err = validate_index_access(Some(&base), Some(&Type::Int), Some(&cinco), 4, 9).unwrap_err();
+        match err {
+            SemanticError::TupleIndexOutOfRange { index, len, .. } => {
+                assert_eq!((index, len), (5, 2));
+            }
+            other => panic!("se esperaba TupleIndexOutOfRange: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_non_constant_tuple_index_is_unknown_but_not_an_error() {
+        // `t[i]`: sin el valor no se sabe QUÉ posición se pide, y cada una
+        // tiene su propio tipo. Callar es lo correcto — inventar uno sería
+        // peor que no responder.
+        let base = Type::Tuple(vec![Type::Str, Type::Int]);
+        let variable = leaf("ID", "i", 1, 1);
+        let got = validate_index_access(Some(&base), Some(&Type::Int), Some(&variable), 1, 1);
+        assert_eq!(got.expect("no es un error"), None);
+    }
+
+    #[test]
+    fn element_type_covers_every_collection() {
+        assert_eq!(element_type(&Type::Array(Box::new(Type::Int))), Some(Type::Int));
+        assert_eq!(element_type(&Type::Set(Box::new(Type::Str))), Some(Type::Str));
+        assert_eq!(
+            element_type(&mapa(Type::Str, Type::Int)),
+            Some(Type::Str),
+            "iterar un mapa recorre sus CLAVES"
+        );
+        assert_eq!(
+            element_type(&Type::Tuple(vec![Type::Str, Type::Int])),
+            None,
+            "una tupla es heterogénea: no hay un tipo de elemento único"
+        );
+        assert_eq!(element_type(&Type::Int), None);
     }
 }

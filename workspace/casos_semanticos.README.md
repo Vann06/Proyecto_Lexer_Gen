@@ -71,6 +71,7 @@ casos por línea solo aplica a los `.txt` de batería como este.
 | 42 | `case` incompatible con el discriminante | `S035` |
 | 43 | `foreach` sobre algo que no es una colección | `S036` |
 | 44 | Código inalcanzable tras un `return` | `W002` |
+| 45 | Se invoca algo que no es una función | `S020` |
 
 ## Baterías relacionadas
 
@@ -89,8 +90,8 @@ alcanzables desde esta gramática: el primero es un invariante interno de la
 pila de ámbitos, y el segundo lo impide la propia sintaxis, porque
 `const_decl` exige el `= expr`.
 
-`S020` (invocar algo que no es invocable) y `S021` (falta la firma del
-invocado) tampoco tienen caso: hoy `classes::validate_call` —la que usa el
-analizador— sale sin diagnóstico cuando el símbolo invocado no tiene firma, así
-que `let n: integer = 1; n();` pasa en silencio. La regla existe en
-`functions::validate_call`, pero el recorrido no la invoca.
+`S021` (falta la firma del invocado) tampoco: todo símbolo invocable recibe su
+firma en `enter`, antes de recorrer su cuerpo —es lo que permite validar una
+llamada recursiva—, así que un símbolo sin firma nunca es una función. Ese caso
+lo cubre `S020`, y `S021` queda como red de seguridad de
+`functions::validate_call`, probada en sus propios tests unitarios.

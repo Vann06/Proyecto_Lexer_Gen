@@ -113,6 +113,11 @@ impl From<&SemanticError> for Diagnostic {
             SemanticError::IndexNotInteger { line, col, .. } => (ErrorKind::Listas, "S033", *line, *col),
             SemanticError::NotIndexable { line, col, .. } => (ErrorKind::Listas, "S034", *line, *col),
             SemanticError::NotIterable { line, col, .. } => (ErrorKind::Listas, "S036", *line, *col),
+            SemanticError::MapKeyTypeMismatch { line, col, .. } => (ErrorKind::Listas, "S037", *line, *col),
+            SemanticError::TupleIndexOutOfRange { line, col, .. } => (ErrorKind::Listas, "S038", *line, *col),
+            // Mismo código que `FunctionError::NotCallable`: es el mismo error
+            // visto desde el otro enum, igual que S013/S014 más abajo.
+            SemanticError::NotCallable { line, col, .. } => (ErrorKind::Funciones, "S020", *line, *col),
         };
         Diagnostic { kind, code: code.to_string(), message, line, col, severity: Severity::Error }
     }

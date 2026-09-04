@@ -30,7 +30,7 @@ primeros son la infraestructura; el resto son familias de reglas.
 | `closures/` | Acumula qué función anidada captura qué variables libres de su entorno de definición. Modela el resultado; la detección vive en el `Analyzer` usando `lookup_with_scope`. |
 | `operators/` | Lo que la tabla aritmética no cubre: lógicos (`&& \|\| !`), comparaciones (`== != < <= > >=`), unarios, y el "sentido semántico" de un operando (una función o una clase nombradas a secas no son valores). |
 | `flow/` | Condiciones booleanas obligatorias y la pila de contexto bucle/función que hace que `break`/`continue` solo valgan dentro de un bucle. |
-| `collections/` | Tipo homogéneo de los elementos de un literal de lista y validación de índices. Lo multidimensional sale gratis de anidar `Type::Array`. |
+| `collections/` | Las cuatro colecciones: arreglo, conjunto, mapa y tupla. Homogeneidad de los literales, validación del subíndice según el tipo de la base, y lo multidimensional gratis por anidamiento. |
 | `duplicates/` | Declaraciones repetidas (variables **y** parámetros) y símbolos declarados pero nunca leídos. |
 | `deadcode/` | Instrucciones inalcanzables tras una sentencia terminal, y el corte de evaluación del resto del bloque. |
 
@@ -116,6 +116,10 @@ enumerar `or_expr`/`and_expr`/`equality_expr`/…)
 | `%array_type` | `%array_type LBRACKET` |
 | `%array_literal` | `%array_literal atom LBRACKET 1` |
 | `%index` | `%index primary LBRACKET 0 2` |
+| `%map_type` | `%map_type MAPA 2 4` |
+| `%map_literal` / `%map_entry` / `%map_list_symbol` | `%map_entry entrada 0 2` |
+| `%set_type` / `%set_literal` | `%set_type CONJ 2` |
+| `%tuple_type` / `%tuple_literal` | `%tuple_type TUPLA 2 lista_tipos` |
 
 **Advertencias**
 
@@ -123,6 +127,62 @@ enumerar `or_expr`/`and_expr`/`equality_expr`/…)
 |---|---|---|
 | `%stmt_list` | `%stmt_list stmt_list` | Qué producción es una secuencia de sentencias. Sobre ella se detecta el código inalcanzable (**W002**). Las sentencias terminales no se declaran aparte: son las de `%return`/`%break`/`%continue`. |
 | `%warn_unused` | `%warn_unused` (sin argumentos) | Activa W001 para variables y parámetros nunca leídos. Sin ella, el comportamiento es el de antes de esa regla. |
+
+### Por qué no se usó ANTLR
+
+El enunciado pide implementar el analizador sintáctico *"utilizando ANTLR (u
+otra herramienta similar)"*. Este proyecto tomó la segunda opción: en vez de
+**usar** un generador de analizadores, **construyó uno**. La gramática oficial
+`Compiscript.g4` (175 líneas, en la raíz del repo) sigue siendo la fuente de
+verdad; lo que se hizo fue traducir su subconjunto a `workspace/compiscript.yalp`
+y alimentarlo a un generador propio.
+
+**Qué se construyó en lugar de instalar ANTLR.** El pipeline completo, en tres
+capas que suman unas 14.600 líneas de Rust:
+
+- **`src/lexico/` (~2.600 líneas)** — especificación YALex → árbol de regex →
+  AFN por Thompson → AFD por construcción de subconjuntos → minimización →
+  tabla de transiciones → simulador con *maximal munch* y desempate por
+  prioridad de regla.
+- **`src/sintactico/` (~3.500 líneas)** — cálculo de FIRST/FOLLOW → autómata
+  LR(1) → fusión LALR por núcleo → tablas ACTION/GOTO con detección de
+  conflictos → driver shift-reduce que construye el árbol, con recuperación en
+  modo pánico. También LL(1) con eliminación de recursión izquierda y
+  factorización.
+- **`src/semantico/` (~8.600 líneas)** — lo que documenta el resto de este
+  archivo.
+
+**Qué se pierde.** ANTLR es más expresivo: permite escribir código arbitrario
+por regla, tiene ALL(*) —que acepta gramáticas que un LALR(1) rechaza—, y trae
+generación de código para múltiples lenguajes destino. Nada de eso está acá.
+Una gramática que necesite más de un token de anticipación no compila en este
+generador, y hay que reescribirla (fue justo el trabajo de traducir el
+`switch` y el `for` de la `.g4` a una forma LALR sin conflictos).
+
+**Qué se gana, y por qué era lo pertinente para esta fase.** ANTLR 4 genera
+una clase base con **un método por regla de la gramática** —`enterClassDeclaration`,
+`exitFunctionDeclaration`…— así que el código semántico queda lleno de nombres
+de producciones concretas: es específico de *esa* gramática, y cambiarla obliga
+a cambiar el código. El analizador de este proyecto se negó a eso: `analyzer.rs`
+no menciona ni una sola producción, y toda la especificidad vive en las 46
+directivas declarativas que reconoce el `.yalp`.
+
+La diferencia es medible, no retórica: **las mismas reglas semánticas corren
+sin cambios sobre cuatro gramáticas distintas** —Compiscript, Pascalito
+(`examples/grammar/pascalito.yalp`, con otra forma sintáctica: bloques
+`is…end`, asignación `:=`, comentarios `--`), objetos_es (todos los nombres de
+producciones y tokens en español) y la de colecciones— y las cuatro producen
+los mismos códigos de diagnóstico. Con Listeners de ANTLR eso habría exigido
+cuatro implementaciones.
+
+**Lo que sí se tomó de ANTLR: su arquitectura.** ANTLR 3 era un esquema de
+traducción clásico, con acciones incrustadas dentro de la gramática. ANTLR 4
+abandonó eso a propósito y pasó a *parsear primero, recorrer después* con
+Listeners. Este proyecto hace exactamente lo mismo: el parser LALR construye el
+`ParseNode` completo y recién entonces el `Visitor` lo recorre con `enter`/`exit`
+—que son, uno a uno, el `enterX`/`exitX` de un Listener de ANTLR—. La diferencia
+no está en el diseño del recorrido, sino en que acá la política por producción
+es una tabla de datos y no código generado.
 
 ---
 
@@ -224,7 +284,7 @@ La regla que sostiene todo: **`enter` declara y abre, `exit` cierra y cuelga.**
 | S017 | Funciones | `return` sin valor en una función tipada | `functions` |
 | S018 | Funciones | `return` con valor en un procedimiento | `functions` |
 | S019 | Funciones | `return` fuera de una función | `functions` |
-| S020 | Funciones | Se invoca algo que no es invocable | `functions` |
+| S020 | Funciones | Se invoca algo que no es una función | `classes` / `functions` |
 | S021 | Funciones | Falta la firma del invocado | `functions` |
 | S022 | Tipos | Campo de struct con tipo incorrecto | `classes` |
 | S023 | Tipos | Falta un campo en el literal de struct | `classes` |
@@ -241,6 +301,8 @@ La regla que sostiene todo: **`enter` declara y abre, `exit` cierra y cuelga.**
 | S034 | Listas | Se indexa algo que no es un arreglo | `collections` |
 | S035 | ControlFlujo | El valor de un `case` no es compatible con el discriminante del `switch` | `flow` |
 | S036 | Listas | Se itera con `foreach` sobre algo que no es una colección | `collections` |
+| S037 | Listas | Clave de mapa con un tipo incompatible con el declarado | `collections` |
+| S038 | Listas | Índice literal fuera del rango de una tupla | `collections` |
 | **W001** | Ambito | Variable o parámetro declarado pero nunca leído | `duplicates` |
 | **W002** | ControlFlujo | Instrucción inalcanzable tras un `return`/`break`/`continue` | `deadcode` |
 
@@ -287,11 +349,15 @@ producciones y dejaría al `SemanticSpec` sin encontrarlas.
 
 Documentados a propósito, no olvidados:
 
-- **`S020`/`S021` no tienen productor real.** `classes::validate_call` —la que
-  usa el analizador— sale sin diagnóstico cuando el símbolo invocado no tiene
-  firma, así que invocar algo que no es función (`let n: integer = 1; n();`)
-  pasa en silencio. La regla existe en `functions::validate_call` y está
-  probada ahí, pero el recorrido nunca la llama.
+- **`S021` no tiene productor real.** Todo símbolo invocable recibe su firma en
+  `enter`, antes de recorrer su cuerpo —es lo que permite validar una llamada
+  recursiva—, así que un símbolo sin firma nunca es una función: ese caso lo
+  reporta `S020`. `S021` queda como red de seguridad de
+  `functions::validate_call`, probada en sus propios tests unitarios.
+- **Compiscript no tiene mapas, conjuntos ni tuplas.** El analizador sí los
+  soporta —tipos, literales, indexado, iteración y compatibilidad— y está
+  probado de punta a punta con `workspace/colecciones.yalp`, pero para verlos en
+  un `.cps` habría que agregarles sintaxis a la gramática de Compiscript.
 - **La detección de código muerto es conservadora**: una sentencia cuenta
   como terminal solo si el `return`/`break`/`continue` está en su subárbol sin
   cruzar otra secuencia de sentencias. Eso evita el falso positivo de
@@ -323,7 +389,7 @@ Documentados a propósito, no olvidados:
 
 ## 8. Pruebas
 
-146 tests unitarios (dentro de `src/`) y 114 de integración (en `tests/`); de
+158 tests unitarios (dentro de `src/`) y 121 de integración (en `tests/`); de
 estos últimos, uno de `codegen_tests.rs` ejecuta un binario recién compilado y
 puede quedar bloqueado por el Control de aplicaciones de Windows — es del
 entorno, no del código.
@@ -343,6 +409,7 @@ no con árboles armados a mano:
 | `control_flow_tests.rs` (4) | Condiciones, `break`/`continue`, y que las reglas no dependen de los nombres de Compiscript |
 | `operator_tests.rs` (7) | Lógicos, comparaciones, unarios, y que un nombre de función o clase no es un valor |
 | `duplicates_tests.rs` (5) | Los 15 casos de `workspace/duplicates_casos.txt`, el mismo archivo que se ejecuta desde el IDE |
+| `colecciones_tests.rs` (2) | Las cuatro colecciones sobre `workspace/colecciones.yalp`, una gramática que NO es Compiscript — la prueba de que el soporte es configuración y no código por lenguaje |
 | `bateria_semantica_tests.rs` (2) | Los 44 casos de `workspace/casos_semanticos.txt` —uno exitoso y uno fallido por regla—, en LALR y SLR, exigiendo el diagnóstico exacto de cada uno |
 | `deadcode_tests.rs` (2) | Código inalcanzable y el corte de evaluación, sobre `codigo_muerto*.cps` |
 | `contract_tests.rs` (7) | Los contratos entre fases: que el lexer entrega posiciones reales, que el árbol tiene la forma de la gramática, que las firmas y las clases sobreviven al pipeline |

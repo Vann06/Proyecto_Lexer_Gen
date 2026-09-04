@@ -165,13 +165,37 @@ pub fn resolve_expr_type(node: &ParseNode, table: &SymbolTable, spec: &SemanticS
         return ty;
     }
 
+    // Conjunto, tupla y mapa: mismo contrato silencioso que el literal de
+    // lista — acá solo se TIPA; los diagnósticos los emite `analyzer`.
+    if let Some(elements_node) = crate::semantico::collections::find_set_literal(node, spec) {
+        let elements = crate::semantico::collections::flatten_array_elements(elements_node, spec);
+        let (ty, _errors) = crate::semantico::collections::resolve_set_literal(&elements, table, spec);
+        return ty;
+    }
+    if let Some(elements_node) = crate::semantico::collections::find_tuple_literal(node, spec) {
+        let elements = crate::semantico::collections::flatten_array_elements(elements_node, spec);
+        return crate::semantico::collections::resolve_tuple_literal(&elements, table, spec);
+    }
+    if let Some(entries_node) = crate::semantico::collections::find_map_literal(node, spec) {
+        let entries = crate::semantico::collections::flatten_map_entries(entries_node, spec);
+        let (ty, _errors) = crate::semantico::collections::resolve_map_literal(&entries, table, spec);
+        return ty;
+    }
+
     // Acceso indexado: el tipo es el del ELEMENTO, no el del arreglo —
     // permite que `arr[0] + 1` y `matrix[0][1]` sigan tipando normalmente.
     // Silencioso ante una base que no es arreglo: el diagnóstico lo emite
     // `analyzer::enter`, no esta función.
-    if let Some((base, _index)) = crate::semantico::collections::find_index_access(node, spec) {
+    if let Some((base, index)) = crate::semantico::collections::find_index_access(node, spec) {
         let base_ty = resolve_expr_type(base, table, spec);
-        return crate::semantico::collections::validate_index_access(base_ty.as_ref(), None, 0, 0).ok().flatten();
+        // El nodo del indice SI se pasa, aunque su tipo no: una tupla se tipa
+        // por POSICION (`t[0]` y `t[1]` pueden ser distintos), asi que sin el
+        // nodo no habria con que resolverla. El tipo del indice sigue en
+        // `None` a proposito — aca solo se quiere el tipo resultante; los
+        // diagnosticos los emite `analyzer`.
+        return crate::semantico::collections::validate_index_access(base_ty.as_ref(), None, Some(index), 0, 0)
+            .ok()
+            .flatten();
     }
 
     if node.children.is_empty() {
@@ -550,11 +574,22 @@ pub fn validate_call(
     call_pos: (usize, usize),
     arg_nodes: &[&ParseNode],
 ) -> Vec<SemanticError> {
+    let (line, col) = call_pos;
+    // Todo símbolo declarado como invocable recibe su firma en `enter`, ANTES
+    // de recorrer su cuerpo — es lo que permite validar una llamada recursiva
+    // (ver la "firma PROVISIONAL" en `analyzer`). Así que llegar acá sin firma
+    // no significa "todavía no la sé": significa que lo invocado no es una
+    // función. Una variable, un parámetro, una clase o un struct.
     let signature = match &callee.signature {
         Some(s) => s,
-        None => return Vec::new(),
+        None => {
+            return vec![SemanticError::NotCallable {
+                name: callee_label.to_string(),
+                line,
+                col,
+            }]
+        }
     };
-    let (line, col) = call_pos;
     let arg_types = argument_types(arg_nodes, table, spec);
 
     functions::check_arguments(signature, &arg_types)
