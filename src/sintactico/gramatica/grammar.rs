@@ -91,6 +91,8 @@ pub struct Grammar {
     /// `semantico::spec::SemanticSpec::from_grammar` los traduzca. Mantiene
     /// la dirección de dependencia semantico → sintactico, nunca al revés.
     pub ident_token: Option<String>,
+    /// `%warn_unused`: activa advertencias de variables/parámetros nunca leídos.
+    pub warn_unused: bool,
     /// `(producción, kind)`, uno por línea `%declare`.
     pub declare_directives: Vec<(String, String)>,
     /// `(producción, kind)`, uno por línea `%scope`.
@@ -290,6 +292,7 @@ impl Grammar {
             transformation_log: Vec::new(),
             precedence: Vec::new(),
             ident_token: None,
+            warn_unused: false,
             declare_directives: Vec::new(),
             scope_directives: Vec::new(),
             type_of_directives: Vec::new(),
@@ -991,6 +994,8 @@ impl Grammar {
                 if let Some(sym) = line[18..].split_whitespace().next() {
                     self.field_list_symbol = Some(sym.to_string());
                 }
+            } else if line == "%warn_unused" {
+                self.warn_unused = true;
             } else if line.starts_with("%return") {
                 let mut parts = line[7..].split_whitespace();
                 if let (Some(production), Some(value_symbol)) = (parts.next(), parts.next()) {

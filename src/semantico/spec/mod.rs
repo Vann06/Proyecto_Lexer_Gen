@@ -17,6 +17,8 @@ pub struct SemanticSpec {
     /// hoja con este `symbol` que no haya sido consumida como el nombre de
     /// una `DeclarationRule` se trata como un USO y se busca con `lookup`.
     pub identifier_token: String,
+    /// Opt-in por gramática: no altera los diagnósticos de lenguajes existentes.
+    pub warn_unused: bool,
     pub declarations: Vec<DeclarationRule>,
     pub scopes: Vec<ScopeRule>,
     /// Mapea el `symbol` de la hoja terminal de un nodo de tipo (p.ej.
@@ -408,6 +410,7 @@ impl SemanticSpec {
 
         Some(SemanticSpec {
             identifier_token,
+            warn_unused: grammar.warn_unused,
             declarations,
             scopes,
             type_tokens,
@@ -601,6 +604,7 @@ mod tests {
             transformation_log: Vec::new(),
             precedence: Vec::new(),
             ident_token: ident.map(String::from),
+            warn_unused: false,
             declare_directives: declares.iter().map(|(p, k)| (p.to_string(), k.to_string())).collect(),
             scope_directives: scopes.iter().map(|(p, k)| (p.to_string(), k.to_string())).collect(),
             type_of_directives: type_children.iter().map(|(p, c)| (p.to_string(), c.to_string())).collect(),

@@ -13,6 +13,7 @@
 use crate::semantico::classes;
 use crate::semantico::closures::ClosureCollector;
 use crate::semantico::collections;
+use crate::semantico::duplicates;
 use crate::semantico::errors::ErrorCollector;
 use crate::semantico::flow::{self, FlowContext};
 use crate::semantico::functions::FunctionContext;
@@ -46,6 +47,11 @@ pub fn analyze(tree: &ParseNode, spec: &SemanticSpec) -> AnalysisResult {
     let mut analyzer = Analyzer::new(spec);
     visitor::walk(tree, &mut analyzer);
     analyzer.report_unknown_named_types();
+    if spec.warn_unused {
+        for warning in duplicates::unused_diagnostics(analyzer.table.current_scope_kind(), analyzer.table.current_symbols()) {
+            analyzer.errors.push(warning);
+        }
+    }
     AnalysisResult {
         table: analyzer.table,
         errors: analyzer.errors,
@@ -223,6 +229,13 @@ impl<'a> Visitor for Analyzer<'a> {
                         line: node.line,
                         col: node.col,
                     });
+                }
+            }
+            // Solo las hojas que representan lecturas llegan a esta rama.
+            // Los destinos de asignación y los nombres declarados se omiten.
+            if self.spec.warn_unused {
+                if let Some(symbol) = self.table.lookup_mut(name) {
+                    symbol.used = true;
                 }
             }
             self.frames.push(Frame::default());
@@ -818,6 +831,10 @@ impl<'a> Visitor for Analyzer<'a> {
                 this_sym.ty = Some(Type::Named(class_name));
                 this_sym.mutable = false;
                 this_sym.initialized = true;
+                // Símbolo sintético del compilador, no una declaración del usuario.
+                if self.spec.warn_unused {
+                    this_sym.used = true;
+                }
             }
 
             true
@@ -880,6 +897,11 @@ impl<'a> Visitor for Analyzer<'a> {
             // tabla (que al terminar solo tiene el Global) ni en `members`
             // (que solo puebla los ámbitos con nombre).
             self.scopes.record(&closed, closed_depth);
+            if self.spec.warn_unused {
+                for warning in duplicates::unused_diagnostics(closed.kind(), closed.symbols()) {
+                    self.errors.push(warning);
+                }
+            }
 
             // Límite conocido, no arreglado a propósito: si el cuerpo tiene un
             // scope anónimo anidado adentro (p.ej. un `bloque` que no declara

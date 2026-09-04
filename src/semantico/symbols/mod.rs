@@ -5,6 +5,7 @@
 // que provee `ScopeStack`.
 use thiserror::Error;
 
+use super::duplicates;
 use super::scopes::{PopGlobalScope, Scope, ScopeKind, ScopeStack};
 use super::types::{resolve_assignment, Coercion};
 
@@ -292,15 +293,7 @@ impl SymbolTable {
         line: usize,
         col: usize,
     ) -> Result<(), SemanticError> {
-        if let Some(existing) = self.stack.current().get_own(name) {
-            return Err(SemanticError::Redeclared {
-                name: name.to_string(),
-                line,
-                col,
-                first_line: existing.line,
-                first_col: existing.col,
-            });
-        }
+        duplicates::validate_declaration(self.stack.current().get_own(name), name, line, col)?;
         self.stack.insert_in_current(Symbol {
             name: name.to_string(),
             kind,
@@ -342,6 +335,8 @@ impl SymbolTable {
         line: usize,
         col: usize,
     ) -> Result<(), SemanticError> {
+        // Un inicializador inválido no debe ocultar una declaración duplicada.
+        duplicates::validate_declaration(self.stack.current().get_own(name), name, line, col)?;
         if !mutable && !has_initializer {
             return Err(SemanticError::ConstRequiresInitializer {
                 name: name.to_string(),
@@ -453,6 +448,10 @@ impl SymbolTable {
 
     pub fn current_scope_kind(&self) -> ScopeKind {
         self.stack.current().kind()
+    }
+
+    pub fn current_symbols(&self) -> impl Iterator<Item = &Symbol> {
+        self.stack.current().symbols()
     }
 
     /// Etiqueta del scope actual (p.ej. el nombre de la clase, si el scope

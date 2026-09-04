@@ -1,0 +1,15 @@
+{ let dato: integer = 1; print(dato); }
+{ let dato: integer = 1; let dato: integer = 2; print(dato); }
+{ let dato: integer = 1; { let dato: integer = 2; print(dato); } print(dato); }
+{ let pendiente: integer = 1; }
+{ let destino: integer = 1; destino = 2; }
+{ function repetir(dato: integer, dato: integer): integer { return dato; } }
+{ function sumar(a: integer, b: integer): integer { return a + b; } print(sumar(1, 2)); }
+{ function primero(a: integer, sobrante: integer): integer { return a; } print(primero(1, 2)); }
+{ function externa(): integer { let capturada: integer = 1; function interna(): integer { return capturada; } return interna(); } print(externa()); }
+{ if (true) { let escondida: integer = 1; } }
+{ let dato: integer = 1; { let dato: integer = 2; print(dato); } }
+{ class Caja { let valor: integer; function constructor(inicio: integer) { this.valor = inicio; } function leer(): integer { return this.valor; } } let caja: Caja = new Caja(1); print(caja.leer()); }
+{ let origen: integer = 1; let destino: integer = 0; destino = origen; }
+{ let dato: integer = 1; let dato: integer = "texto"; print(dato); }
+{ let datos: integer[] = [1, 2]; let seguir: boolean = true; while (seguir) { print(datos[0]); seguir = false; break; } }

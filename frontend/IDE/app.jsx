@@ -1410,6 +1410,9 @@ function App(){
         // nunca llena `problems` — sin esto, un rechazo ahí no aparecía en
         // ningún lado (ni el PARSE CONSOLE ni la pestaña PROBLEMAS).
         D.PROBLEMS = [{ level:"err", code:"P001", msg: data.error, loc:`pipeline ${mode.toUpperCase()}` }];
+      } else {
+        // Un caso correcto de la suite no debe conservar problemas del anterior.
+        D.PROBLEMS = [];
       }
       setStep(0);
       if (!data.accepted || (data.problems && data.problems.some(p => p.level === "err"))) {
