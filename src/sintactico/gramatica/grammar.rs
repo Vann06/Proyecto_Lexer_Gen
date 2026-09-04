@@ -186,6 +186,30 @@ pub struct Grammar {
     pub loop_directives: Vec<String>,
     pub break_directives: Vec<String>,
     pub continue_directives: Vec<String>,
+    /// `(producción, hijo discriminante)` declarados con `%switch` — p.ej.
+    /// `%switch switch_stmt 2` para
+    /// `switch_stmt: SWITCH LPAREN expr RPAREN LBRACE switch_members RBRACE`.
+    ///
+    /// El discriminante NO se valida como booleano (un `switch` se hace sobre
+    /// un entero o una cadena): lo que se comprueba es que cada `%case` sea
+    /// compatible con él. Además, la producción abre un contexto que admite
+    /// `break` pero no `continue`.
+    pub switch_directives: Vec<(String, String)>,
+    /// `(producción, hijo con la expresión del case)` declarados con `%case`.
+    pub case_directives: Vec<(String, String)>,
+    /// `(producción, hijo con la variable, hijo con el iterable)` declarados
+    /// con `%foreach` — p.ej. `%foreach foreach_stmt 2 4` para
+    /// `foreach_stmt: FOREACH LPAREN ID IN expr RPAREN bloque`. La variable se
+    /// declara con el tipo de ELEMENTO del iterable.
+    pub foreach_directives: Vec<(String, String, String)>,
+    /// Producciones que son una SECUENCIA de sentencias, declaradas con
+    /// `%stmt_list` — p.ej. `stmt_list: stmt_list stmt | stmt`. Sobre ellas se
+    /// detecta el código inalcanzable tras un `return`/`break`/`continue`.
+    ///
+    /// Vacío: no se detecta código muerto (comportamiento idéntico a antes de
+    /// que existiera la directiva). No hace falta declarar cuáles son las
+    /// sentencias terminales: son las mismas de `%return`/`%break`/`%continue`.
+    pub stmt_list_directives: Vec<String>,
     /// Token que marca un nodo de tipo como arreglo (p.ej. "LBRACKET" para
     /// `tipo: tipo LBRACKET RBRACKET`), de la única línea `%array_type` —
     /// p.ej. `%array_type LBRACKET`. `None`: la gramática no tiene tipos de
@@ -318,6 +342,10 @@ impl Grammar {
             loop_directives: Vec::new(),
             break_directives: Vec::new(),
             continue_directives: Vec::new(),
+            switch_directives: Vec::new(),
+            case_directives: Vec::new(),
+            foreach_directives: Vec::new(),
+            stmt_list_directives: Vec::new(),
             array_type_token: None,
             array_literal: None,
             index_access: None,
@@ -1017,6 +1045,31 @@ impl Grammar {
             } else if line.starts_with("%continue") {
                 if let Some(production) = line[9..].split_whitespace().next() {
                     self.continue_directives.push(production.to_string());
+                }
+            } else if line.starts_with("%switch") {
+                let mut parts = line[7..].split_whitespace();
+                if let (Some(production), Some(discriminant)) = (parts.next(), parts.next()) {
+                    self.switch_directives.push((production.to_string(), discriminant.to_string()));
+                }
+            } else if line.starts_with("%case") {
+                let mut parts = line[5..].split_whitespace();
+                if let (Some(production), Some(value)) = (parts.next(), parts.next()) {
+                    self.case_directives.push((production.to_string(), value.to_string()));
+                }
+            } else if line.starts_with("%foreach") {
+                let mut parts = line[8..].split_whitespace();
+                if let (Some(production), Some(variable), Some(iterable)) =
+                    (parts.next(), parts.next(), parts.next())
+                {
+                    self.foreach_directives.push((
+                        production.to_string(),
+                        variable.to_string(),
+                        iterable.to_string(),
+                    ));
+                }
+            } else if line.starts_with("%stmt_list") {
+                if let Some(production) = line[10..].split_whitespace().next() {
+                    self.stmt_list_directives.push(production.to_string());
                 }
             } else if line.starts_with("%array_type") {
                 if let Some(tok) = line[11..].split_whitespace().next() {

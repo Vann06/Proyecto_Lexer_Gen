@@ -1,0 +1,44 @@
+{ let a: integer = 1; print(a); }
+{ print(noDeclarada); }
+{ let a: integer = 1; let a: integer = 2; print(a); }
+{ const FIJA: integer = 1; FIJA = 2; }
+{ let a: integer = 1; let b: integer = a + 1; print(b); }
+{ let a: integer = "texto"; }
+{ let a: integer = 1; let t: string = "x"; print(a + t); }
+{ class C { var v: integer = 0; } let c: C = new C(); print(c.v); }
+{ class C { var v: integer = 0; } let c: C = new C(); print(c.noExiste); }
+{ let x: NoExiste; }
+{ class H : NoExiste { var v: integer = 0; } }
+{ print(this); }
+{ class C { var v: integer = 0; function constructor(a: integer) { this.v = a; } } let c: C = new C(1); print(c.v); }
+{ class C { var v: integer = 0; function constructor(a: integer) { this.v = a; } } let c: C = new C(1, 2); }
+{ class C { var v: integer = 0; function constructor(a: integer) { this.v = a; } } let c: C = new C("x"); }
+{ function f(a: integer): integer { return a; } print(f(1)); }
+{ function f(a: integer): integer { return a; } print(f(1, 2)); }
+{ function f(a: integer): integer { return a; } print(f("x")); }
+{ function f(): integer { return "texto"; } }
+{ function f(): integer { return; } }
+{ function f() { return 1; } }
+{ return 1; }
+{ function externa(): integer { let dato: integer = 1; function interna(): integer { return dato; } return interna(); } print(externa()); }
+{ struct P { x: integer; } let p: P = P { x: 1 }; print(p.x); }
+{ struct P { x: integer; } let p: P = P { x: "t" }; }
+{ struct P { x: integer; y: integer; } let p: P = P { x: 1 }; }
+{ struct P { x: integer; } let p: P = P { x: 1, x: 2 }; }
+{ let b: boolean = true; while (b) { b = false; } }
+{ if (1) { print(1); } }
+{ break; }
+{ continue; }
+{ let b: boolean = true; if (b && b) { print(1); } }
+{ let n: integer = 1; if (n && n) { print(1); } }
+{ let n: integer = 1; let t: string = "x"; if (n < t) { print(1); } }
+{ let t: string = "x"; print(-t); }
+{ function f(): integer { return 1; } print(f * 2); }
+{ let xs: integer[] = [1, 2]; print(xs[0]); }
+{ let xs = [1, "dos"]; }
+{ let xs: integer[] = [1, 2]; print(xs["a"]); }
+{ let n: integer = 5; print(n[0]); }
+{ let n: integer = 1; switch (n) { case 1: print(1); } }
+{ let n: integer = 1; switch (n) { case "d": print(1); } }
+{ let n: integer = 5; foreach (x in n) { print(x); } }
+{ function f(): integer { return 1; print(2); } }

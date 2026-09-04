@@ -245,6 +245,9 @@ pub enum SemanticError {
 
     #[error("no se puede indexar un valor de tipo {found}")]
     NotIndexable { found: Type, line: usize, col: usize },
+
+    #[error("no se puede iterar sobre un valor de tipo {found}")]
+    NotIterable { found: Type, line: usize, col: usize },
 }
 
 impl From<PopGlobalScope> for SemanticError {

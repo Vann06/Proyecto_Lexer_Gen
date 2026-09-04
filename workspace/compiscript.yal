@@ -67,6 +67,15 @@ let kw_string   = string
 let kw_this     = this
 let kw_new      = new
 let kw_struct   = struct
+let kw_do       = do
+let kw_for      = for
+let kw_switch   = switch
+let kw_case     = case
+let kw_default  = default
+let kw_foreach  = foreach
+let kw_in       = in
+let kw_try      = try
+let kw_catch    = catch
 
 (* ============================================================ *)
 (*  REGLAS LEXICAS                                               *)
@@ -96,6 +105,15 @@ rule tokens =
   | kw_this     { "THIS" }
   | kw_new      { "NEW" }
   | kw_struct   { "STRUCT" }
+  | kw_do       { "DO" }
+  | kw_for      { "FOR" }
+  | kw_switch   { "SWITCH" }
+  | kw_case     { "CASE" }
+  | kw_default  { "DEFAULT" }
+  | kw_foreach  { "FOREACH" }
+  | kw_in       { "IN" }
+  | kw_try      { "TRY" }
+  | kw_catch    { "CATCH" }
 
     (* 2. Identificadores *)
   | id          { "ID" }

@@ -112,6 +112,7 @@ impl From<&SemanticError> for Diagnostic {
             SemanticError::HeterogeneousArrayElements { line, col, .. } => (ErrorKind::Listas, "S032", *line, *col),
             SemanticError::IndexNotInteger { line, col, .. } => (ErrorKind::Listas, "S033", *line, *col),
             SemanticError::NotIndexable { line, col, .. } => (ErrorKind::Listas, "S034", *line, *col),
+            SemanticError::NotIterable { line, col, .. } => (ErrorKind::Listas, "S036", *line, *col),
         };
         Diagnostic { kind, code: code.to_string(), message, line, col, severity: Severity::Error }
     }
@@ -162,6 +163,7 @@ impl From<&FlowError> for Diagnostic {
             FlowError::ConditionNotBoolean { line, col, .. } => ("S025", *line, *col),
             FlowError::BreakOutsideLoop { line, col } => ("S026", *line, *col),
             FlowError::ContinueOutsideLoop { line, col } => ("S027", *line, *col),
+            FlowError::CaseTypeMismatch { line, col, .. } => ("S035", *line, *col),
         };
         Diagnostic {
             kind: ErrorKind::ControlFlujo,

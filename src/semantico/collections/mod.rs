@@ -111,6 +111,20 @@ pub fn find_index_access<'a>(node: &'a ParseNode, spec: &SemanticSpec) -> Option
 ///
 /// `None` en cualquiera de los dos tipos —no se pudo resolver la base o el
 /// índice— no reporta nada: mismo silencio que el resto de `classes`.
+/// Tipo de los elementos de una colección: `Array(T) -> T`.
+///
+/// `None` significa "no se puede iterar/indexar esto": o no se resolvió el
+/// tipo (`None`/`Unknown`, y entonces callar es lo correcto), o el tipo es
+/// conocido pero no es un arreglo — el llamador distingue los dos casos
+/// mirando el tipo que pasó. Es la misma operación que hace por dentro
+/// `validate_index_access`; vive aquí para que `foreach` no la duplique.
+pub fn element_type(ty: &Type) -> Option<Type> {
+    match ty {
+        Type::Array(inner) => Some(inner.as_ref().clone()),
+        _ => None,
+    }
+}
+
 pub fn validate_index_access(
     base_ty: Option<&Type>,
     index_ty: Option<&Type>,

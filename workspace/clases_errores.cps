@@ -39,12 +39,13 @@ print(entera + texto);
 const FIJA: integer = 10;
 FIJA = 11;
 
-// Retornos: tipo incompatible, retorno vacio en funcion tipada, valor
-// retornado desde un procedimiento, y un return fuera de toda funcion.
+// Retornos: tipo incompatible, retorno vacio en funcion tipada y valor
+// retornado desde un procedimiento. El return fuera de toda funcion esta al
+// FINAL del archivo: a nivel de programa corta el flujo, y todo lo que
+// viniera despues seria codigo muerto W002.
 function malRetorno(): integer { return "no soy entero"; }
 function sinValor(): integer { return; }
 function procedimiento() { return 5; }
-return 1;
 
 // Aridad de una llamada RECURSIVA: la firma ya esta registrada al entrar.
 function fact(n: integer): integer { return fact(1, 2, 3); }
@@ -56,3 +57,6 @@ let malCampo: Punto = Punto { z: 1, x: 2, y: 3 };
 let malTipo: Punto = Punto { x: "no soy entero", y: 2 };
 let incompleto: Punto = Punto { x: 1 };
 let repetido: Punto = Punto { x: 1, x: 2, y: 3 };
+
+// return fuera de toda funcion: S019.
+return 1;

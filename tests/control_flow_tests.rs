@@ -3,32 +3,14 @@ use lexer_generator::semantico::analyzer::analyze;
 use lexer_generator::semantico::spec::SemanticSpec;
 use lexer_generator::sintactico::gramatica::grammar::Grammar;
 use lexer_generator::sintactico::runtime::parse_tree::ParseNode;
-const FLOW_OK: &str = r#"
-let activo: boolean = true;
-while (activo) {
-    if (activo) { continue; } else { break; }
-}
-function revisar(valor: boolean): integer {
-    while (valor) { break; }
-    return 1;
-}
-"#;
-
-const FLOW_ERRORS: &str = r#"
-if (1) { print(1); }
-while ("texto") { print(1); }
-break;
-continue;
-while (true) {
-    function interna(): integer {
-        break;
-        continue;
-        return 1;
-    }
-    break;
-    continue;
-}
-"#;
+// Los tres programas viven en `workspace/` y no como constantes acá para que
+// sean cargables tal cual desde el IDE: la bateria que corre el usuario y la
+// que corre `cargo test` son literalmente el mismo archivo.
+const FLOW_OK: &str = include_str!("../workspace/flujo_ok.cps");
+const FLOW_ERRORS: &str = include_str!("../workspace/flujo_errores.cps");
+/// La variable de un `for`, la de un `foreach` y la de un `catch` viven en el
+/// ámbito que abre su propia construcción: usarlas después es un S002.
+const FLOW_SCOPES: &str = include_str!("../workspace/flujo_ambitos.cps");
 
 #[test]
 fn compiscript_valid_flow_converges_with_the_real_pipeline() {
@@ -74,20 +56,26 @@ fn compiscript_invalid_flow_reports_each_rule_with_real_locations() {
         .collect();
     let count = |code: &str| codes.iter().filter(|found| **found == code).count();
 
-    assert_eq!(count("S025"), 2, "if(integer) y while(string): {codes:?}");
+    assert_eq!(
+        count("S025"),
+        4,
+        "if(integer), while(string), do-while(integer) y for(integer): {codes:?}"
+    );
     assert_eq!(
         count("S026"),
         2,
-        "break global y dentro de función anidada: {codes:?}"
+        "break global y dentro de función anidada — el `break` del switch NO cuenta: {codes:?}"
     );
     assert_eq!(
         count("S027"),
-        2,
-        "continue global y dentro de función anidada: {codes:?}"
+        3,
+        "continue global, dentro de función anidada y dentro de un switch: {codes:?}"
     );
+    assert_eq!(count("S035"), 1, "case string sobre un switch integer: {codes:?}");
+    assert_eq!(count("S036"), 1, "foreach sobre un integer: {codes:?}");
     assert_eq!(
         codes.len(),
-        6,
+        11,
         "no debe haber diagnósticos derivados: {:#?}",
         response.problems
     );
@@ -100,6 +88,48 @@ fn compiscript_invalid_flow_reports_each_rule_with_real_locations() {
         assert!(problem["line"].as_u64().unwrap() > 0);
         assert!(problem["col"].as_u64().unwrap() > 0);
     }
+}
+
+#[test]
+fn loop_and_catch_variables_do_not_escape_their_own_scope() {
+    let yal = include_str!("../workspace/compiscript.yal");
+    let yalp = include_str!("../workspace/compiscript.yalp");
+
+    let response =
+        api::build_pipeline_response_named(yal, yalp, FLOW_SCOPES, "lalr", "flow_ambitos.cps")
+            .expect("el pipeline no debe fallar");
+
+    assert!(response.accepted, "{:?}", response.error);
+    let codes: Vec<&str> = response
+        .problems
+        .iter()
+        .filter_map(|problem| problem["code"].as_str())
+        .collect();
+    assert_eq!(
+        codes,
+        vec!["S002", "S002", "S002"],
+        "solo los tres usos posteriores al ámbito que las declaró: {:#?}",
+        response.problems
+    );
+
+    // Y las tres viven en un ámbito propio, no en el global.
+    let bloques = response
+        .scopes
+        .iter()
+        .filter(|scope| scope["kind"] == "Block")
+        .count();
+    assert!(
+        bloques >= 3,
+        "el for, el foreach y el catch abren su propio ámbito: {:#?}",
+        response.scopes
+    );
+    assert!(
+        !response.symbol_table.contains("indice")
+            && !response.symbol_table.contains("elemento")
+            && !response.symbol_table.contains("problema"),
+        "ninguna sobrevive en el estado final: {}",
+        response.symbol_table
+    );
 }
 
 #[test]

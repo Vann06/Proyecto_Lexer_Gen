@@ -549,11 +549,37 @@ function GeneratedCode(){
   );
 }
 
-/* Volcado de SymbolTable::dump() — un entorno por línea (Global/Function/
-   Class/Block), con sus símbolos y línea:columna real. Vacío si el .yalp
-   activo no trae la directiva %ident (sin análisis semántico para él). */
+/* Un símbolo de D.SCOPES: nombre, kind, tipo (si se resolvió) y posición.
+   Mismo orden de campos que usa SymbolTable::dump() para que las dos mitades
+   del panel se lean igual. */
+function ScopeSymbolRow({ sym }){
+  return (
+    <div>
+      <span style={{color:"var(--yellow)"}}>{sym.name}</span>
+      <span className="dim">: {sym.kind}</span>
+      {sym.ty && <span style={{color:"var(--cyan)"}}> {sym.ty}</span>}
+      {sym.mutable === false && <span className="dim">, const</span>}
+      <span className="dim"> · línea {sym.line}, col {sym.col}</span>
+    </div>
+  );
+}
+
+/* Panel de la tabla de símbolos, en dos mitades que NO son redundantes:
+
+   1. ESTADO FINAL — SymbolTable::dump(): lo que sobrevive al terminar el
+      recorrido, o sea el Global con los miembros de funciones y clases
+      colgando anidados.
+   2. ÁMBITOS CERRADOS — D.SCOPES (campo `scopes` de /api/pipeline,
+      ScopeCollector::to_json()): una foto de CADA entorno en el momento en
+      que se cerró, en orden de cierre. Es lo único que deja ver lo declarado
+      en un ámbito ANÓNIMO — un `let` dentro de un `if` vive en un Block que
+      se desapila y no aparece en el dump por ningún lado.
+
+   Vacío si el .yalp activo no trae la directiva %ident (sin análisis
+   semántico para él). */
 function SymbolTableView(){
   const dump = D.SYMBOL_TABLE;
+  const scopes = D.SCOPES || [];
   if (!dump) {
     return (
       <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
@@ -567,11 +593,37 @@ function SymbolTableView(){
   return (
     <div>
       <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
-        ▍ TABLA DE SÍMBOLOS
+        ▍ TABLA DE SÍMBOLOS · ESTADO FINAL
+        <span className="dim" style={{marginLeft:10}}>
+          · lo que queda vivo al terminar: el ámbito global y los miembros de
+          funciones y clases
+        </span>
       </div>
       <div className="gen">
         {dump.split("\n").map((ln, i) => <div key={i}>{ln || <>&nbsp;</>}</div>)}
       </div>
+
+      <div className="h-pixel" style={{color:"var(--pink)", margin:"18px 0 8px"}}>
+        ▍ ÁMBITOS CERRADOS · {scopes.length}
+        <span className="dim" style={{marginLeft:10}}>
+          {scopes.length
+            ? "· cada entorno tal como estaba al cerrarse, en orden de cierre — incluye los bloques anónimos que no sobreviven arriba"
+            : "· este programa no abrió ningún ámbito propio"}
+        </span>
+      </div>
+      {scopes.map((sc, i) => (
+        <div key={i} style={{marginBottom:12, marginLeft: (sc.depth || 0) * 16}}>
+          <div style={{color:"var(--cyan)", fontWeight:600}}>
+            #{sc.order} {sc.kind}{sc.label ? `(${sc.label})` : ""}
+            <span className="dim" style={{fontWeight:400}}> · profundidad {sc.depth}</span>
+          </div>
+          <div className="gen">
+            {sc.symbols && sc.symbols.length
+              ? sc.symbols.map((sym, j) => <ScopeSymbolRow key={j} sym={sym}/>)
+              : <div className="dim">(sin declaraciones propias)</div>}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -786,9 +838,20 @@ function ParseConsole({ stepIdx, setStep, onParse, mode }){
   const tokenCount = rawContent.trim().split(/\s+/).filter(Boolean).length;
 
   // Calcular test cases desde el .txt
+  /* Una batería "un programa completo por línea" solo tiene sentido en un
+     .txt de casos como `workspace/duplicates_casos.txt`, donde cada línea es
+     un programa independiente y se ejecutan de a uno.
+
+     Un .cps es UN programa multilínea. Partirlo por líneas hacía que PARSEAR
+     analizara solo la línea seleccionada: cargar un archivo real desde el IDE
+     nunca compilaba entero, que es justo el primer paso del enunciado. Con la
+     lista vacía, el panel de casos no se renderiza y PARSEAR manda el
+     contenido completo. */
   const testCases = (() => {
-    if (!D.FILES.test || !D.FILES.test.rawContent) return [];
-    return D.FILES.test.rawContent
+    const file = D.FILES.test;
+    if (!file || !file.rawContent) return [];
+    if (langForFile(file) === "cps") return [];
+    return file.rawContent
       .split('\n')
       .map(line => line.trim())
       .filter(line => line.length > 0);
@@ -1023,7 +1086,7 @@ function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActive
     {id:"tokens",    label:"TOKENS", badge: D.TOKENS.length},
     {id:"dfa",       label:"LR(0)"},
     {id:"tree",      label:"ÁRBOL"},
-    {id:"symbols",   label:"SÍMBOLOS"},
+    {id:"symbols",   label:"SÍMBOLOS", badge: (D.SCOPES && D.SCOPES.length) || null},
     {id:"closures",  label:"CLOSURES", badge: D.CLOSURES.length || null},
     {id:"gen",       label:"CÓD.GEN"},
     {id:"problems",  label:"PROBLEMAS", badge: D.PROBLEMS.length},
@@ -1397,6 +1460,7 @@ function App(){
       D.PARSE_TREE_DOT = data.parse_tree_dot || "";
       D.SYMBOL_TABLE = data.symbol_table || "";
       D.CLOSURES = Array.isArray(data.closures) ? data.closures : [];
+      D.SCOPES = Array.isArray(data.scopes) ? data.scopes : [];
       // El backend ya manda accepted/error — antes se ignoraban por completo
       // y la UI re-derivaba "aceptado" mirando si el último paso de la traza
       // era "acc", lo cual además tiraba el mensaje de error real del backend.
@@ -1432,6 +1496,7 @@ function App(){
       D.PARSE_TREE_DOT = "";
       D.SYMBOL_TABLE = "";
       D.CLOSURES = [];
+      D.SCOPES = [];
       D.PARSE_ACCEPTED = null;
       D.PARSE_ERROR = msg;
       D.PROBLEMS = [{ level:"err", code:"E002", msg, loc:`pipeline ${mode.toUpperCase()}` }];

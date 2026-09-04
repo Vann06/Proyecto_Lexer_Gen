@@ -447,21 +447,26 @@ construyen `LRParser::parse_tree`/`parse_recovering_with_pos`
 (`ParseNode`/`ParseToken` en `src/sintactico/runtime/parse_tree.rs`), así que
 cada diagnóstico sale ubicado.
 
-**Submódulos** (ver el doc-comment de cabecera de `src/semantico/mod.rs` para
-el reparto completo):
+**Submódulos** (ver [`ARQUITECTURA.md`](ARQUITECTURA.md) para el detalle
+completo de esta fase — mapa de módulos, catálogo de directivas y de
+diagnósticos, estructuras de datos y límites conocidos):
 
 | submódulo | responsabilidad |
 |---|---|
-| `scopes` / `symbols` | tabla de símbolos con entornos anidados, shadowing, `dump()` |
+| `scopes` / `symbols` | tabla de símbolos con entornos anidados, shadowing, `dump()`, foto de cada ámbito al cerrarse (`ScopeCollector`) |
 | `types` | enum de tipos, tabla de compatibilidad y coerciones |
+| `visitor` | el recorrido genérico sobre `ParseNode` (`Visitor`/`walk`) |
 | `spec` | la config declarativa por gramática (`SemanticSpec`) |
 | `analyzer` | el walker genérico; no menciona ninguna producción concreta |
-| `errors` | `Diagnostic` + códigos `S001`–`S031` + `ErrorCollector` |
+| `errors` | `Diagnostic` + códigos `S001`–`S034` y `W001` + `ErrorCollector` |
 | `classes` | miembros con `.` (con herencia), `this`, constructor, literal de struct |
 | `functions` | firmas, argumentos (`check_arguments`) y `return` |
 | `closures` | captura de variables libres del entorno de definición |
 | `flow` | condiciones booleanas y contexto de `break`/`continue` |
 | `operators` | expresiones binarias/unarias: lógicas, comparaciones y sentido semántico del operando |
+| `collections` | literales de lista homogéneos, índices y arreglos multidimensionales |
+| `duplicates` | declaraciones repetidas y símbolos declarados pero nunca leídos |
+| `deadcode` | instrucciones inalcanzables tras `return`/`break`/`continue` |
 
 **Agnosticismo a la gramática.** Nada de esto está atado a Compiscript: toda
 la especificidad llega por directivas en el `.yalp` — `%ident`, `%declare`,
@@ -469,7 +474,8 @@ la especificidad llega por directivas en el `.yalp` — `%ident`, `%declare`,
 `%arith`, `%this`, `%member_access`, `%new`, `%call`, `%arg_list_symbol`,
 `%constructor`, `%return`, `%struct_literal`, `%field_list_symbol`,
 `%field_init`, `%condition`, `%loop`, `%break`, `%continue`, `%logic`,
-`%compare`, `%unary`. Se parsean en un único lugar
+`%compare`, `%unary`, `%array_type`, `%array_literal`, `%index`, `%switch`,
+`%case`, `%foreach`, `%stmt_list`, `%warn_unused`. Se parsean en un único lugar
 (`Grammar::parse_tokens_section`) y se traducen a `SemanticSpec` en
 `SemanticSpec::from_grammar`. La prueba empírica vive en
 dos gramáticas de prueba independientes, que producen exactamente los mismos
@@ -516,9 +522,36 @@ operando: una función o una clase NOMBRADA A SECAS no es un valor (`f * 2` con
 el tipo de la hoja `f` es el tipo de RETORNO de `f`. Ver
 `src/semantico/operators/README.md`.
 
-**Lo que falta:** detectar "función con tipo declarado que nunca retorna"
-(necesita análisis de flujo de control), y arreglos/listas — `Type::Array`
-existe en el enum pero ninguna gramática lo produce.
+**Listas y arreglos (`collections/`).** Literales homogéneos (`S032` si se
+mezclan tipos), índice entero obligatorio (`S033`), indexar algo que no es
+arreglo (`S034`) y multidimensionales, que salen de anidar `Type::Array`. Se
+declaran con `%array_type`, `%array_literal` e `%index`.
+
+**Duplicados y no usados (`duplicates/`).** Redeclaración en el mismo ámbito
+para variables y parámetros (`S001`, conservando la primera declaración) y la
+advertencia `W001` para lo declarado pero nunca leído, opt-in con
+`%warn_unused`. La batería de 15 casos vive en `workspace/duplicates_casos.txt`
+y se ejecuta igual desde el IDE que desde `tests/duplicates_tests.rs`.
+
+**Control de flujo completo.** `if`/`while`/`do-while`/`for`/`foreach`/
+`switch`/`try-catch`, con condición booleana obligatoria donde corresponde
+(`S025`), `break`/`continue` contra su contexto (`S026`/`S027`) y compatibilidad
+de cada `case` con el discriminante del `switch` (`S035`). El `switch` NO exige
+un discriminante booleano —se selecciona sobre enteros o cadenas— y admite
+`break` pero no `continue`. La variable de un `for`, la de un `foreach` y la de
+un `catch` viven en su propio ámbito; la del `foreach` se tipa con el tipo de
+elemento del iterable, y iterar algo que no es una colección es `S036`.
+
+**Código muerto (`deadcode/`).** Toda instrucción que siga a un
+`return`/`break`/`continue` dentro de la misma secuencia es inalcanzable: se
+reporta **W002** una sola vez, sobre la primera, y el recorrido deja de
+analizar el resto del bloque para no producir diagnósticos derivados de código
+que nunca corre. La detección es conservadora a propósito — ver los límites
+conocidos en [`ARQUITECTURA.md`](ARQUITECTURA.md).
+
+**Lo que falta:** detectar "función con tipo declarado que nunca retorna", que
+necesita análisis de alcanzabilidad completo. Del `Compiscript.g4` oficial solo
+queda sin traducir el operador ternario.
 
 ---
 

@@ -13,6 +13,7 @@
 use crate::semantico::classes;
 use crate::semantico::closures::ClosureCollector;
 use crate::semantico::collections;
+use crate::semantico::deadcode;
 use crate::semantico::duplicates;
 use crate::semantico::errors::ErrorCollector;
 use crate::semantico::flow::{self, FlowContext};
@@ -71,6 +72,9 @@ struct Frame {
     entered_scope: bool,
     declared_name: Option<String>,
     opened_loop: bool,
+    /// `true` si este nodo abrió un contexto de `switch` — `exit` lo desapila
+    /// junto con el tipo del discriminante, en lockstep con `opened_loop`.
+    opened_switch: bool,
     /// `true` si el scope que este nodo abrió era `Function` — así `exit`
     /// sabe si debe desapilar `function_stack` además de cerrar el scope.
     opened_function: bool,
@@ -122,6 +126,20 @@ struct Analyzer<'a> {
     /// que no tienen nada que ver.
     fn_context: FunctionContext,
     flow_context: FlowContext,
+    /// Tipo del discriminante de cada `switch` activo, del más externo al más
+    /// interno. Cada rama `case` se compara contra el tope. Es una pila y no
+    /// un solo valor porque un `switch` puede anidarse dentro de otro.
+    switch_types: Vec<Option<Type>>,
+    /// Nodos de secuencia ya analizados en busca de código muerto. Una lista
+    /// recursiva por la izquierda anida un nodo por sentencia, y todos ven un
+    /// prefijo de la MISMA secuencia: sin esto, cada nivel volvería a
+    /// reportar el mismo código inalcanzable.
+    analyzed_sequences: HashSet<*const ParseNode>,
+    /// Sentencias que el recorrido debe saltarse enteras por ser
+    /// inalcanzables — el "corte de evaluación" tras una sentencia terminal.
+    /// Se identifican por dirección porque el árbol no se modifica durante el
+    /// recorrido, así que cada nodo tiene una identidad estable.
+    unreachable: HashSet<*const ParseNode>,
 }
 
 impl<'a> Analyzer<'a> {
@@ -139,6 +157,9 @@ impl<'a> Analyzer<'a> {
             pending_parents: Vec::new(),
             fn_context: FunctionContext::new(),
             flow_context: FlowContext::new(),
+            switch_types: Vec::new(),
+            analyzed_sequences: HashSet::new(),
+            unreachable: HashSet::new(),
         }
     }
 
@@ -186,6 +207,36 @@ impl<'a> Analyzer<'a> {
 
 impl<'a> Visitor for Analyzer<'a> {
     fn enter(&mut self, node: &ParseNode) -> Flow {
+        // 0a. Corte de evaluación: esta sentencia quedó marcada como
+        // inalcanzable, así que no se analiza NADA de ella. Sin este corte, el
+        // código muerto seguiría generando diagnósticos de tipo y de ámbito
+        // derivados sobre instrucciones que nunca se ejecutan.
+        if self.unreachable.contains(&(node as *const ParseNode)) {
+            self.frames.push(Frame::default());
+            return Flow::SkipChildren;
+        }
+
+        // 0b. Código muerto: al llegar a una secuencia de sentencias se
+        // aplana entera y se busca la primera terminal. Se analiza una sola
+        // vez por secuencia — los nodos de la espina quedan marcados, porque
+        // en una lista recursiva por la izquierda cada nivel ve un prefijo de
+        // la misma secuencia y reportaría el mismo código muerto de nuevo.
+        if self.spec.deadcode.sequences.iter().any(|production| production == &node.symbol)
+            && !self.analyzed_sequences.contains(&(node as *const ParseNode))
+        {
+            let (spine, statements) = deadcode::flatten_sequence(node);
+            self.analyzed_sequences.extend(spine);
+            if let Some((diagnostic, dead)) = deadcode::unreachable_after_terminal(
+                &statements,
+                &self.spec.deadcode.terminals,
+                &self.spec.deadcode.sequences,
+            ) {
+                self.errors.push(diagnostic);
+                self.unreachable
+                    .extend(dead.into_iter().map(|statement| statement as *const ParseNode));
+            }
+        }
+
         // 1. Una hoja de identificador solo llega hasta acá si su padre NO la
         // consumió con otro significado (nombre declarado, nombre de
         // miembro, nombre de clase en `new`...) — esos hijos se saltan con
@@ -555,18 +606,6 @@ impl<'a> Visitor for Analyzer<'a> {
             }
         }
 
-        // Control de flujo configurado por el `.yalp`; no depende de nombres
-        // concretos de producciones ni palabras reservadas.
-        for rule in self.spec.flow.conditions.iter().filter(|r| r.production == node.symbol) {
-            if let Some(condition_index) = find_child_index(node, &rule.condition_child) {
-                let condition = &node.children[condition_index];
-                let found = classes::resolve_expr_type(condition, &self.table, self.spec);
-                if let Err(error) = flow::validate_condition(found.as_ref(), condition.line, condition.col) {
-                    self.errors.push_flow(&error);
-                }
-            }
-        }
-
         let position = node.children.first().unwrap_or(node);
         if self.spec.flow.breaks.iter().any(|production| production == &node.symbol) {
             if let Err(error) = self.flow_context.validate_break(position.line, position.col) {
@@ -579,10 +618,44 @@ impl<'a> Visitor for Analyzer<'a> {
             }
         }
 
+        // Una rama `case` compara su valor contra el discriminante del switch
+        // que la contiene — el tope de `switch_types`. Va ANTES de abrir
+        // ningún contexto nuevo: el case pertenece al switch de afuera.
+        for rule in self.spec.flow.cases.iter().filter(|r| r.production == node.symbol) {
+            if let Some(value_index) = find_child_index(node, &rule.value_child) {
+                let value = &node.children[value_index];
+                let found = classes::resolve_expr_type(value, &self.table, self.spec);
+                let discriminant = self.switch_types.last().cloned().flatten();
+                if let Err(error) =
+                    flow::validate_case(discriminant.as_ref(), found.as_ref(), value.line, value.col)
+                {
+                    self.errors.push_flow(&error);
+                }
+            }
+        }
+
         let opened_loop = self.spec.flow.loops.iter().any(|production| production == &node.symbol);
         if opened_loop {
             self.flow_context.enter_loop();
         }
+
+        // El discriminante del switch NO se valida como booleano (se
+        // selecciona sobre enteros o cadenas): se guarda su tipo para que cada
+        // `case` se compare contra él. El contexto que abre admite `break`
+        // pero no `continue` — ver `FlowContext::validate_break`.
+        let opened_switch = self
+            .spec
+            .flow
+            .switches
+            .iter()
+            .find(|rule| rule.production == node.symbol)
+            .map(|rule| {
+                let discriminant = find_child_index(node, &rule.discriminant_child)
+                    .and_then(|i| classes::resolve_expr_type(&node.children[i], &self.table, self.spec));
+                self.switch_types.push(discriminant);
+                self.flow_context.enter_switch();
+            })
+            .is_some();
 
         // 5. Declaración/scope genérico — como en la Fase 15, extendido con
         // tipo (`type_child`), herencia de clase, tracking de parámetros
@@ -842,10 +915,66 @@ impl<'a> Visitor for Analyzer<'a> {
             false
         };
 
+        // `foreach`: la variable de iteración se declara DENTRO del ámbito que
+        // esta misma producción acaba de abrir — por eso va acá y no en el
+        // paso de declaración genérico, que corre ANTES de abrir el scope (ahí
+        // quedaría visible fuera del bucle). Su tipo tampoco sale de una
+        // anotación sino del tipo de ELEMENTO del iterable, así que tampoco
+        // puede expresarse con `%type_of`.
+        for rule in self.spec.foreaches.iter().filter(|r| r.production == node.symbol) {
+            let Some(var_index) = find_child_index(node, &rule.variable_child) else {
+                continue;
+            };
+            let iterable = find_child_index(node, &rule.iterable_child).map(|i| &node.children[i]);
+            let iterable_ty =
+                iterable.and_then(|n| classes::resolve_expr_type(n, &self.table, self.spec));
+
+            // Un tipo que no se pudo resolver no es un error acá: la causa
+            // real ya tiene su propio diagnóstico. Uno que SÍ se resolvió y no
+            // es una colección sí lo es.
+            let element = match &iterable_ty {
+                None | Some(Type::Unknown) => Type::Unknown,
+                Some(ty) => match collections::element_type(ty) {
+                    Some(inner) => inner,
+                    None => {
+                        let position = iterable.unwrap_or(node);
+                        self.errors.push_semantic(&SemanticError::NotIterable {
+                            found: ty.clone(),
+                            line: position.line,
+                            col: position.col,
+                        });
+                        Type::Unknown
+                    }
+                },
+            };
+
+            let var_node = &node.children[var_index];
+            let name = var_node.lexeme.as_deref().unwrap_or(&var_node.symbol).to_string();
+            // El bucle le asigna un valor en cada vuelta: cuenta como
+            // inicializada, igual que un parámetro.
+            if let Err(error) = self.table.declare_typed(
+                &name,
+                SymbolKind::Variable,
+                element.clone(),
+                true,
+                true,
+                Some(element),
+                var_node.line,
+                var_node.col,
+            ) {
+                self.errors.push_semantic(&error);
+            }
+            // Ya se consumió como declaración: sin esto se volvería a visitar
+            // como un uso y se reportaría como no declarada. El iterable NO se
+            // salta — ese sí es una lectura real que debe marcarse.
+            skip_indices.push(var_index);
+        }
+
         self.frames.push(Frame {
             entered_scope,
             declared_name,
             opened_loop,
+            opened_switch,
             opened_function,
             declared_kind,
             param_order: Vec::new(),
@@ -858,7 +987,28 @@ impl<'a> Visitor for Analyzer<'a> {
         }
     }
 
-    fn exit(&mut self, _node: &ParseNode) {
+    fn exit(&mut self, node: &ParseNode) {
+        // Condiciones de control de flujo, configuradas por el `.yalp`; no
+        // dependen de nombres concretos de producciones ni palabras reservadas.
+        //
+        // Se valida en `exit` y no en `enter` porque la condición puede
+        // depender de lo que declare un hermano a su IZQUIERDA dentro de la
+        // MISMA producción: en `for (let i = 0; i < 3; ...)` la `i` de la
+        // condición la declara el inicializador. En `enter` todavía no se
+        // recorrió ningún hijo, así que `i` no existía y la condición se
+        // tipaba como no resoluble — la regla callaba y el S025 se perdía.
+        // Acá los hijos ya pasaron y el scope que abrió este nodo (si abrió
+        // uno) sigue vivo: se cierra más abajo en esta misma función.
+        for rule in self.spec.flow.conditions.iter().filter(|r| r.production == node.symbol) {
+            if let Some(condition_index) = find_child_index(node, &rule.condition_child) {
+                let condition = &node.children[condition_index];
+                let found = classes::resolve_expr_type(condition, &self.table, self.spec);
+                if let Err(error) = flow::validate_condition(found.as_ref(), condition.line, condition.col) {
+                    self.errors.push_flow(&error);
+                }
+            }
+        }
+
         let frame = self.frames.pop().expect("enter empujó un frame para cada nodo visitado");
         if frame.opened_function {
             self.function_stack.pop();
@@ -878,6 +1028,15 @@ impl<'a> Visitor for Analyzer<'a> {
         if frame.opened_loop {
             let exited = self.flow_context.exit_loop();
             debug_assert!(exited, "enter_loop y exit_loop deben ir en lockstep");
+        }
+        if frame.opened_switch {
+            // Mismo cuidado que con `exit_function`: el desapilado va en un
+            // `let` y NO dentro del `debug_assert!`, que en release no evalúa
+            // su expresión — la pila crecería sin parar y `validate_break`
+            // aceptaría `break` en cualquier parte del binario de release.
+            let exited = self.flow_context.exit_switch();
+            debug_assert!(exited, "enter_switch y exit_switch deben ir en lockstep");
+            self.switch_types.pop();
         }
         if frame.entered_scope {
             // El scope que se cierra es el que este mismo `enter` acaba de

@@ -132,4 +132,11 @@ window.IDE_DATA = {
   // capturan variables/parámetros de su entorno de definición —
   // [{function, captures:[{name,line,col}]}].
   CLOSURES: [],
+  // Llenado por /api/pipeline (campo `scopes`): una foto de CADA ámbito en el
+  // momento en que se cerró, en orden de cierre —
+  // [{order, kind, label, depth, symbols:[{name,kind,ty,mutable,initialized,line,col}]}].
+  // Es lo único que deja ver lo declarado dentro de un ámbito ANÓNIMO: al
+  // terminar el recorrido la tabla solo conserva el Global, así que un `let`
+  // dentro de un `if` no aparece en SYMBOL_TABLE por ningún lado.
+  SCOPES: [],
 };

@@ -7,7 +7,7 @@
 
 use thiserror::Error;
 
-use super::types::Type;
+use super::types::{resolve_assignment, Type};
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum FlowError {
@@ -18,11 +18,19 @@ pub enum FlowError {
         col: usize,
     },
 
-    #[error("'break' solo puede usarse dentro de un bucle")]
+    #[error("'break' solo puede usarse dentro de un bucle o un switch")]
     BreakOutsideLoop { line: usize, col: usize },
 
     #[error("'continue' solo puede usarse dentro de un bucle")]
     ContinueOutsideLoop { line: usize, col: usize },
+
+    #[error("el caso es de tipo {found} y el switch selecciona sobre {expected}")]
+    CaseTypeMismatch {
+        expected: Type,
+        found: Type,
+        line: usize,
+        col: usize,
+    },
 }
 
 /// Comprueba el tipo ya resuelto de una condición.
@@ -41,10 +49,47 @@ pub fn validate_condition(found: Option<&Type>, line: usize, col: usize) -> Resu
     }
 }
 
+/// Comprueba el valor de una rama `case` contra el discriminante del `switch`
+/// que la contiene.
+///
+/// A diferencia de una condición, acá NO se exige un tipo concreto: un switch
+/// selecciona sobre enteros o cadenas igual que sobre booleanos. Lo que se
+/// comprueba es la compatibilidad entre ambos, y esa pregunta se delega
+/// entera a `types::resolve_assignment` para no abrir una segunda tabla de
+/// coerciones en paralelo a la que ya es el punto único (mismo criterio que
+/// usa `operators`).
+///
+/// Si alguno de los dos tipos no se pudo resolver, no se reporta nada: sería
+/// un error derivado de una causa que ya tiene —o tendrá— su propio
+/// diagnóstico.
+pub fn validate_case(
+    discriminant: Option<&Type>,
+    value: Option<&Type>,
+    line: usize,
+    col: usize,
+) -> Result<(), FlowError> {
+    let (Some(expected), Some(found)) = (discriminant, value) else {
+        return Ok(());
+    };
+    if matches!(expected, Type::Unknown) || matches!(found, Type::Unknown) {
+        return Ok(());
+    }
+    resolve_assignment(expected, found).map(|_| ()).map_err(|_| FlowError::CaseTypeMismatch {
+        expected: expected.clone(),
+        found: found.clone(),
+        line,
+        col,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextKind {
     Function,
     Loop,
+    /// Un `switch`: admite `break` (termina la rama) pero NO `continue`, que
+    /// solo tiene sentido dentro de un bucle real. Por eso es una variante
+    /// propia y no se reusa `Loop`.
+    Switch,
 }
 
 /// Pila de contextos que delimita saltos de control.
@@ -78,18 +123,32 @@ impl FlowContext {
         self.exit(ContextKind::Loop)
     }
 
+    pub fn enter_switch(&mut self) {
+        self.stack.push(ContextKind::Switch);
+    }
+
+    pub fn exit_switch(&mut self) -> bool {
+        self.exit(ContextKind::Switch)
+    }
+
     pub fn depth(&self) -> usize {
         self.stack.len()
     }
 
+    /// `break` vale dentro de un bucle Y dentro de un `switch`: en un switch
+    /// termina la rama, que es su uso idiomático en TypeScript (el lenguaje
+    /// del que Compiscript es subconjunto). Sin esto, todo `switch` con
+    /// `break` reportaría un S026 falso.
     pub fn validate_break(&self, line: usize, col: usize) -> Result<(), FlowError> {
-        if self.has_loop_in_current_function() {
+        if self.has_breakable_in_current_function() {
             Ok(())
         } else {
             Err(FlowError::BreakOutsideLoop { line, col })
         }
     }
 
+    /// `continue` sigue exigiendo un bucle REAL: dentro de un `switch` que no
+    /// esté a su vez dentro de un bucle no tiene a qué saltar.
     pub fn validate_continue(&self, line: usize, col: usize) -> Result<(), FlowError> {
         if self.has_loop_in_current_function() {
             Ok(())
@@ -99,10 +158,25 @@ impl FlowContext {
     }
 
     fn has_loop_in_current_function(&self) -> bool {
+        self.innermost_before_function(|context| matches!(context, ContextKind::Loop))
+    }
+
+    fn has_breakable_in_current_function(&self) -> bool {
+        self.innermost_before_function(|context| {
+            matches!(context, ContextKind::Loop | ContextKind::Switch)
+        })
+    }
+
+    /// ¿Hay algún contexto que cumpla `predicate` antes de cruzar la frontera
+    /// de función más cercana? Esa frontera importa: una función declarada
+    /// dentro de un bucle no puede romper el bucle de la función externa.
+    fn innermost_before_function(&self, predicate: impl Fn(&ContextKind) -> bool) -> bool {
         for context in self.stack.iter().rev() {
-            match context {
-                ContextKind::Loop => return true,
-                ContextKind::Function => return false,
+            if matches!(context, ContextKind::Function) {
+                return false;
+            }
+            if predicate(context) {
+                return true;
             }
         }
         false

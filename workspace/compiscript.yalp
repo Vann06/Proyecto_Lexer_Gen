@@ -5,13 +5,14 @@
  * (raiz del repo, gramatica ANTLR del Proyecto 2): let/var/const,
  * funciones con parametros y tipo de retorno, clases con herencia
  * simple/this/acceso a miembros (lectura y asignacion)/
- * instanciacion con new, bloques, if/while/return/print y la
- * jerarquia completa de expresiones con precedencia
- * ( ||  &&  ==/!=  </<=/>/>=  +/-  * / %  unario - ! ), y listas/arreglos
- * (literal, indexado, multidimensional).
+ * instanciacion con new, bloques, el control de flujo completo
+ * (if/while/do-while/for/foreach/switch/try-catch/break/continue/
+ * return), print y la jerarquia completa de expresiones con
+ * precedencia ( ||  &&  ==/!=  </<=/>/>=  +/-  * / %  unario - ! ),
+ * y listas/arreglos (literal, indexado, multidimensional).
  *
- * Fuera de este subconjunto (siguiente iteracion): switch, try/catch,
- * foreach, ternario.
+ * Fuera de este subconjunto (siguiente iteracion): el operador
+ * ternario.
  *
  * Dos ambiguedades de la .g4 original resueltas al traducir:
  *  - 'assignment' (Identifier '=' expr) duplicaba lo que ya cubre
@@ -23,6 +24,7 @@
  * ============================================================ */
 
 %token LET VAR CONST FUNCTION CLASS IF ELSE WHILE BREAK CONTINUE RETURN PRINT
+%token DO FOR SWITCH CASE DEFAULT FOREACH IN TRY CATCH
 %token TRUE FALSE NULL_KW BOOL_T INT_T STR_T THIS NEW STRUCT
 %token ID INT_LIT STR_LIT COMMENT
 %token EQ NEQ LTE GTE AND OR
@@ -134,6 +136,41 @@ IGNORE COMMENT
 %break break_stmt
 %continue continue_stmt
 
+/* do-while y for llevan la condicion por INDICE, no por simbolo: en
+ * `do_while_stmt` va despues del cuerpo y en `for_stmt` es el SEGUNDO
+ * hijo `expr` (el primero seria el inicializador). Buscar por simbolo
+ * devuelve el primero y señalaria el nodo equivocado. */
+%condition do_while_stmt 4
+%condition for_stmt      4
+%loop      do_while_stmt
+%loop      for_stmt
+%loop      foreach_stmt
+
+/* La variable del for, la del foreach y la del catch viven en un
+ * ambito propio: no deben verse despues del bucle ni fuera del catch. */
+%scope for_stmt      block
+%scope foreach_stmt  block
+%scope catch_clause  block
+%declare catch_param variable
+
+/* switch: el discriminante NO se exige booleano (un switch se hace
+ * sobre un integer o un string); lo que se valida es que el tipo de
+ * cada `case` sea compatible con el. Ademas un %switch abre un
+ * contexto que permite `break` pero NO `continue`. */
+%switch  switch_stmt 2
+%case    switch_case 1
+
+/* foreach: produccion, indice de la variable e indice del iterable.
+ * La variable se declara con el tipo de ELEMENTO del iterable. */
+%foreach foreach_stmt 2 4
+
+/* Codigo muerto: que producciones son una SECUENCIA de sentencias. Lo que
+ * corta el flujo NO se declara de nuevo: son las mismas producciones de
+ * %return/%break/%continue. Todo lo que siga a una de ellas dentro de la
+ * misma secuencia es inalcanzable -> W002, y se deja de analizar. */
+%stmt_list stmt_list
+%stmt_list case_body
+
 /* Literal de struct: Punto { x: 1, y: 2 }. La produccion se reconoce por la
  * FORMA (que traiga LBRACE como hijo directo), igual que %new y %call. */
 %struct_literal atom LBRACE 0 2
@@ -178,6 +215,11 @@ stmt:
   | bloque
   | if_stmt
   | while_stmt
+  | do_while_stmt SEMI
+  | for_stmt
+  | foreach_stmt
+  | switch_stmt
+  | try_stmt
   | break_stmt SEMI
   | continue_stmt SEMI
   | return_stmt SEMI
@@ -254,6 +296,114 @@ if_stmt:
 
 while_stmt:
     WHILE LPAREN expr RPAREN bloque
+;
+
+/* ============================================================
+ * do-while: la condicion va DESPUES del cuerpo, en el indice 4
+ *   do { ... } while (cond);
+ * El SEMI final lo pone `stmt`, igual que break/continue/return.
+ * ============================================================ */
+
+do_while_stmt:
+    DO bloque WHILE LPAREN expr RPAREN
+;
+
+/* ============================================================
+ * for (init ; cond ; update) — misma forma que miniprog.yalp, que
+ * ya compila sin conflictos en este mismo generador. init y update
+ * se aislan en no-terminales propios con alternativa vacia, y se
+ * reusan `var_decl`/`assign_stmt` para heredar su semantica ya
+ * declarada (%declare var_decl, %assign assign_stmt).
+ *
+ * Desviacion consciente frente a Compiscript.g4: alli la condicion
+ * es opcional (`expression?`); aca es obligatoria, para no anidar
+ * otro epsilon en una produccion que ya tiene dos.
+ * ============================================================ */
+
+for_stmt:
+    FOR LPAREN for_init SEMI expr SEMI for_update RPAREN bloque
+;
+
+for_init:
+    var_decl
+  | assign_stmt
+  | /* vacio */
+;
+
+for_update:
+    assign_stmt
+  | /* vacio */
+;
+
+/* ============================================================
+ * foreach (x in coleccion) { ... }
+ * La variable esta en el indice 2 y el iterable en el 4; el tipo de
+ * `x` sale del tipo de elemento del iterable (ver %foreach).
+ * ============================================================ */
+
+foreach_stmt:
+    FOREACH LPAREN ID IN expr RPAREN bloque
+;
+
+/* ============================================================
+ * switch: el cuerpo de cada case es una lista de sentencias SIN
+ * llaves, delimitada por el siguiente case/default o por el '}'.
+ *
+ * Dos desviaciones conscientes frente a Compiscript.g4, las dos para
+ * no anidar epsilons que generan conflictos:
+ *  - se permiten varios `default` y en cualquier posicion (restringir
+ *    a uno solo es una regla semantica, no gramatical);
+ *  - `switch_case` y `default_case` son producciones separadas, para
+ *    que %case apunte exactamente a la que si lleva expresion.
+ * ============================================================ */
+
+switch_stmt:
+    SWITCH LPAREN expr RPAREN LBRACE switch_members RBRACE
+;
+
+switch_members:
+    switch_members switch_member
+  | /* vacio */
+;
+
+switch_member:
+    switch_case
+  | default_case
+;
+
+switch_case:
+    CASE expr COLON case_body
+;
+
+default_case:
+    DEFAULT COLON case_body
+;
+
+case_body:
+    case_body stmt
+  | /* vacio */
+;
+
+/* ============================================================
+ * try { ... } catch (e) { ... }
+ *
+ * `catch_clause` es quien abre el ambito (%scope catch_clause block)
+ * y `catch_param` cuelga de el, asi que la variable del catch se
+ * declara DENTRO de ese ambito — mismo patron que `param` dentro de
+ * `func_decl`. Sin ese nivel intermedio, el ID quedaria declarado en
+ * el ambito de afuera.
+ * ============================================================ */
+
+try_stmt:
+    TRY bloque catch_clause
+;
+
+catch_clause:
+    CATCH LPAREN catch_param RPAREN bloque
+;
+
+catch_param:
+    ID
 ;
 
 break_stmt:

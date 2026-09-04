@@ -99,6 +99,11 @@ pub struct SemanticSpec {
     pub returns: Vec<ReturnRule>,
     /// Reglas de control de flujo declaradas por la gramática.
     pub flow: FlowSpec,
+    /// Bucles `foreach` declarados con `%foreach`. Vacío: la gramática no
+    /// tiene iteración sobre colecciones.
+    pub foreaches: Vec<ForeachRule>,
+    /// Qué hace falta para detectar código inalcanzable (`%stmt_list`).
+    pub deadcode: DeadCodeSpec,
     /// Token que marca un nodo de tipo como arreglo (`%array_type`), p.ej.
     /// "LBRACKET" para `tipo: tipo LBRACKET RBRACKET`. `None`: la gramática
     /// no tiene tipos de arreglo — `analyzer::resolve_declared_type` nunca
@@ -249,12 +254,67 @@ pub struct FlowSpec {
     pub loops: Vec<String>,
     pub breaks: Vec<String>,
     pub continues: Vec<String>,
+    pub switches: Vec<SwitchRule>,
+    pub cases: Vec<CaseRule>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConditionRule {
     pub production: String,
     pub condition_child: ChildLocator,
+}
+
+/// "La producción `production` es un `switch`, y su discriminante es el hijo
+/// `discriminant_child`."
+///
+/// A diferencia de `ConditionRule`, el discriminante NO se exige booleano: un
+/// `switch` se hace sobre un entero o una cadena. Lo que se valida es que el
+/// tipo de cada `CaseRule` sea compatible con él. Además la producción abre un
+/// contexto que admite `break` pero NO `continue` — un `break` termina el
+/// case, un `continue` solo tiene sentido en un bucle real.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwitchRule {
+    pub production: String,
+    pub discriminant_child: ChildLocator,
+}
+
+/// "La producción `production` es una rama `case`, y el valor con el que
+/// compara es el hijo `value_child`." Se declara aparte de la rama `default`
+/// justo porque esa no lleva expresión con la cual comparar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaseRule {
+    pub production: String,
+    pub value_child: ChildLocator,
+}
+
+/// Qué hace falta para detectar código inalcanzable: qué producciones son una
+/// SECUENCIA de sentencias y cuáles son sentencias TERMINALES.
+///
+/// `terminals` no tiene directiva propia: se deriva de `%return`, `%break` y
+/// `%continue`, que ya nombran exactamente esas producciones. Declararlas dos
+/// veces solo abriría la puerta a que se contradigan.
+///
+/// `sequences` vacío: no se detecta código muerto, igual que antes de que
+/// existiera `%stmt_list`.
+#[derive(Debug, Default)]
+pub struct DeadCodeSpec {
+    pub sequences: Vec<String>,
+    pub terminals: Vec<String>,
+}
+
+/// "La producción `production` itera `iterable_child` declarando la variable
+/// `variable_child`" — p.ej. `foreach_stmt: FOREACH LPAREN ID IN expr RPAREN
+/// bloque`.
+///
+/// La variable NO se declara con una `DeclarationRule` normal porque su tipo
+/// no sale de una anotación (`%type_of`) sino del tipo de ELEMENTO del
+/// iterable, y porque debe quedar DENTRO del ámbito que abre la propia
+/// producción del bucle, no fuera.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForeachRule {
+    pub production: String,
+    pub variable_child: ChildLocator,
+    pub iterable_child: ChildLocator,
 }
 
 /// "La producción `production` declara un símbolo."
@@ -479,6 +539,43 @@ impl SemanticSpec {
                 loops: grammar.loop_directives.clone(),
                 breaks: grammar.break_directives.clone(),
                 continues: grammar.continue_directives.clone(),
+                switches: grammar
+                    .switch_directives
+                    .iter()
+                    .map(|(production, locator)| SwitchRule {
+                        production: production.clone(),
+                        discriminant_child: child_locator_from_directive(locator),
+                    })
+                    .collect(),
+                cases: grammar
+                    .case_directives
+                    .iter()
+                    .map(|(production, locator)| CaseRule {
+                        production: production.clone(),
+                        value_child: child_locator_from_directive(locator),
+                    })
+                    .collect(),
+            },
+            foreaches: grammar
+                .foreach_directives
+                .iter()
+                .map(|(production, variable, iterable)| ForeachRule {
+                    production: production.clone(),
+                    variable_child: child_locator_from_directive(variable),
+                    iterable_child: child_locator_from_directive(iterable),
+                })
+                .collect(),
+            deadcode: DeadCodeSpec {
+                sequences: grammar.stmt_list_directives.clone(),
+                // Las sentencias que cortan el flujo ya están nombradas por
+                // las directivas de saltos: no se declaran de nuevo.
+                terminals: grammar
+                    .return_directives
+                    .iter()
+                    .map(|(production, _)| production.clone())
+                    .chain(grammar.break_directives.iter().cloned())
+                    .chain(grammar.continue_directives.iter().cloned())
+                    .collect(),
             },
             array_type_token: grammar.array_type_token.clone(),
             array_literal: grammar.array_literal.clone().map(|(production, open_bracket_token, elements_index)| {
@@ -630,6 +727,10 @@ mod tests {
             loop_directives: Vec::new(),
             break_directives: Vec::new(),
             continue_directives: Vec::new(),
+            switch_directives: Vec::new(),
+            case_directives: Vec::new(),
+            foreach_directives: Vec::new(),
+            stmt_list_directives: Vec::new(),
             array_type_token: None,
             array_literal: None,
             index_access: None,
