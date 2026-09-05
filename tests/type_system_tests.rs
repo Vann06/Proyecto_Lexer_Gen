@@ -356,3 +356,53 @@ fn every_compound_type_is_compatible_with_itself_and_only_with_itself() {
         );
     }
 }
+
+#[test]
+fn el_mas_concatena_dos_textos() {
+    assert_eq!(
+        resolve_arithmetic(ArithmeticOperator::Add, &Type::Str, &Type::Str),
+        Ok(ArithmeticResolution {
+            result: Type::Str,
+            left_coercion: Coercion::Exact,
+            right_coercion: Coercion::Exact,
+        }),
+        "`\"a\" + \"b\"` debe dar string: lo usa la especificación de Compiscript"
+    );
+}
+
+#[test]
+fn solo_el_mas_concatena_los_otros_operadores_siguen_rechazando_texto() {
+    // Este test es el que justifica que la concatenación NO sea una fila de
+    // `ARITHMETIC_RULES`: esa matriz la comparten los cuatro operadores y la
+    // búsqueda ignora cuál es, así que una fila `Str, Str` allí habría hecho
+    // legales también estas tres.
+    for operator in [
+        ArithmeticOperator::Subtract,
+        ArithmeticOperator::Multiply,
+        ArithmeticOperator::Divide,
+    ] {
+        assert_eq!(
+            resolve_arithmetic(operator, &Type::Str, &Type::Str),
+            Err(TypeError::InvalidArithmetic {
+                operator,
+                left: Type::Str,
+                right: Type::Str,
+            }),
+            "`\"a\" {operator} \"b\"` no tiene sentido"
+        );
+    }
+}
+
+#[test]
+fn concatenar_texto_con_un_numero_sigue_siendo_invalido() {
+    // Compiscript se describe como un subconjunto de TypeScript, donde
+    // `"x" + 1` sí es válido. Acá NO: mezclar texto y número es el caso que
+    // verifican las baterías de las cuatro gramáticas (S015), y ampliarlo
+    // dejaría de detectar errores de tipo reales.
+    for (left, right) in [(Type::Str, Type::Int), (Type::Int, Type::Str)] {
+        assert!(
+            resolve_arithmetic(ArithmeticOperator::Add, &left, &right).is_err(),
+            "`{left} + {right}` debe seguir siendo inválido"
+        );
+    }
+}

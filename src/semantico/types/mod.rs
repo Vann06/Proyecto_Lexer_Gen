@@ -133,6 +133,11 @@ struct AssignmentRule {
 /// La división entre dos enteros conserva el tipo `integer`. Cuando aparece
 /// al menos un `float`, el resultado es `float` y el operando entero se
 /// amplía de forma segura antes de evaluar la operación.
+///
+/// Compartida quiere decir que la búsqueda NO mira el operador: una fila vale
+/// para los cuatro. Por eso una regla que valga para uno solo —la
+/// concatenación de textos con `+`— no puede vivir acá; ver el corto-circuito
+/// al principio de `CompatibilityTable::arithmetic`.
 const ARITHMETIC_RULES: [ArithmeticRule; 4] = [
     ArithmeticRule {
         left: Type::Int,
@@ -229,6 +234,27 @@ impl CompatibilityTable {
         if matches!(left, Type::Unknown) || matches!(right, Type::Unknown) {
             return Ok(ArithmeticResolution {
                 result: Type::Unknown,
+                left_coercion: Coercion::Exact,
+                right_coercion: Coercion::Exact,
+            });
+        }
+
+        // Concatenacion de textos: `+` sobre dos `string` da `string`.
+        //
+        // Va ACA y no como una fila mas de `ARITHMETIC_RULES` a proposito: esa
+        // matriz la comparten `+`, `-`, `*` y `/`, y la busqueda de abajo
+        // ignora el operador por completo (solo se usa para armar el mensaje
+        // de error). Una fila `Str, Str` alli haria legales tambien
+        // `"a" - "b"`, `"a" * "b"` y `"a" / "b"`.
+        //
+        // Solo `string + string`. Mezclar `integer + string` sigue siendo un
+        // error: es lo que verifican las baterias de las cuatro gramaticas.
+        if operator == ArithmeticOperator::Add
+            && matches!(left, Type::Str)
+            && matches!(right, Type::Str)
+        {
+            return Ok(ArithmeticResolution {
+                result: Type::Str,
                 left_coercion: Coercion::Exact,
                 right_coercion: Coercion::Exact,
             });

@@ -324,14 +324,37 @@ fn flatten_args_rec<'a>(node: &'a ParseNode, args_list_symbol: &str) -> Vec<&'a 
     }
 }
 
-/// La `Signature` del constructor de `class_symbol`: busca entre sus
-/// `members` propios (NO en los del padre — el constructor no se hereda,
-/// evita tener que resolver `super()`) uno llamado `spec.constructor_name`
-/// con `SymbolKind::Function`. Si no existe, o si la gramática no tiene
-/// `%constructor` configurado, o si la clase todavía no cerró su scope
+/// La `Signature` del constructor de `class_name`, SUBIENDO por la cadena de
+/// herencia: se busca `spec.constructor_name` con `SymbolKind::Function`
+/// entre los `members` de la clase; si no está, se repite en su
+/// `Symbol.parent`. Si se agota la cadena, o la gramática no tiene
+/// `%constructor` configurado, o la clase todavía no cerró su scope
 /// (`members` sigue `None`): el implícito `Signature{params: vec![],
 /// returns: Type::Void}` — aridad 0.
-pub fn constructor_signature(class_symbol: &Symbol, spec: &SemanticSpec) -> Signature {
+///
+/// El constructor PROPIO gana sobre el heredado, porque se miran los
+/// `members` de cada clase antes de subir al padre.
+///
+/// Antes solo se miraba la clase misma, con el argumento de que "el
+/// constructor no se hereda, evita resolver `super()`". Pero heredar la FIRMA
+/// para comprobar aridad y tipos no obliga a implementar `super()`, y sin eso
+/// `class Perro : Animal` sin constructor propio rechazaba
+/// `new Perro("Toby")` — que es justo el ejemplo de la especificación de
+/// Compiscript.
+///
+/// No se reusa `resolve_member` aunque también camine la herencia: su paso
+/// intermedio consulta `SymbolTable::lookup_in_enclosing_class` cuando
+/// `members` sigue `None`, algo pensado para `this.campo` DENTRO de la clase
+/// que se está recorriendo. Con un `new Otra(...)` escrito dentro de un
+/// método de `Animal`, y `Otra` declarada más abajo en el archivo, ese paso
+/// buscaría "constructor" en el scope Class abierto —`Animal`— y le
+/// atribuiría a `Otra` una firma ajena, aceptando en silencio una aridad
+/// equivocada. Este recorrido solo mira `members` y `parent`.
+pub fn constructor_signature(
+    table: &SymbolTable,
+    class_name: &str,
+    spec: &SemanticSpec,
+) -> Signature {
     let implicit = || Signature { params: Vec::new(), returns: Type::Void };
 
     let constructor_name = match &spec.constructor_name {
@@ -339,12 +362,39 @@ pub fn constructor_signature(class_symbol: &Symbol, spec: &SemanticSpec) -> Sign
         None => return implicit(),
     };
 
-    class_symbol
-        .members
-        .as_ref()
-        .and_then(|members| members.iter().find(|m| m.name == *constructor_name && m.kind == SymbolKind::Function))
-        .and_then(|m| m.signature.clone())
-        .unwrap_or_else(implicit)
+    // Guarda de ciclos por nombre visitado, mismo criterio defensivo que
+    // `resolve_member_rec`: la gramática actual no puede producir un ciclo de
+    // herencia, pero es barato y evita un loop infinito si algún día se
+    // permite más de un padre.
+    let mut visited = HashSet::new();
+    let mut current = class_name.to_string();
+
+    while visited.insert(current.clone()) {
+        let Some(class_symbol) = table.lookup(&current) else {
+            break;
+        };
+
+        let propio = class_symbol
+            .members
+            .as_ref()
+            .and_then(|members| {
+                members
+                    .iter()
+                    .find(|m| m.name == *constructor_name && m.kind == SymbolKind::Function)
+            })
+            .and_then(|m| m.signature.clone());
+
+        if let Some(signature) = propio {
+            return signature;
+        }
+
+        match &class_symbol.parent {
+            Some(padre) => current = padre.clone(),
+            None => break,
+        }
+    }
+
+    implicit()
 }
 
 /// Si `node` es la producción de literal de struct configurada en
@@ -517,12 +567,14 @@ pub fn validate_instantiation(
 ) -> Vec<SemanticError> {
     let (line, col) = class_name_pos;
 
-    let class_symbol = match table.lookup(class_name).filter(|s| s.kind == SymbolKind::Class) {
-        Some(s) => s,
-        None => return vec![SemanticError::UnknownClass { name: class_name.to_string(), line, col }],
-    };
+    // Solo se comprueba que la clase EXISTA: la firma del constructor la
+    // resuelve `constructor_signature` por su cuenta, porque puede estar en un
+    // ancestro y no en esta clase.
+    if table.lookup(class_name).filter(|s| s.kind == SymbolKind::Class).is_none() {
+        return vec![SemanticError::UnknownClass { name: class_name.to_string(), line, col }];
+    }
 
-    let signature = constructor_signature(class_symbol, spec);
+    let signature = constructor_signature(table, class_name, spec);
     let arg_types = argument_types(arg_nodes, table, spec, rec);
 
     functions::check_arguments(&signature, &arg_types)
@@ -686,6 +738,35 @@ mod tests {
         }
     }
 
+    /// Un miembro `constructor` con la firma dada. Lo usan los tests de
+    /// herencia de constructor y el de aridad.
+    fn ctor(params: Vec<Type>) -> Symbol {
+        Symbol {
+            name: "constructor".to_string(),
+            kind: SymbolKind::Function,
+            line: 1,
+            col: 1,
+            ty: None,
+            mutable: true,
+            initialized: false,
+            used: false,
+            signature: Some(Signature { params, returns: Type::Void }),
+            storage: None,
+            members: None,
+            parent: None,
+        }
+    }
+
+    /// `SemanticSpec` mínimo con `%constructor` configurado — lo único que
+    /// `constructor_signature` mira del spec.
+    fn spec_con_constructor() -> SemanticSpec {
+        SemanticSpec {
+            identifier_token: "ID".to_string(),
+            constructor_name: Some("constructor".to_string()),
+            ..Default::default()
+        }
+    }
+
     fn table_with_classes(classes: Vec<Symbol>) -> SymbolTable {
         let mut t = SymbolTable::new();
         for c in classes {
@@ -785,44 +866,60 @@ mod tests {
 
     #[test]
     fn constructor_signature_falls_back_to_implicit_when_no_constructor_member() {
-        let class = class_symbol("Vacia", None, vec![]);
-        let spec = SemanticSpec {
-            identifier_token: "ID".to_string(),
-            declarations: vec![],
-            scopes: vec![],
-            type_tokens: Default::default(),
-            this_token: None,
-            member_access: Vec::new(),
-            instantiation: None,
-            call: None,
-            args_list_symbol: None,
-            constructor_name: Some("constructor".to_string()),
-            assign: None,
-            arith_tokens: Default::default(),
-            ..Default::default()
-        };
-        let sig = constructor_signature(&class, &spec);
+        let t = table_with_classes(vec![class_symbol("Vacia", None, vec![])]);
+        let sig = constructor_signature(&t, "Vacia", &spec_con_constructor());
         assert!(sig.params.is_empty());
         assert_eq!(sig.returns, Type::Void);
     }
 
     #[test]
+    fn constructor_signature_sube_por_la_cadena_de_herencia() {
+        // Nieto -> Hijo -> Abuelo, y solo el ABUELO declara constructor.
+        let t = table_with_classes(vec![
+            class_symbol("Abuelo", None, vec![ctor(vec![Type::Str])]),
+            class_symbol("Hijo", Some("Abuelo"), vec![]),
+            class_symbol("Nieto", Some("Hijo"), vec![]),
+        ]);
+
+        let sig = constructor_signature(&t, "Nieto", &spec_con_constructor());
+        assert_eq!(sig.params, vec![Type::Str], "debe heredar la firma del abuelo");
+    }
+
+    #[test]
+    fn el_constructor_propio_gana_sobre_el_heredado() {
+        let t = table_with_classes(vec![
+            class_symbol("Padre", None, vec![ctor(vec![Type::Str, Type::Str])]),
+            class_symbol("Hija", Some("Padre"), vec![ctor(vec![Type::Int])]),
+        ]);
+
+        let sig = constructor_signature(&t, "Hija", &spec_con_constructor());
+        assert_eq!(sig.params, vec![Type::Int], "el propio tiene precedencia");
+    }
+
+    #[test]
+    fn constructor_signature_sin_directiva_constructor_es_implicito() {
+        let t = table_with_classes(vec![class_symbol("Algo", None, vec![ctor(vec![Type::Int])])]);
+        let sin_directiva = SemanticSpec { identifier_token: "ID".to_string(), ..Default::default() };
+
+        let sig = constructor_signature(&t, "Algo", &sin_directiva);
+        assert!(sig.params.is_empty(), "sin %constructor no hay constructor que buscar");
+    }
+
+    #[test]
+    fn una_cadena_de_herencia_ciclica_no_cuelga() {
+        // La gramatica actual no puede producir esto; la guarda es defensiva.
+        let t = table_with_classes(vec![
+            class_symbol("A", Some("B"), vec![]),
+            class_symbol("B", Some("A"), vec![]),
+        ]);
+
+        let sig = constructor_signature(&t, "A", &spec_con_constructor());
+        assert!(sig.params.is_empty());
+    }
+
+    #[test]
     fn validate_instantiation_reports_arity_mismatch_without_type_noise() {
-        let ctor = Symbol {
-            name: "constructor".to_string(),
-            kind: SymbolKind::Function,
-            line: 1,
-            col: 1,
-            ty: None,
-            mutable: true,
-            initialized: false,
-            used: false,
-            signature: Some(Signature { params: vec![Type::Int], returns: Type::Void }),
-            storage: None,
-            members: None,
-            parent: None,
-        };
-        let t = table_with_classes(vec![class_symbol("Contador", None, vec![ctor])]);
+        let t = table_with_classes(vec![class_symbol("Contador", None, vec![ctor(vec![Type::Int])])]);
         let spec = SemanticSpec {
             identifier_token: "ID".to_string(),
             declarations: vec![],
@@ -851,21 +948,7 @@ mod tests {
 
     #[test]
     fn validate_instantiation_checks_simple_literal_argument_types() {
-        let ctor = Symbol {
-            name: "constructor".to_string(),
-            kind: SymbolKind::Function,
-            line: 1,
-            col: 1,
-            ty: None,
-            mutable: true,
-            initialized: false,
-            used: false,
-            signature: Some(Signature { params: vec![Type::Int], returns: Type::Void }),
-            storage: None,
-            members: None,
-            parent: None,
-        };
-        let t = table_with_classes(vec![class_symbol("Contador", None, vec![ctor])]);
+        let t = table_with_classes(vec![class_symbol("Contador", None, vec![ctor(vec![Type::Int])])]);
         let mut type_tokens = std::collections::HashMap::new();
         type_tokens.insert("STR_LIT".to_string(), Type::Str);
         let spec = SemanticSpec {

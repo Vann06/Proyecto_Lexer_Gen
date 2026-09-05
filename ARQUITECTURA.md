@@ -25,7 +25,7 @@ primeros son la infraestructura; el resto son familias de reglas.
 | `spec/` | El `SemanticSpec`: la configuración declarativa que traduce las directivas de un `.yalp` concreto a reglas que el walker entiende. Es el **único** lugar con conocimiento de una gramática particular, y ese conocimiento viene del archivo, no del código. |
 | `analyzer/` | El walker: `impl Visitor for Analyzer`. Declara, abre y cierra ámbitos, y llama a las familias de reglas en el momento correcto del recorrido. No menciona ningún nombre de producción. |
 | `errors/` | `Diagnostic` (código, mensaje, línea, columna, severidad, `ErrorKind`) y `ErrorCollector`, que acumula sin detenerse en el primer error. |
-| `classes/` | Resolución de miembros con `.` **subiendo la cadena de herencia**, tipo estático de una subexpresión simple, `this`, validación de `new Clase(args)` contra el constructor, y literales de struct. |
+| `classes/` | Resolución de miembros con `.` **subiendo la cadena de herencia**, tipo estático de una subexpresión simple, `this`, validación de `new Clase(args)` contra el constructor —que también se busca por la cadena de herencia— y literales de struct. |
 | `functions/` | Comprobación de argumentos contra una firma (`check_arguments`, la única implementación de esa regla — `classes` la reusa para constructores y métodos) y validación de `return` contra el tipo declarado vía `FunctionContext`. |
 | `closures/` | Acumula qué función anidada captura qué variables libres de su entorno de definición. Modela el resultado; la detección vive en el `Analyzer` usando `lookup_with_scope`. |
 | `operators/` | Lo que la tabla aritmética no cubre: lógicos (`&& \|\| !`), comparaciones (`== != < <= > >=`), unarios, y el "sentido semántico" de un operando (una función o una clase nombradas a secas no son valores). |
@@ -94,7 +94,7 @@ enumerar `or_expr`/`and_expr`/`equality_expr`/…)
 | `%new` | `%new atom NEW 1 3` | Producción, token, índice del nombre de clase e índice de la lista de argumentos. |
 | `%call` | `%call primary LPAREN 0 2` | Producción, token, índice del invocado e índice de los argumentos. |
 | `%arg_list_symbol` | `%arg_list_symbol args` | Símbolo de la lista de argumentos, para aplanarla. |
-| `%constructor` | `%constructor constructor` | Nombre convencional del método que actúa como constructor (estilo JS/TS, igual que `Compiscript.g4`). Sin constructor declarado, la clase tiene uno implícito de aridad 0. |
+| `%constructor` | `%constructor constructor` | Nombre convencional del método que actúa como constructor (estilo JS/TS, igual que `Compiscript.g4`). La firma se busca **subiendo la cadena de herencia**, con el propio ganando sobre el heredado; si se agota la cadena, la clase tiene un constructor implícito de aridad 0. |
 
 **Funciones y control de flujo**
 
@@ -233,6 +233,17 @@ que `integer[][]` funcione sin código especial.
 `lookup` recorre de adentro hacia afuera y gana el más cercano (shadowing);
 `declare` solo mira el ámbito **actual**, así que declarar el mismo nombre en un
 ámbito anidado es válido.
+
+---
+
+**Concatenación de textos.** `+` sobre dos `string` da `string`; el resto de
+las combinaciones con texto sigue siendo un error (`S015`), incluida
+`integer + string`. La regla NO vive en la matriz aritmética: esa matriz la
+comparten `+`, `-`, `*` y `/` y su búsqueda ignora el operador, así que una
+fila `string, string` allí habría hecho legales también `"a" - "b"` y
+`"a" * "b"`. Está como corto-circuito al principio de
+`CompatibilityTable::arithmetic`, y `tests/type_system_tests.rs` fija las dos
+mitades: que `+` concatene y que los otros tres sigan rechazando.
 
 ---
 
@@ -375,6 +386,15 @@ Documentados a propósito, no olvidados:
 - **El operador ternario** es lo único del `Compiscript.g4` oficial que el
   subconjunto ejecutable todavía no traduce. El control de flujo ya está
   completo: `if`/`while`/`do-while`/`for`/`foreach`/`switch`/`try-catch`.
+- **Todo cuerpo de control de flujo exige llaves.** `if_stmt`, `while_stmt`,
+  `for_stmt` y `foreach_stmt` piden un `bloque`, y `bloque` es
+  `LBRACE ... RBRACE` (`workspace/compiscript.yalp:286-295`), así que
+  `if (n < 60) continue;` no parsea y hay que escribir
+  `if (n < 60) { continue; }`. Afecta a dos ejemplos de la especificación del
+  lenguaje (el de `break`/`continue` y el de recursión), que en
+  `workspace/rubrica.cps` van con llaves. Es deliberado: admitir una sentencia
+  suelta reintroduce el *dangling else*, una ambigüedad LALR real — no es
+  agregar una alternativa a la producción.
 - **La gramática permite varios `default` en un `switch`** y en cualquier
   posición, mientras que la `.g4` admite a lo sumo uno y al final. Se resolvió
   así para no anidar epsilons que generan conflictos LALR; restringirlo sería
@@ -458,7 +478,7 @@ Preferimos no analizar antes que analizar mal. Ver `api::pipeline`.
 
 ## 9. Pruebas
 
-162 tests unitarios (dentro de `src/`) y 127 de integración (en `tests/`); de
+166 tests unitarios (dentro de `src/`) y 137 de integración (en `tests/`); de
 estos últimos, uno de `codegen_tests.rs` ejecuta un binario recién compilado y
 puede quedar bloqueado por el Control de aplicaciones de Windows — es del
 entorno, no del código.
