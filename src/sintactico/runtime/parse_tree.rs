@@ -94,22 +94,56 @@ fn print_ascii_rec(node: &ParseNode, prefix: &str, is_last: bool) {
 
 /// Exporta el árbol a formato DOT (Graphviz).
 pub fn to_dot(root: &ParseNode) -> String {
+    to_dot_with(root, None)
+}
+
+/// Cómo le pregunta el dibujante del árbol por el tipo de un nodo.
+///
+/// Existe para que la capa SINTÁCTICA no dependa de `semantico`: acá no se
+/// sabe qué es un `Type` ni cómo se calculó, solo se pide un texto por nodo.
+/// `semantico::types::TypeAnnotations` es quien la implementa.
+pub trait NodeTypes {
+    /// El tipo de `node` ya formateado, o `None` si ese nodo no se tipó.
+    fn label_for(&self, node: &ParseNode) -> Option<String>;
+}
+
+/// El MISMO árbol, con el tipo inferido de cada nodo debajo de su etiqueta:
+/// el *árbol de análisis anotado* del libro del dragón.
+///
+/// `to_dot` queda intacto a propósito — lo usan los binarios de prueba, que
+/// no corren la fase semántica y no tienen anotaciones que mostrar.
+pub fn to_dot_annotated(root: &ParseNode, types: &dyn NodeTypes) -> String {
+    to_dot_with(root, Some(types))
+}
+
+fn to_dot_with(root: &ParseNode, types: Option<&dyn NodeTypes>) -> String {
     let mut out = String::from("digraph ParseTree {\n");
     out.push_str("    node [shape=box, fontname=\"monospace\"];\n");
     let mut next_id = 0usize;
-    to_dot_rec(root, &mut out, &mut next_id);
+    to_dot_rec(root, &mut out, &mut next_id, types);
     out.push_str("}\n");
     out
 }
 
-fn to_dot_rec(node: &ParseNode, out: &mut String, next_id: &mut usize) -> usize {
+fn to_dot_rec(
+    node: &ParseNode,
+    out: &mut String,
+    next_id: &mut usize,
+    types: Option<&dyn NodeTypes>,
+) -> usize {
     let my_id = *next_id;
     *next_id += 1;
 
-    let label = match &node.lexeme {
+    let mut label = match &node.lexeme {
         Some(lx) if lx != &node.symbol => format!("{}\\n\\\"{}\\\"", node.symbol, escape_dot(lx)),
         _ => node.symbol.clone(),
     };
+    // Tercera línea de la etiqueta, solo si este nodo se tipó. El `: ` inicial
+    // la distingue a simple vista del lexema, que va entre comillas.
+    if let Some(ty) = types.and_then(|t| t.label_for(node)) {
+        label.push_str("\\n: ");
+        label.push_str(&escape_dot(&ty));
+    }
     let style = if node.children.is_empty() {
         ", style=filled, fillcolor=\"#e0f0ff\""
     } else {
@@ -118,7 +152,7 @@ fn to_dot_rec(node: &ParseNode, out: &mut String, next_id: &mut usize) -> usize 
     let _ = writeln!(out, "    n{} [label=\"{}\"{}];", my_id, label, style);
 
     for child in &node.children {
-        let cid = to_dot_rec(child, out, next_id);
+        let cid = to_dot_rec(child, out, next_id, types);
         let _ = writeln!(out, "    n{} -> n{};", my_id, cid);
     }
     my_id

@@ -666,6 +666,50 @@ function ClosuresView(){
   );
 }
 
+// El tipo que el analizador infirió para cada nodo de expresión — el "árbol
+// de análisis anotado" del libro del dragón, en forma de tabla. El mismo dato
+// va dibujado sobre el árbol en la pestaña ÁRBOL; acá se lista para poder
+// leerlo en orden y buscar un nodo puntual por su id.
+function TypesView(){
+  const types = D.TYPES;
+  if (!types || !types.length) {
+    return (
+      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
+        ▍ TIPOS
+        <span className="dim" style={{marginLeft:10}}>
+          · sin anotaciones · requiere .yalp con %ident y modo LALR/SLR (no LL(1))
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
+        ▍ TIPOS · {types.length} nodo{types.length===1?"":"s"} de expresión anotado{types.length===1?"":"s"}
+        <span className="dim" style={{marginLeft:10}}>
+          · el id coincide con el nodo del árbol
+        </span>
+      </div>
+      <table className="t">
+        <thead>
+          <tr><th>id</th><th>nodo</th><th>lexema</th><th>tipo</th><th>pos</th></tr>
+        </thead>
+        <tbody>
+          {types.map((t,i)=>(
+            <tr key={i}>
+              <td className="dim">{t.id}</td>
+              <td style={{color:"var(--cyan)"}}>{t.symbol}</td>
+              <td style={{color:"var(--yellow)"}}>{t.lexeme==null?"":t.lexeme}</td>
+              <td style={{color:"var(--green)", fontWeight:600}}>{t.ty}</td>
+              <td className="dim">{t.line}:{t.col}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function ProblemsList(){
   const counts = { err:D.PROBLEMS.filter(p=>p.level==="err").length,
                    warn:D.PROBLEMS.filter(p=>p.level==="warn").length,
@@ -1088,6 +1132,7 @@ function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActive
     {id:"tree",      label:"ÁRBOL"},
     {id:"symbols",   label:"SÍMBOLOS", badge: (D.SCOPES && D.SCOPES.length) || null},
     {id:"closures",  label:"CLOSURES", badge: D.CLOSURES.length || null},
+    {id:"types",     label:"TIPOS", badge: (D.TYPES && D.TYPES.length) || null},
     {id:"gen",       label:"CÓD.GEN"},
     {id:"problems",  label:"PROBLEMAS", badge: D.PROBLEMS.length},
   ];
@@ -1121,6 +1166,7 @@ function ResultsPanel({ stepIdx, activeTab, setActiveTab, activeState, setActive
           {activeTab==="tree"     && <ParseTreeView renderKey={renderKey}/>}
           {activeTab==="symbols"  && <SymbolTableView/>}
           {activeTab==="closures" && <ClosuresView/>}
+          {activeTab==="types"    && <TypesView/>}
           {activeTab==="gen"      && <GeneratedCode/>}
           {activeTab==="problems" && <ProblemsList/>}
         </div>
@@ -1461,6 +1507,7 @@ function App(){
       D.SYMBOL_TABLE = data.symbol_table || "";
       D.CLOSURES = Array.isArray(data.closures) ? data.closures : [];
       D.SCOPES = Array.isArray(data.scopes) ? data.scopes : [];
+      D.TYPES = Array.isArray(data.types) ? data.types : [];
       // El backend ya manda accepted/error — antes se ignoraban por completo
       // y la UI re-derivaba "aceptado" mirando si el último paso de la traza
       // era "acc", lo cual además tiraba el mensaje de error real del backend.
@@ -1497,6 +1544,7 @@ function App(){
       D.SYMBOL_TABLE = "";
       D.CLOSURES = [];
       D.SCOPES = [];
+      D.TYPES = [];
       D.PARSE_ACCEPTED = null;
       D.PARSE_ERROR = msg;
       D.PROBLEMS = [{ level:"err", code:"E002", msg, loc:`pipeline ${mode.toUpperCase()}` }];

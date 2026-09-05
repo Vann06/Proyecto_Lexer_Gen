@@ -7,7 +7,7 @@ use crate::lexico::runtime::indent;
 use crate::lexico::runtime::simulator::{LexResult, Simulator};
 use crate::semantico::analyzer::analyze;
 use crate::semantico::spec::SemanticSpec;
-use crate::sintactico::runtime::parse_tree::to_dot;
+use crate::sintactico::runtime::parse_tree::{to_dot, to_dot_annotated};
 use serde_json::{json, Value};
 
 use super::lexico::{build_lexer_table_from_str, lex_is_ignored, lex_normalize_kind};
@@ -206,16 +206,31 @@ pub fn build_pipeline_response_named(
                 None => build_real_parse_tree(yalp, &token_map, mode),
             };
             if let Some((grammar, tree)) = real_tree {
-                response.parse_tree_dot = to_dot(&tree);
+                // El DOT se genera DESPUES del analisis, no antes: si hubo
+                // fase semantica el arbol sale anotado con el tipo de cada
+                // expresion (el "arbol de analisis anotado" del libro), y eso
+                // exige tener las anotaciones ya calculadas. Sin analisis
+                // (LL(1), o un .yalp sin `%ident`) sale el DOT plano de
+                // siempre.
+                let mut annotations = None;
                 if mode != "ll1" {
                     if let Some(spec) = SemanticSpec::from_grammar(&grammar) {
                         let analysis = analyze(&tree, &spec);
                         response.symbol_table = analysis.table.dump();
                         response.closures = analysis.closures.to_json();
                         response.scopes = analysis.scopes.to_json();
+                        response.types = analysis.types.to_json(&tree);
                         lex_problems.extend(analysis.errors.to_problems(source_name));
+                        annotations = Some(analysis.types);
                     }
                 }
+                // `tree` sigue vivo y sin mover desde antes de `analyze`, que
+                // es la invariante que necesitan las claves de
+                // `TypeAnnotations` (ver `semantico::types::annotations`).
+                response.parse_tree_dot = match &annotations {
+                    Some(types) => to_dot_annotated(&tree, types),
+                    None => to_dot(&tree),
+                };
             }
         }
     }

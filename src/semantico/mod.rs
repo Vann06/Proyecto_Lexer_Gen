@@ -14,7 +14,11 @@
 // El submódulo `types` concentra el enum de tipos, la tabla de compatibilidad
 // y las coerciones para aritmética/asignaciones. `symbols` usa esas reglas al
 // declarar y asignar símbolos tipados, incluida la inicialización obligatoria
-// de constantes.
+// de constantes. Su submódulo `types::annotations` guarda el tipo inferido de
+// CADA nodo de expresión —el árbol de análisis anotado del libro— en un mapa
+// lateral indexado por la identidad del nodo; es lo que recibiría una fase de
+// generación de código intermedio, que sin esos tipos no podría decidir qué
+// instrucción emitir ni dónde hace falta una ampliación.
 //
 // `classes` resuelve miembros con `.` subiendo la cadena de herencia, `this`,
 // y la invocación del constructor. `functions` es dueño de la comprobación de
@@ -44,8 +48,10 @@
 // comprueba contra los campos declarados.
 //
 // Esta fase YA está conectada a la API HTTP: `api::pipeline` la corre sobre
-// el árbol real y expone `problems`, `symbol_table` y `closures` (ver
-// `api::build_pipeline_response_named`).
+// el árbol real y expone `problems`, `symbol_table`, `closures`, `scopes` y
+// `types` (ver `api::build_pipeline_response_named`). El `parse_tree_dot` que
+// devuelve sale ANOTADO con el tipo de cada expresión cuando hubo análisis —
+// por eso se genera después de `analyze` y no antes.
 //
 // Restricción de diseño, no negociable: el generador es agnóstico a la
 // gramática (cualquier .yal/.yalp/.txt que se reciba, no un lenguaje fijo

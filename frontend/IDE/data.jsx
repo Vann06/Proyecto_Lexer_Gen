@@ -139,4 +139,12 @@ window.IDE_DATA = {
   // terminar el recorrido la tabla solo conserva el Global, así que un `let`
   // dentro de un `if` no aparece en SYMBOL_TABLE por ningún lado.
   SCOPES: [],
+  // Llenado por /api/pipeline (campo `types`): el tipo inferido de cada nodo
+  // de expresión — [{id, symbol, lexeme, line, col, ty}], en orden de lectura
+  // del programa. El `id` es el MISMO que identifica a ese nodo dentro de
+  // PARSE_TREE_DOT, así que una fila de esta lista y un nodo del árbol
+  // dibujado se pueden correlacionar. Es el "árbol de análisis anotado" del
+  // libro del dragón, y lo que recibiría una fase de generación de código
+  // intermedio. Vacío en modo LL(1) y si el .yalp no trae %ident.
+  TYPES: [],
 };

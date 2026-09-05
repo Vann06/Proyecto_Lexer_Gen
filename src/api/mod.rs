@@ -78,6 +78,16 @@ pub struct ParseResponse {
     /// un `let` dentro de un `if` no aparece por ningun otro lado. Vacio si el
     /// .yalp no trae `%ident` o si el programa no abrio ningun ambito propio.
     pub scopes: Vec<Value>,
+    /// `TypeAnnotations::to_json()`: el tipo inferido de cada nodo de
+    /// expresion -- `[{id, symbol, lexeme, line, col, ty}]`, en orden de
+    /// lectura del programa.
+    ///
+    /// El `id` es el MISMO que identifica a ese nodo dentro de
+    /// `parse_tree_dot`, asi que una fila de esta lista y un nodo del arbol
+    /// dibujado se pueden correlacionar. Vacio si el .yalp no trae `%ident`,
+    /// si el modo es LL(1) (ver `pipeline`), o si no se tipo ninguna
+    /// expresion.
+    pub types: Vec<Value>,
 }
 
 #[derive(Serialize)]

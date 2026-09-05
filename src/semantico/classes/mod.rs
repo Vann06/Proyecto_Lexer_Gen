@@ -16,7 +16,9 @@ use crate::semantico::functions::{self, ArgProblem};
 use crate::semantico::operators;
 use crate::semantico::spec::SemanticSpec;
 use crate::semantico::symbols::{SemanticError, Signature, Symbol, SymbolKind, SymbolTable};
-use crate::semantico::types::{resolve_arithmetic, resolve_assignment, ArithmeticOperator, Type};
+use crate::semantico::types::{
+    resolve_arithmetic, resolve_assignment, ArithmeticOperator, Type, TypeAnnotations,
+};
 use crate::sintactico::gramatica::first::EPSILON;
 use crate::sintactico::runtime::parse_tree::ParseNode;
 
@@ -130,7 +132,29 @@ pub fn find_member_access(node: &ParseNode, spec: &SemanticSpec) -> Option<(usiz
 ///    INT_LIT/STR_LIT/TRUE/FALSE): el `Type` que ese token representa.
 ///  - cualquier otra forma (operador binario, llamada, `new`, paréntesis
 ///    con contenido compuesto): `None` — "no lo sabemos", no es error.
-pub fn resolve_expr_type(node: &ParseNode, table: &SymbolTable, spec: &SemanticSpec) -> Option<Type> {
+pub fn resolve_expr_type(
+    node: &ParseNode,
+    table: &SymbolTable,
+    spec: &SemanticSpec,
+    rec: &mut TypeAnnotations,
+) -> Option<Type> {
+    let ty = resolve_expr_type_inner(node, table, spec, rec);
+    // UN solo punto de registro para las ~12 salidas de `_inner`, y como la
+    // recursion pasa por aca, cada subexpresion queda anotada sola. Es el
+    // equivalente del atributo sintetizado del libro: el tipo del nodo se
+    // guarda cuando termina de calcularse, con la tabla en el ambito correcto.
+    if let Some(resolved) = &ty {
+        rec.record(node, resolved);
+    }
+    ty
+}
+
+fn resolve_expr_type_inner(
+    node: &ParseNode,
+    table: &SymbolTable,
+    spec: &SemanticSpec,
+    rec: &mut TypeAnnotations,
+) -> Option<Type> {
     if let Some((dot_idx, _)) = find_member_access(node, spec) {
         // Nota: aunque la producción de ASIGNACIÓN (`primary DOT ID ASSIGN
         // expr`) también matchea acá, no es una expresión con valor — nunca
@@ -138,7 +162,7 @@ pub fn resolve_expr_type(node: &ParseNode, table: &SymbolTable, spec: &SemanticS
         // Devolver el tipo del miembro accedido es igualmente correcto.
         let base = node.children.first()?;
         let member_id = node.children.get(dot_idx + 1)?;
-        let base_ty = resolve_expr_type(base, table, spec)?;
+        let base_ty = resolve_expr_type(base, table, spec, rec)?;
         let class_name = match base_ty {
             Type::Named(name) => name,
             _ => return None,
@@ -161,7 +185,8 @@ pub fn resolve_expr_type(node: &ParseNode, table: &SymbolTable, spec: &SemanticS
     // que el resto de `classes`).
     if let Some(elements_node) = crate::semantico::collections::find_array_literal(node, spec) {
         let elements = crate::semantico::collections::flatten_array_elements(elements_node, spec);
-        let (ty, _errors) = crate::semantico::collections::resolve_array_literal(&elements, table, spec);
+        let (ty, _errors) =
+            crate::semantico::collections::resolve_array_literal(&elements, table, spec, rec);
         return ty;
     }
 
@@ -169,16 +194,18 @@ pub fn resolve_expr_type(node: &ParseNode, table: &SymbolTable, spec: &SemanticS
     // lista — acá solo se TIPA; los diagnósticos los emite `analyzer`.
     if let Some(elements_node) = crate::semantico::collections::find_set_literal(node, spec) {
         let elements = crate::semantico::collections::flatten_array_elements(elements_node, spec);
-        let (ty, _errors) = crate::semantico::collections::resolve_set_literal(&elements, table, spec);
+        let (ty, _errors) =
+            crate::semantico::collections::resolve_set_literal(&elements, table, spec, rec);
         return ty;
     }
     if let Some(elements_node) = crate::semantico::collections::find_tuple_literal(node, spec) {
         let elements = crate::semantico::collections::flatten_array_elements(elements_node, spec);
-        return crate::semantico::collections::resolve_tuple_literal(&elements, table, spec);
+        return crate::semantico::collections::resolve_tuple_literal(&elements, table, spec, rec);
     }
     if let Some(entries_node) = crate::semantico::collections::find_map_literal(node, spec) {
         let entries = crate::semantico::collections::flatten_map_entries(entries_node, spec);
-        let (ty, _errors) = crate::semantico::collections::resolve_map_literal(&entries, table, spec);
+        let (ty, _errors) =
+            crate::semantico::collections::resolve_map_literal(&entries, table, spec, rec);
         return ty;
     }
 
@@ -187,7 +214,7 @@ pub fn resolve_expr_type(node: &ParseNode, table: &SymbolTable, spec: &SemanticS
     // Silencioso ante una base que no es arreglo: el diagnóstico lo emite
     // `analyzer::enter`, no esta función.
     if let Some((base, index)) = crate::semantico::collections::find_index_access(node, spec) {
-        let base_ty = resolve_expr_type(base, table, spec);
+        let base_ty = resolve_expr_type(base, table, spec, rec);
         // El nodo del indice SI se pasa, aunque su tipo no: una tupla se tipa
         // por POSICION (`t[0]` y `t[1]` pueden ser distintos), asi que sin el
         // nodo no habria con que resolverla. El tipo del indice sigue en
@@ -210,12 +237,12 @@ pub fn resolve_expr_type(node: &ParseNode, table: &SymbolTable, spec: &SemanticS
     }
 
     if node.children.len() == 1 {
-        return resolve_expr_type(&node.children[0], table, spec);
+        return resolve_expr_type(&node.children[0], table, spec, rec);
     }
 
     if let Some((op, left, right)) = find_arithmetic(node, spec) {
-        let left_ty = resolve_expr_type(left, table, spec)?;
-        let right_ty = resolve_expr_type(right, table, spec)?;
+        let left_ty = resolve_expr_type(left, table, spec, rec)?;
+        let right_ty = resolve_expr_type(right, table, spec, rec)?;
         // Operandos incompatibles: `None`, igual que cualquier otra forma que
         // no sabemos tipar. El diagnóstico lo emite `analyzer::enter` al
         // visitar este nodo, no esta función (que es silenciosa por diseño).
@@ -231,19 +258,19 @@ pub fn resolve_expr_type(node: &ParseNode, table: &SymbolTable, spec: &SemanticS
     // sobre un `if`/`while` nunca veía el tipo real de su condición y se
     // rendía en silencio.
     if let Some((op, left, right)) = operators::find_logical(node, spec) {
-        let left_ty = resolve_expr_type(left, table, spec)?;
-        let right_ty = resolve_expr_type(right, table, spec)?;
+        let left_ty = resolve_expr_type(left, table, spec, rec)?;
+        let right_ty = resolve_expr_type(right, table, spec, rec)?;
         return operators::resolve_logical(op, &left_ty, &right_ty, node.line, node.col).ok();
     }
 
     if let Some((op, left, right)) = operators::find_comparison(node, spec) {
-        let left_ty = resolve_expr_type(left, table, spec)?;
-        let right_ty = resolve_expr_type(right, table, spec)?;
+        let left_ty = resolve_expr_type(left, table, spec, rec)?;
+        let right_ty = resolve_expr_type(right, table, spec, rec)?;
         return operators::resolve_comparison(op, &left_ty, &right_ty, node.line, node.col).ok();
     }
 
     if let Some((op, operand)) = operators::find_unary(node, spec) {
-        let operand_ty = resolve_expr_type(operand, table, spec)?;
+        let operand_ty = resolve_expr_type(operand, table, spec, rec)?;
         return operators::resolve_unary(op, &operand_ty, node.line, node.col).ok();
     }
 
@@ -387,6 +414,7 @@ pub fn validate_struct_literal(
     struct_name: &str,
     name_pos: (usize, usize),
     field_inits: &[(&ParseNode, &ParseNode)],
+    rec: &mut TypeAnnotations,
 ) -> Vec<SemanticError> {
     let (line, col) = name_pos;
 
@@ -424,7 +452,7 @@ pub fn validate_struct_literal(
         // `Some(Unknown)`): `resolve_assignment` trata `Unknown` como
         // incompatible con todo salvo consigo mismo.
         if let (Some(expected), Some(found)) =
-            (declared.ty.clone(), resolve_expr_type(value_node, table, spec))
+            (declared.ty.clone(), resolve_expr_type(value_node, table, spec, rec))
         {
             if resolve_assignment(&expected, &found).is_err() {
                 errors.push(SemanticError::StructFieldTypeMismatch {
@@ -471,8 +499,9 @@ fn argument_types(
     arg_nodes: &[&ParseNode],
     table: &SymbolTable,
     spec: &SemanticSpec,
+    rec: &mut TypeAnnotations,
 ) -> Vec<Option<Type>> {
-    arg_nodes.iter().map(|n| resolve_expr_type(n, table, spec)).collect()
+    arg_nodes.iter().map(|n| resolve_expr_type(n, table, spec, rec)).collect()
 }
 
 /// Valida `new class_name(args)`: existencia de la clase, más aridad y tipos
@@ -484,6 +513,7 @@ pub fn validate_instantiation(
     class_name: &str,
     class_name_pos: (usize, usize),
     arg_nodes: &[&ParseNode],
+    rec: &mut TypeAnnotations,
 ) -> Vec<SemanticError> {
     let (line, col) = class_name_pos;
 
@@ -493,7 +523,7 @@ pub fn validate_instantiation(
     };
 
     let signature = constructor_signature(class_symbol, spec);
-    let arg_types = argument_types(arg_nodes, table, spec);
+    let arg_types = argument_types(arg_nodes, table, spec, rec);
 
     functions::check_arguments(&signature, &arg_types)
         .into_iter()
@@ -536,11 +566,12 @@ pub fn resolve_callee<'a>(
     callee_node: &ParseNode,
     table: &'a SymbolTable,
     spec: &SemanticSpec,
+    rec: &mut TypeAnnotations,
 ) -> Option<(&'a Symbol, String)> {
     if let Some((_, member_idx)) = find_member_access(callee_node, spec) {
         let base = callee_node.children.first()?;
         let member_id = callee_node.children.get(member_idx)?;
-        let class_name = match resolve_expr_type(base, table, spec)? {
+        let class_name = match resolve_expr_type(base, table, spec, rec)? {
             Type::Named(name) => name,
             _ => return None,
         };
@@ -573,6 +604,7 @@ pub fn validate_call(
     callee_label: &str,
     call_pos: (usize, usize),
     arg_nodes: &[&ParseNode],
+    rec: &mut TypeAnnotations,
 ) -> Vec<SemanticError> {
     let (line, col) = call_pos;
     // Todo símbolo declarado como invocable recibe su firma en `enter`, ANTES
@@ -590,7 +622,7 @@ pub fn validate_call(
             }]
         }
     };
-    let arg_types = argument_types(arg_nodes, table, spec);
+    let arg_types = argument_types(arg_nodes, table, spec, rec);
 
     functions::check_arguments(signature, &arg_types)
         .into_iter()
@@ -808,7 +840,8 @@ mod tests {
         };
 
         // Cero argumentos, se esperaba 1.
-        let errs = validate_instantiation(&t, &spec, "Contador", (2, 3), &[]);
+        let errs =
+            validate_instantiation(&t, &spec, "Contador", (2, 3), &[], &mut TypeAnnotations::new());
         assert_eq!(errs.len(), 1);
         assert_eq!(
             errs[0],
@@ -852,7 +885,14 @@ mod tests {
         };
 
         let arg = leaf("STR_LIT", "\"texto\"");
-        let errs = validate_instantiation(&t, &spec, "Contador", (2, 3), &[&arg]);
+        let errs = validate_instantiation(
+            &t,
+            &spec,
+            "Contador",
+            (2, 3),
+            &[&arg],
+            &mut TypeAnnotations::new(),
+        );
         assert_eq!(errs.len(), 1);
         match &errs[0] {
             SemanticError::ConstructorArgTypeMismatch { expected, found, index, .. } => {
@@ -893,6 +933,9 @@ mod tests {
             "primary".into(),
             vec![ParseNode::internal("atom".into(), vec![leaf("ID", "x")])],
         );
-        assert_eq!(resolve_expr_type(&tree, &t, &spec), Some(Type::Int));
+        assert_eq!(
+            resolve_expr_type(&tree, &t, &spec, &mut TypeAnnotations::new()),
+            Some(Type::Int)
+        );
     }
 }

@@ -7,6 +7,9 @@ use std::fmt;
 
 use thiserror::Error;
 
+pub mod annotations;
+pub use annotations::TypeAnnotations;
+
 /// Tipos que puede almacenar la tabla de símbolos.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {

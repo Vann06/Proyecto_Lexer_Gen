@@ -11,7 +11,7 @@
 use crate::semantico::classes::{self, flatten_arg_list};
 use crate::semantico::spec::SemanticSpec;
 use crate::semantico::symbols::{SemanticError, SymbolTable};
-use crate::semantico::types::{resolve_assignment, Type};
+use crate::semantico::types::{resolve_assignment, Type, TypeAnnotations};
 use crate::sintactico::runtime::parse_tree::ParseNode;
 
 /// Si `node` es la producción de literal de lista configurada en
@@ -55,8 +55,9 @@ pub fn resolve_array_literal(
     elements: &[&ParseNode],
     table: &SymbolTable,
     spec: &SemanticSpec,
+    rec: &mut TypeAnnotations,
 ) -> (Option<Type>, Vec<SemanticError>) {
-    let (common, errors) = common_type(elements, table, spec);
+    let (common, errors) = common_type(elements, table, spec, rec);
     (common.map(|t| Type::Array(Box::new(t))), errors)
 }
 
@@ -70,12 +71,13 @@ fn common_type(
     elements: &[&ParseNode],
     table: &SymbolTable,
     spec: &SemanticSpec,
+    rec: &mut TypeAnnotations,
 ) -> (Option<Type>, Vec<SemanticError>) {
     let mut errors = Vec::new();
     let mut common: Option<Type> = None;
 
     for element in elements {
-        let Some(found) = classes::resolve_expr_type(element, table, spec) else {
+        let Some(found) = classes::resolve_expr_type(element, table, spec, rec) else {
             continue;
         };
         match &common {
@@ -153,8 +155,9 @@ pub fn resolve_set_literal(
     elements: &[&ParseNode],
     table: &SymbolTable,
     spec: &SemanticSpec,
+    rec: &mut TypeAnnotations,
 ) -> (Option<Type>, Vec<SemanticError>) {
-    let (common, errors) = common_type(elements, table, spec);
+    let (common, errors) = common_type(elements, table, spec, rec);
     (common.map(|t| Type::Set(Box::new(t))), errors)
 }
 
@@ -170,13 +173,14 @@ pub fn resolve_tuple_literal(
     elements: &[&ParseNode],
     table: &SymbolTable,
     spec: &SemanticSpec,
+    rec: &mut TypeAnnotations,
 ) -> Option<Type> {
     if elements.is_empty() {
         return None;
     }
     let items: Vec<Type> = elements
         .iter()
-        .map(|e| classes::resolve_expr_type(e, table, spec).unwrap_or(Type::Unknown))
+        .map(|e| classes::resolve_expr_type(e, table, spec, rec).unwrap_or(Type::Unknown))
         .collect();
     Some(Type::Tuple(items))
 }
@@ -190,6 +194,7 @@ pub fn resolve_map_literal(
     entries: &[&ParseNode],
     table: &SymbolTable,
     spec: &SemanticSpec,
+    rec: &mut TypeAnnotations,
 ) -> (Option<Type>, Vec<SemanticError>) {
     let Some(rule) = spec.map_entry.as_ref() else {
         return (None, Vec::new());
@@ -209,8 +214,8 @@ pub fn resolve_map_literal(
         }
     }
 
-    let (key_ty, mut errors) = common_type(&keys, table, spec);
-    let (value_ty, value_errors) = common_type(&values, table, spec);
+    let (key_ty, mut errors) = common_type(&keys, table, spec, rec);
+    let (value_ty, value_errors) = common_type(&values, table, spec, rec);
     errors.extend(value_errors);
 
     let ty = match (key_ty, value_ty) {
@@ -404,7 +409,8 @@ mod tests {
         let spec = spec_with_arrays();
         let elements = vec![leaf("INT_LIT", "1", 1, 1), leaf("INT_LIT", "2", 1, 4)];
         let refs: Vec<&ParseNode> = elements.iter().collect();
-        let (ty, errors) = resolve_array_literal(&refs, &table, &spec);
+        let (ty, errors) =
+            resolve_array_literal(&refs, &table, &spec, &mut TypeAnnotations::new());
         assert_eq!(ty, Some(Type::Array(Box::new(Type::Int))));
         assert!(errors.is_empty());
     }
@@ -416,7 +422,8 @@ mod tests {
         spec.type_tokens.insert("FLOAT_LIT".to_string(), Type::Float);
         let elements = vec![leaf("INT_LIT", "1", 1, 1), leaf("FLOAT_LIT", "2.5", 1, 4)];
         let refs: Vec<&ParseNode> = elements.iter().collect();
-        let (ty, errors) = resolve_array_literal(&refs, &table, &spec);
+        let (ty, errors) =
+            resolve_array_literal(&refs, &table, &spec, &mut TypeAnnotations::new());
         assert_eq!(ty, Some(Type::Array(Box::new(Type::Float))));
         assert!(errors.is_empty());
     }
@@ -427,7 +434,8 @@ mod tests {
         let spec = spec_with_arrays();
         let elements = vec![leaf("INT_LIT", "1", 1, 1), leaf("STR_LIT", "\"x\"", 1, 4)];
         let refs: Vec<&ParseNode> = elements.iter().collect();
-        let (ty, errors) = resolve_array_literal(&refs, &table, &spec);
+        let (ty, errors) =
+            resolve_array_literal(&refs, &table, &spec, &mut TypeAnnotations::new());
         assert_eq!(ty, Some(Type::Array(Box::new(Type::Int))));
         assert_eq!(errors.len(), 1);
         match &errors[0] {
@@ -444,7 +452,8 @@ mod tests {
     fn empty_literal_has_no_inferable_type_and_no_error() {
         let table = SymbolTable::new();
         let spec = spec_with_arrays();
-        let (ty, errors) = resolve_array_literal(&[], &table, &spec);
+        let (ty, errors) =
+            resolve_array_literal(&[], &table, &spec, &mut TypeAnnotations::new());
         assert_eq!(ty, None);
         assert!(errors.is_empty());
     }

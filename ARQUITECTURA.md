@@ -320,10 +320,11 @@ llena `ParseResponse`:
 | Campo | Contenido | Panel del IDE |
 |---|---|---|
 | `problems` | Diagnósticos léxicos, sintácticos y semánticos con `{level, code, msg, loc, line, col}` | **PROBLEMAS**, y el gutter del editor marca las líneas en rojo (`err`) y amarillo (`warn`) |
-| `parse_tree_dot` | El árbol de derivación real exportado a DOT | **ÁRBOL** |
+| `parse_tree_dot` | El árbol de derivación real exportado a DOT, **anotado** con el tipo de cada expresión cuando hubo análisis | **ÁRBOL** |
 | `symbol_table` | `SymbolTable::dump()`: el **estado final**, o sea el global con los miembros de funciones y clases anidados | **SÍMBOLOS** (mitad superior) |
 | `scopes` | `ScopeCollector::to_json()`: una foto de **cada ámbito al cerrarse**, en orden de cierre | **SÍMBOLOS** (mitad inferior, "ÁMBITOS CERRADOS") |
 | `closures` | Qué función anidada captura qué variables libres | **CLOSURES** |
+| `types` | `TypeAnnotations::to_json()`: el tipo inferido de cada nodo de expresión, con el `id` del nodo en el DOT | **TIPOS** |
 | `token_map` | Los tokens con su lexema y posición | **TOKENS** |
 
 Las dos mitades del panel de símbolos **no son redundantes**, y esa es la razón
@@ -339,9 +340,15 @@ if (g > 0) { let dentro: integer = 2; print(dentro); }
 
 `dentro` sale en un snapshot de `kind: "Block"` y en ninguna otra parte.
 
+El `id` de cada fila de `types` es el mismo identificador (`n0`, `n1`, …) que
+lleva ese nodo dentro de `parse_tree_dot`, así que una fila de la tabla y un
+nodo del árbol dibujado se pueden correlacionar. Por eso el DOT se genera
+**después** del análisis y no antes: necesita las anotaciones ya calculadas.
+
 El análisis semántico corre solo en **LALR(1)/SLR(1)**, no en LL(1): la
 transformación LL(1) elimina recursión izquierda y factoriza, lo que renombra
-producciones y dejaría al `SemanticSpec` sin encontrarlas.
+producciones y dejaría al `SemanticSpec` sin encontrarlas. En ese modo el árbol
+sale sin anotar y `types` llega vacío.
 
 ---
 
@@ -376,7 +383,8 @@ Documentados a propósito, no olvidados:
   `expression?`. Mismo motivo, y mismo criterio que el `for` de
   `examples/grammar/miniprog.yalp`.
 - **`Symbol.storage` (offset y tamaño) nunca se llena.** Es la fase de
-  asignación de almacenamiento del capítulo 7 del libro del dragón.
+  asignación de almacenamiento del capítulo 7 del libro del dragón — ver la
+  sección 8, que detalla qué le falta a la generación de código intermedio.
 - **Los tipos de expresiones compuestas no siempre se resuelven.** `resolve_expr_type`
   cubre identificadores, `this`, literales, accesos a miembro e indexaciones;
   una expresión más enredada devuelve `Unknown`, y las reglas que dependen de
@@ -387,9 +395,70 @@ Documentados a propósito, no olvidados:
 
 ---
 
-## 8. Pruebas
+## 8. Qué recibe la fase de generación de código intermedio
 
-158 tests unitarios (dentro de `src/`) y 121 de integración (en `tests/`); de
+Esta fase no está escrita. Lo que sigue es el contrato de traspaso: qué le deja
+servido el análisis semántico y qué le va a faltar.
+
+El punto de partida es una corrección de expectativa. La entrada principal de
+esa fase **no es la tabla de símbolos, es el árbol**. La tabla no sabe que
+existe `a = b + c * d`; sabe que hay una `a`, una `b`, una `c` y una `d`, de qué
+tipo son y dónde se declararon. La estructura —qué se opera con qué, en qué
+orden, qué cuelga de qué `if`— solo está en el árbol. El capítulo 6 del libro
+del dragón plantea la traducción como una SDD sobre ese árbol, donde
+`E -> E1 + E2` sintetiza `E.addr` y `E.code` concatenando el código de sus
+hijos; la tabla entra en esa misma regla como servicio de consulta.
+
+### Lo que ya recibe
+
+| Qué | Dónde | Estado |
+|---|---|---|
+| El árbol de derivación | `sintactico::runtime::parse_tree::ParseNode` | Vive todo el pipeline; `analyze` lo toma por `&`, así que sobrevive intacto al análisis |
+| El tipo de cada nodo de expresión | `types::TypeAnnotations` (campo `types` de `AnalysisResult`) | Completo para toda expresión que `resolve_expr_type` sepa tipar |
+| Tipos, firmas y herencia | `symbols::Symbol` (`ty`, `signature`, `parent`, `members`) | Completo |
+| Los ámbitos, incluidos los anónimos | `scopes::ScopeCollector` | Completo, con la salvedad de abajo |
+
+Las anotaciones de tipo son la pieza nueva: antes el tipo de cada expresión se
+calculaba durante el recorrido y se descartaba. Sin ellas, la regla de
+`E -> E1 + E2` no tendría con qué decidir si hace falta una ampliación ni qué
+instrucción emitir. Es el *árbol de análisis anotado* del libro, con una
+diferencia deliberada: los atributos viven en un mapa lateral y no dentro del
+`ParseNode` —igual que el `ParseTreeProperty` de ANTLR— para no meter un tipo
+semántico en una estructura de la capa sintáctica. Ver
+`types::annotations` para la invariante de las claves.
+
+### Los dos huecos conocidos
+
+**1. `Symbol.storage` nunca se llena.** El campo existe
+(`StorageInfo { offset, size_bytes }`, `symbols/mod.rs`), pero los ocho sitios
+que construyen un `Symbol` —cuatro en `symbols`, cuatro en `classes`— escriben
+`storage: None`, y nada lo completa después. Es la asignación de almacenamiento
+del capítulo 7 del libro: una pasada que recorra cada ámbito acumulando
+desplazamientos según el `width` de cada tipo. Hasta que exista, el código
+intermedio puede nombrar variables pero no ubicarlas en un marco de activación.
+
+**2. Los ámbitos anónimos no están en la tabla final.** Al terminar el
+recorrido la tabla viva solo conserva el Global; lo declarado dentro de una
+función o una clase sobrevive anidado en `Symbol.members`, pero lo de un bloque
+anónimo se descarta. Está en `ScopeCollector`, sí, pero como **lista plana
+ordenada por cierre**, con un `depth` y sin enlace al ámbito padre. Para saber
+qué locales caen en el marco de qué función hay que reconstruir esa relación a
+partir del `depth`.
+
+### La restricción de LL(1)
+
+En modo LL(1) no hay salida semántica —ni tabla, ni ámbitos, ni anotaciones— y
+por lo tanto tampoco habría código intermedio. No es un descuido:
+`Grammar::parse_for_ll1_from_str` elimina recursión izquierda y factoriza, lo
+que **renombra las producciones**; un `SemanticSpec` escrito contra los nombres
+originales del `.yalp` dejaría de encontrarlas y emitiría diagnósticos falsos.
+Preferimos no analizar antes que analizar mal. Ver `api::pipeline`.
+
+---
+
+## 9. Pruebas
+
+162 tests unitarios (dentro de `src/`) y 127 de integración (en `tests/`); de
 estos últimos, uno de `codegen_tests.rs` ejecuta un binario recién compilado y
 puede quedar bloqueado por el Control de aplicaciones de Windows — es del
 entorno, no del código.

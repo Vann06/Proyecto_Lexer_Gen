@@ -22,7 +22,9 @@ use crate::semantico::operators;
 use crate::semantico::scopes::{ScopeCollector, ScopeKind};
 use crate::semantico::spec::{SemanticSpec, ChildLocator};
 use crate::semantico::symbols::{SemanticError, Signature, SymbolKind, SymbolTable};
-use crate::semantico::types::{resolve_arithmetic, resolve_assignment, Type};
+use crate::semantico::types::{
+    resolve_arithmetic, resolve_assignment, Type, TypeAnnotations,
+};
 use crate::semantico::visitor::{self, Flow, Visitor};
 use crate::sintactico::runtime::parse_tree::ParseNode;
 use std::collections::HashSet;
@@ -38,6 +40,12 @@ pub struct AnalysisResult {
     /// anónimo: `table` solo conserva el Global, y `Symbol::members` solo
     /// cubre los ámbitos con nombre. Ver `scopes::ScopeCollector`.
     pub scopes: ScopeCollector,
+    /// El tipo inferido de cada nodo de expresion, indexado por la identidad
+    /// del nodo dentro de `tree`. Es lo que una futura fase de generacion de
+    /// codigo intermedio necesita para decidir, en cada operacion, que
+    /// instruccion emitir y donde hace falta una ampliacion — ver
+    /// `types::annotations`.
+    pub types: TypeAnnotations,
 }
 
 /// Punto de entrada: recorre `tree` según `spec` y devuelve la tabla de
@@ -57,6 +65,7 @@ pub fn analyze(tree: &ParseNode, spec: &SemanticSpec) -> AnalysisResult {
         table: analyzer.table,
         errors: analyzer.errors,
         closures: analyzer.closures,
+        types: analyzer.types,
         scopes: analyzer.scopes,
     }
 }
@@ -140,6 +149,12 @@ struct Analyzer<'a> {
     /// Se identifican por dirección porque el árbol no se modifica durante el
     /// recorrido, así que cada nodo tiene una identidad estable.
     unreachable: HashSet<*const ParseNode>,
+    /// El tipo de cada nodo de expresion que se llego a tipar durante el
+    /// recorrido — el "arbol de analisis anotado" del libro, guardado aparte
+    /// del arbol. Se llena solo: `classes::resolve_expr_type` graba cada tipo
+    /// que resuelve, asi que basta con pasarle este campo. Ver
+    /// `types::annotations` para por que no vive dentro del `ParseNode`.
+    types: TypeAnnotations,
 }
 
 impl<'a> Analyzer<'a> {
@@ -160,6 +175,7 @@ impl<'a> Analyzer<'a> {
             switch_types: Vec::new(),
             analyzed_sequences: HashSet::new(),
             unreachable: HashSet::new(),
+            types: TypeAnnotations::new(),
         }
     }
 
@@ -314,7 +330,7 @@ impl<'a> Visitor for Analyzer<'a> {
         // como producción normal más abajo.
         if let Some((_, member_idx)) = classes::find_member_access(node, self.spec) {
             if let (Some(base), Some(member_id)) = (node.children.first(), node.children.get(member_idx)) {
-                let base_ty = classes::resolve_expr_type(base, &self.table, self.spec);
+                let base_ty = classes::resolve_expr_type(base, &self.table, self.spec, &mut self.types);
                 if let Some(Type::Named(class_name)) = base_ty {
                     let member_name = member_id.lexeme.as_deref().unwrap_or(&member_id.symbol);
                     match classes::resolve_member(&self.table, &class_name, member_name, member_id.line, member_id.col) {
@@ -329,7 +345,7 @@ impl<'a> Visitor for Analyzer<'a> {
                             if let (Some(value_node), Some(expected)) =
                                 (node.children.last().filter(|_| node.children.len() > member_idx + 1), expected)
                             {
-                                if let Some(found) = classes::resolve_expr_type(value_node, &self.table, self.spec) {
+                                if let Some(found) = classes::resolve_expr_type(value_node, &self.table, self.spec, &mut self.types) {
                                     if resolve_assignment(&expected, &found).is_err() {
                                         self.errors.push_semantic(&SemanticError::AssignmentTypeMismatch {
                                             name: format!("{class_name}.{member_name}"),
@@ -359,8 +375,8 @@ impl<'a> Visitor for Analyzer<'a> {
         // si alguno es a su vez una operación inválida también se reporta.
         // Un operando cuyo tipo no sabemos resolver no se chequea.
         if let Some((op, left, right)) = classes::find_arithmetic(node, self.spec) {
-            let left_ty = classes::resolve_expr_type(left, &self.table, self.spec);
-            let right_ty = classes::resolve_expr_type(right, &self.table, self.spec);
+            let left_ty = classes::resolve_expr_type(left, &self.table, self.spec, &mut self.types);
+            let right_ty = classes::resolve_expr_type(right, &self.table, self.spec, &mut self.types);
             if let (Some(l), Some(r)) = (left_ty, right_ty) {
                 if resolve_arithmetic(op, &l, &r).is_err() {
                     self.errors.push_semantic(&SemanticError::InvalidArithmetic {
@@ -380,8 +396,8 @@ impl<'a> Visitor for Analyzer<'a> {
         // y, si alguno es a su vez una expresión inválida, también se reporta.
         // Un operando cuyo tipo no sabemos resolver no se chequea.
         if let Some((op, left, right)) = operators::find_logical(node, self.spec) {
-            let left_ty = classes::resolve_expr_type(left, &self.table, self.spec);
-            let right_ty = classes::resolve_expr_type(right, &self.table, self.spec);
+            let left_ty = classes::resolve_expr_type(left, &self.table, self.spec, &mut self.types);
+            let right_ty = classes::resolve_expr_type(right, &self.table, self.spec, &mut self.types);
             if let (Some(l), Some(r)) = (left_ty, right_ty) {
                 let pos = &node.children[1];
                 if let Err(e) = operators::resolve_logical(op, &l, &r, pos.line, pos.col) {
@@ -391,8 +407,8 @@ impl<'a> Visitor for Analyzer<'a> {
         }
 
         if let Some((op, left, right)) = operators::find_comparison(node, self.spec) {
-            let left_ty = classes::resolve_expr_type(left, &self.table, self.spec);
-            let right_ty = classes::resolve_expr_type(right, &self.table, self.spec);
+            let left_ty = classes::resolve_expr_type(left, &self.table, self.spec, &mut self.types);
+            let right_ty = classes::resolve_expr_type(right, &self.table, self.spec, &mut self.types);
             if let (Some(l), Some(r)) = (left_ty, right_ty) {
                 let pos = &node.children[1];
                 if let Err(e) = operators::resolve_comparison(op, &l, &r, pos.line, pos.col) {
@@ -402,7 +418,7 @@ impl<'a> Visitor for Analyzer<'a> {
         }
 
         if let Some((op, operand)) = operators::find_unary(node, self.spec) {
-            if let Some(ty) = classes::resolve_expr_type(operand, &self.table, self.spec) {
+            if let Some(ty) = classes::resolve_expr_type(operand, &self.table, self.spec, &mut self.types) {
                 let pos = &node.children[0];
                 if let Err(e) = operators::resolve_unary(op, &ty, pos.line, pos.col) {
                     self.errors.push_operator(&e);
@@ -434,7 +450,7 @@ impl<'a> Visitor for Analyzer<'a> {
         // validen como usos normales.
         if let Some(elements_node) = collections::find_array_literal(node, self.spec) {
             let elements = collections::flatten_array_elements(elements_node, self.spec);
-            let (_, errs) = collections::resolve_array_literal(&elements, &self.table, self.spec);
+            let (_, errs) = collections::resolve_array_literal(&elements, &self.table, self.spec, &mut self.types);
             for e in errs {
                 self.errors.push_semantic(&e);
             }
@@ -445,14 +461,14 @@ impl<'a> Visitor for Analyzer<'a> {
         // solo dispara el que corresponde.
         if let Some(elements_node) = collections::find_set_literal(node, self.spec) {
             let elements = collections::flatten_array_elements(elements_node, self.spec);
-            let (_, errs) = collections::resolve_set_literal(&elements, &self.table, self.spec);
+            let (_, errs) = collections::resolve_set_literal(&elements, &self.table, self.spec, &mut self.types);
             for e in errs {
                 self.errors.push_semantic(&e);
             }
         }
         if let Some(entries_node) = collections::find_map_literal(node, self.spec) {
             let entries = collections::flatten_map_entries(entries_node, self.spec);
-            let (_, errs) = collections::resolve_map_literal(&entries, &self.table, self.spec);
+            let (_, errs) = collections::resolve_map_literal(&entries, &self.table, self.spec, &mut self.types);
             for e in errs {
                 self.errors.push_semantic(&e);
             }
@@ -466,8 +482,8 @@ impl<'a> Visitor for Analyzer<'a> {
         // integer. Tampoco hace early-return: base e índice son expresiones
         // reales que siguen recorriéndose.
         if let Some((base, index)) = collections::find_index_access(node, self.spec) {
-            let base_ty = classes::resolve_expr_type(base, &self.table, self.spec);
-            let index_ty = classes::resolve_expr_type(index, &self.table, self.spec);
+            let base_ty = classes::resolve_expr_type(base, &self.table, self.spec, &mut self.types);
+            let index_ty = classes::resolve_expr_type(index, &self.table, self.spec, &mut self.types);
             if let Err(e) =
                 collections::validate_index_access(base_ty.as_ref(), index_ty.as_ref(), Some(index), index.line, index.col)
             {
@@ -483,7 +499,7 @@ impl<'a> Visitor for Analyzer<'a> {
         // identificadores se validen como usos normales.
         if let Some(rule) = self.spec.returns.iter().find(|r| r.production == node.symbol) {
             let value_node = find_child_index(node, &rule.value_child).map(|i| &node.children[i]);
-            let value_ty = value_node.and_then(|n| classes::resolve_expr_type(n, &self.table, self.spec));
+            let value_ty = value_node.and_then(|n| classes::resolve_expr_type(n, &self.table, self.spec, &mut self.types));
 
             // Distinción crítica entre "no hay valor" y "hay valor pero no lo
             // sé tipar": las dos llegarían acá como `value_ty == None`, pero
@@ -515,7 +531,7 @@ impl<'a> Visitor for Analyzer<'a> {
                 });
                 if let (Some(target), Some(value_node)) = (target, node.children.get(rule.value_index)) {
                     let name = target.lexeme.as_deref().unwrap_or(&target.symbol).to_string();
-                    let value_type = classes::resolve_expr_type(value_node, &self.table, self.spec);
+                    let value_type = classes::resolve_expr_type(value_node, &self.table, self.spec, &mut self.types);
                     if let Err(e) = self.table.assign(&name, value_type.as_ref(), target.line, target.col) {
                         self.errors.push_semantic(&e);
                     }
@@ -544,7 +560,7 @@ impl<'a> Visitor for Analyzer<'a> {
                     node.children.get(rule.arg_list_index),
                     self.spec.args_list_symbol.as_deref(),
                 ) {
-                    if let Some((callee, label)) = classes::resolve_callee(callee_node, &self.table, self.spec) {
+                    if let Some((callee, label)) = classes::resolve_callee(callee_node, &self.table, self.spec, &mut self.types) {
                         let arg_nodes = classes::flatten_arg_list(arg_list_node, args_list_symbol);
                         let errs = classes::validate_call(
                             &self.table,
@@ -553,6 +569,7 @@ impl<'a> Visitor for Analyzer<'a> {
                             &label,
                             (callee_node.line, callee_node.col),
                             &arg_nodes,
+                            &mut self.types,
                         );
                         for e in errs {
                             self.errors.push_semantic(&e);
@@ -582,6 +599,7 @@ impl<'a> Visitor for Analyzer<'a> {
                         &class_name,
                         (class_id.line, class_id.col),
                         &arg_nodes,
+                        &mut self.types,
                     ) {
                         self.errors.push_semantic(&e);
                     }
@@ -605,6 +623,7 @@ impl<'a> Visitor for Analyzer<'a> {
                 &struct_name,
                 (name_node.line, name_node.col),
                 &field_inits,
+                &mut self.types,
             ) {
                 self.errors.push_semantic(&e);
             }
@@ -647,7 +666,7 @@ impl<'a> Visitor for Analyzer<'a> {
         for rule in self.spec.flow.cases.iter().filter(|r| r.production == node.symbol) {
             if let Some(value_index) = find_child_index(node, &rule.value_child) {
                 let value = &node.children[value_index];
-                let found = classes::resolve_expr_type(value, &self.table, self.spec);
+                let found = classes::resolve_expr_type(value, &self.table, self.spec, &mut self.types);
                 let discriminant = self.switch_types.last().cloned().flatten();
                 if let Err(error) =
                     flow::validate_case(discriminant.as_ref(), found.as_ref(), value.line, value.col)
@@ -674,7 +693,7 @@ impl<'a> Visitor for Analyzer<'a> {
             .find(|rule| rule.production == node.symbol)
             .map(|rule| {
                 let discriminant = find_child_index(node, &rule.discriminant_child)
-                    .and_then(|i| classes::resolve_expr_type(&node.children[i], &self.table, self.spec));
+                    .and_then(|i| classes::resolve_expr_type(&node.children[i], &self.table, self.spec, &mut self.types));
                 self.switch_types.push(discriminant);
                 self.flow_context.enter_switch();
             })
@@ -723,7 +742,7 @@ impl<'a> Visitor for Analyzer<'a> {
                         .as_ref()
                         .and_then(|locator| find_child_index(node, locator))
                         .map(|i| &node.children[i]);
-                    let init_type = init_node.and_then(|n| classes::resolve_expr_type(n, &self.table, self.spec));
+                    let init_type = init_node.and_then(|n| classes::resolve_expr_type(n, &self.table, self.spec, &mut self.types));
 
                     let decl_result = match type_idx {
                         Some(i) => {
@@ -950,7 +969,7 @@ impl<'a> Visitor for Analyzer<'a> {
             };
             let iterable = find_child_index(node, &rule.iterable_child).map(|i| &node.children[i]);
             let iterable_ty =
-                iterable.and_then(|n| classes::resolve_expr_type(n, &self.table, self.spec));
+                iterable.and_then(|n| classes::resolve_expr_type(n, &self.table, self.spec, &mut self.types));
 
             // Un tipo que no se pudo resolver no es un error acá: la causa
             // real ya tiene su propio diagnóstico. Uno que SÍ se resolvió y no
@@ -1025,7 +1044,7 @@ impl<'a> Visitor for Analyzer<'a> {
         for rule in self.spec.flow.conditions.iter().filter(|r| r.production == node.symbol) {
             if let Some(condition_index) = find_child_index(node, &rule.condition_child) {
                 let condition = &node.children[condition_index];
-                let found = classes::resolve_expr_type(condition, &self.table, self.spec);
+                let found = classes::resolve_expr_type(condition, &self.table, self.spec, &mut self.types);
                 if let Err(error) = flow::validate_condition(found.as_ref(), condition.line, condition.col) {
                     self.errors.push_flow(&error);
                 }
