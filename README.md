@@ -15,6 +15,13 @@ ANTLR](ARQUITECTURA.md#por-qué-no-se-usó-antlr). Código intermedio y código
 objetivo siguen en el roadmap — ver
 [ORGANIZACION.md](ORGANIZACION.md#fases-futuras-no-implementadas).
 
+**¿Buscas los entregables?**
+[ARQUITECTURA.md §0](ARQUITECTURA.md#0-dónde-está-cada-entregable) mapea cada
+uno —analizador, árbol visual, tabla de símbolos por entorno, batería de
+pruebas, IDE y documentación— a su archivo y al comando que lo ejecuta,
+incluida la **batería de 45 casos** (`workspace/casos_semanticos.txt`) con su
+tabla regla→código y cómo recorrerla desde el IDE.
+
 **¿Vas a escribir código?** Revisa primero
 [API_REFERENCE.md](API_REFERENCE.md) — índice de cada función y método del
 proyecto (backend y frontend) con `archivo:línea`, para no reimplementar lo que

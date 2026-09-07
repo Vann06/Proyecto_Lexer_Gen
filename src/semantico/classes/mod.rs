@@ -225,6 +225,51 @@ fn resolve_expr_type_inner(
             .flatten();
     }
 
+    // Invocacion (`f(args)`, `obj.metodo(args)`): el tipo de la expresion es
+    // el RETORNO declarado del invocado. Sin esta rama toda llamada valia
+    // `None`, y como las reglas que dependen del tipo se callan ante `None`,
+    // eso apagaba en cadena la verificacion de `let x: T = f();`, la de
+    // `return f(x)` (ver `analyzer::exit`, que exige poder tipar el valor) y
+    // la de una llamada usada como condicion.
+    //
+    // Se reusa `resolve_callee` -- el mismo que usa `analyzer::enter` para
+    // validar los argumentos-- asi que `f(...)` y `obj.metodo(...)` se
+    // resuelven por el mismo camino. Si el invocado no tiene firma (no es
+    // invocable, o es un metodo cuya clase todavia se esta recorriendo) se
+    // devuelve `None`: silencioso por diseno, igual que el resto del modulo.
+    if let Some(rule) = &spec.call {
+        if node.symbol == rule.production
+            && node.children.iter().any(|c| c.symbol == rule.open_paren_token)
+        {
+            let callee_node = node.children.get(rule.callee_index)?;
+            let (callee, _) = resolve_callee(callee_node, table, spec, rec)?;
+            return callee.signature.as_ref().map(|s| s.returns.clone());
+        }
+    }
+
+    // Instanciacion (`new Clase(args)`): el tipo es la clase nombrada. Con
+    // esto `let p = new Punto();` infiere `Punto` y el acceso a miembros
+    // sobre `p` deja de resolverse a la nada.
+    //
+    // Se exige que la clase EXISTA, con la misma condicion que usa
+    // `validate_instantiation`. No es para diagnosticar --este modulo es
+    // silencioso-- sino para no INVENTAR un tipo: si la clase no se declaro,
+    // el analyzer ya reporta `S007`, y devolver `Named(inexistente)` haria
+    // que la asignacion tambien fallara con un `S006` DERIVADO de aquel. Es
+    // el mismo criterio por el que un tipo desconocido es neutro y no
+    // participa en ninguna incompatibilidad: un hueco no debe cascadear en
+    // diagnosticos falsos.
+    if let Some(rule) = &spec.instantiation {
+        if node.symbol == rule.production
+            && node.children.first().map(|c| c.symbol.as_str()) == Some(rule.new_token.as_str())
+        {
+            let class_id = node.children.get(rule.class_name_index)?;
+            let name = class_id.lexeme.as_deref().unwrap_or(&class_id.symbol);
+            table.lookup(name).filter(|s| s.kind == SymbolKind::Class)?;
+            return Some(Type::Named(name.to_string()));
+        }
+    }
+
     if node.children.is_empty() {
         if node.symbol == spec.identifier_token {
             let name = node.lexeme.as_deref().unwrap_or(&node.symbol);
@@ -699,6 +744,7 @@ pub fn validate_call(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::semantico::spec::{CallRule, InstantiationRule};
 
     fn leaf(symbol: &str, lexeme: &str) -> ParseNode {
         ParseNode { symbol: symbol.to_string(), lexeme: Some(lexeme.to_string()), children: vec![], line: 1, col: 1 }
@@ -776,6 +822,107 @@ mod tests {
             slot.parent = c.parent;
         }
         t
+    }
+
+    /// Un nodo de llamada con la forma que declara `%call primary LPAREN 0 2`:
+    /// `primary: primary LPAREN arg_list RPAREN`.
+    fn call_node(callee: &str) -> ParseNode {
+        ParseNode {
+            symbol: "primary".to_string(),
+            lexeme: None,
+            children: vec![
+                leaf("ID", callee),
+                leaf("LPAREN", "("),
+                ParseNode { symbol: "arg_list".to_string(), lexeme: None, children: vec![], line: 1, col: 1 },
+                leaf("RPAREN", ")"),
+            ],
+            line: 1,
+            col: 1,
+        }
+    }
+
+    /// Un nodo `new` con la forma que declara `%new atom NEW 1 3`:
+    /// `atom: NEW ID LPAREN arg_list RPAREN`.
+    fn new_node(class_name: &str) -> ParseNode {
+        ParseNode {
+            symbol: "atom".to_string(),
+            lexeme: None,
+            children: vec![
+                leaf("NEW", "new"),
+                leaf("ID", class_name),
+                leaf("LPAREN", "("),
+                ParseNode { symbol: "arg_list".to_string(), lexeme: None, children: vec![], line: 1, col: 1 },
+                leaf("RPAREN", ")"),
+            ],
+            line: 1,
+            col: 1,
+        }
+    }
+
+    /// Spec con `%call` y `%new` configurados igual que en `compiscript.yalp`.
+    fn spec_con_llamadas() -> SemanticSpec {
+        SemanticSpec {
+            identifier_token: "ID".to_string(),
+            call: Some(CallRule {
+                production: "primary".to_string(),
+                open_paren_token: "LPAREN".to_string(),
+                callee_index: 0,
+                arg_list_index: 2,
+            }),
+            instantiation: Some(InstantiationRule {
+                production: "atom".to_string(),
+                new_token: "NEW".to_string(),
+                class_name_index: 1,
+                arg_list_index: 3,
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn una_llamada_se_tipa_con_el_retorno_declarado_del_invocado() {
+        let mut t = SymbolTable::new();
+        t.declare("f", SymbolKind::Function, 1, 1).unwrap();
+        t.lookup_mut("f").unwrap().signature =
+            Some(Signature { params: vec![], returns: Type::Int });
+
+        let mut rec = TypeAnnotations::default();
+        let ty = resolve_expr_type(&call_node("f"), &t, &spec_con_llamadas(), &mut rec);
+        assert_eq!(ty, Some(Type::Int), "el tipo de `f()` es el retorno de `f`");
+    }
+
+    #[test]
+    fn una_llamada_a_algo_sin_firma_no_se_tipa() {
+        // Una variable invocada no es una funcion: el diagnostico (S020) lo
+        // emite el analyzer; aca solo hay que devolver `None`, sin adivinar.
+        let mut t = SymbolTable::new();
+        t.declare("n", SymbolKind::Variable, 1, 1).unwrap();
+        t.lookup_mut("n").unwrap().ty = Some(Type::Int);
+
+        let mut rec = TypeAnnotations::default();
+        let ty = resolve_expr_type(&call_node("n"), &t, &spec_con_llamadas(), &mut rec);
+        assert_eq!(ty, None);
+    }
+
+    #[test]
+    fn una_instanciacion_se_tipa_con_la_clase_que_nombra() {
+        let t = table_with_classes(vec![class_symbol("Punto", None, vec![attr("x", Type::Int)])]);
+
+        let mut rec = TypeAnnotations::default();
+        let ty = resolve_expr_type(&new_node("Punto"), &t, &spec_con_llamadas(), &mut rec);
+        assert_eq!(ty, Some(Type::Named("Punto".to_string())));
+    }
+
+    #[test]
+    fn instanciar_una_clase_inexistente_no_inventa_un_tipo() {
+        // El analyzer ya reporta S007 por la clase desconocida. Si ademas se
+        // tipara como `Named("NoExiste")`, la asignacion fallaria con un S006
+        // DERIVADO de aquel — justo lo que el proyecto evita en todos lados.
+        let t = table_with_classes(vec![class_symbol("Punto", None, vec![])]);
+
+        let mut rec = TypeAnnotations::default();
+        let ty = resolve_expr_type(&new_node("NoExiste"), &t, &spec_con_llamadas(), &mut rec);
+        assert_eq!(ty, None);
     }
 
     #[test]

@@ -6,10 +6,11 @@
 //! cumple la especificación, y el archivo sirve de demostración.
 //!
 //! Dos ejemplos del documento se escriben acá con llaves —`if (n < 60) { continue; }`
-//! y `if (n2 <= 1) { return 1; }`— porque la gramática exige un bloque en el
-//! cuerpo de todo control de flujo. Es un límite conocido y deliberado: admitir
-//! una sentencia suelta reintroduce el *dangling else*, que es una ambigüedad
-//! LALR real. Ver `ARQUITECTURA.md`, sección de límites conocidos.
+//! y `if (n2 <= 1) { return 1; }`— porque el cuerpo de todo control de flujo
+//! tiene que ser un bloque. Eso NO es una limitación de este proyecto: la
+//! gramática oficial exige lo mismo (`Compiscript.g4:51-55` usa `block`, y
+//! `block: '{' statement* '}'` en `Compiscript.g4:30`). Los que no siguen la
+//! gramática oficial son esos dos ejemplos en prosa del enunciado.
 use lexer_generator::api;
 use std::fs;
 
@@ -195,5 +196,153 @@ print(n + t);
         codes.iter().filter(|c| c.starts_with("S015")).count(),
         1,
         "`integer + string` debe seguir reportando S015: {codes:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Arreglo C: las llamadas a funcion y `new` ya tienen tipo.
+//
+// Antes de esto `resolve_expr_type` no tenia rama para ninguna de las dos, asi
+// que toda llamada valia `None`. Como las reglas que dependen del tipo se
+// callan ante `None` en vez de adivinar, eso apagaba en cadena cuatro reglas
+// del enunciado: asignacion contra el tipo declarado, tipo de retorno,
+// condiciones booleanas y acceso a miembros sobre un tipo inferido.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn el_tipo_de_retorno_de_una_llamada_se_verifica_en_la_asignacion() {
+    let source = "function f(): integer {
+  return 1;
+}
+let x: string = f();
+print(x);
+";
+    let resp = analizar(source, "llamada_asignacion.cps");
+    let codes = codigos(&resp);
+    assert_eq!(
+        codes.iter().filter(|c| c.starts_with("S006")).count(),
+        1,
+        "asignar un `integer` devuelto por `f()` a un `string` debe reportarse: {codes:?}"
+    );
+}
+
+#[test]
+fn el_tipo_de_una_instanciacion_se_infiere_sin_anotacion() {
+    // Sin anotacion de tipo, `p` se infiere del inicializador. Si `new Punto()`
+    // no tipara, `p` quedaria sin tipo y el acceso a miembro callaria.
+    let source = "class Punto {
+  let x: integer;
+  function constructor(a: integer) {
+    this.x = a;
+  }
+}
+let p = new Punto(1);
+print(p.noExiste);
+";
+    let resp = analizar(source, "new_inferido.cps");
+    let codes = codigos(&resp);
+    assert_eq!(
+        codes.iter().filter(|c| c.starts_with("S010")).count(),
+        1,
+        "el miembro inexistente debe detectarse sobre el tipo inferido: {codes:?}"
+    );
+}
+
+#[test]
+fn un_return_que_devuelve_una_llamada_se_verifica() {
+    let source = "function h(): string {
+  return \"x\";
+}
+function g(): integer {
+  return h();
+}
+print(g());
+";
+    let resp = analizar(source, "return_llamada.cps");
+    let codes = codigos(&resp);
+    assert_eq!(
+        codes.iter().filter(|c| c.starts_with("S016")).count(),
+        1,
+        "devolver un `string` desde una funcion `integer` debe reportarse: {codes:?}"
+    );
+}
+
+#[test]
+fn una_llamada_como_condicion_debe_ser_booleana() {
+    let source = "function f(): integer {
+  return 1;
+}
+if (f()) {
+  print(1);
+}
+";
+    let resp = analizar(source, "condicion_llamada.cps");
+    let codes = codigos(&resp);
+    assert_eq!(
+        codes.iter().filter(|c| c.starts_with("S025")).count(),
+        1,
+        "una condicion `integer` debe reportarse: {codes:?}"
+    );
+}
+
+#[test]
+fn una_llamada_como_argumento_se_verifica() {
+    let source = "function g(): string {
+  return \"x\";
+}
+function f(a: integer): integer {
+  return a;
+}
+print(f(g()));
+";
+    let resp = analizar(source, "argumento_llamada.cps");
+    let codes = codigos(&resp);
+    assert_eq!(
+        codes.iter().filter(|c| c.starts_with("S014")).count(),
+        1,
+        "pasar un `string` donde se pide `integer` debe reportarse: {codes:?}"
+    );
+}
+
+#[test]
+fn una_llamada_bien_tipada_no_reporta_nada() {
+    // La otra mitad: tipar las llamadas no debe inventar diagnosticos donde
+    // los tipos si coinciden.
+    let source = "function suma(a: integer, b: integer): integer {
+  return a + b;
+}
+let x: integer = suma(2, 3);
+print(x);
+";
+    let resp = analizar(source, "llamada_ok.cps");
+    assert!(
+        resp.problems.is_empty(),
+        "una llamada bien tipada no debe reportar nada: {:?}",
+        codigos(&resp)
+    );
+}
+
+#[test]
+fn instanciar_una_clase_inexistente_no_encadena_un_segundo_error() {
+    // Una clase que no existe reporta S007 y NADA MAS: tipar `new NoExiste()`
+    // como `NoExiste` haria que la asignacion a `Punto` fallara ademas con un
+    // S006 derivado. Es el mismo criterio que hace neutro a un tipo
+    // desconocido — un hueco no debe cascadear en diagnosticos falsos.
+    let source = "class Punto {
+  let x: integer;
+}
+let p: Punto = new NoExiste();
+";
+    let resp = analizar(source, "clase_inexistente.cps");
+    let codes = codigos(&resp);
+    assert_eq!(
+        codes.iter().filter(|c| c.starts_with("S007")).count(),
+        1,
+        "la clase desconocida debe reportarse: {codes:?}"
+    );
+    assert_eq!(
+        codes.iter().filter(|c| c.starts_with("S006")).count(),
+        0,
+        "y NO debe encadenar una incompatibilidad de asignacion: {codes:?}"
     );
 }

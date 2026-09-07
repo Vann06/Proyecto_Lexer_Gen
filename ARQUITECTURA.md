@@ -11,9 +11,93 @@ para los endpoints HTTP, [`API_REFERENCE.md`](API_REFERENCE.md).
 
 ---
 
+## 0. Dónde está cada entregable
+
+Mapa de arranque: qué pide el enunciado, dónde vive y con qué comando se
+ejecuta. Todo lo demás de este archivo desarrolla la segunda fila.
+
+| Entregable | Dónde | Cómo se ejecuta |
+|---|---|---|
+| **Analizador léxico + sintáctico** | `src/lexico/`, `src/sintactico/`; la gramática de Compiscript en `workspace/compiscript.yal` + `workspace/compiscript.yalp` | El IDE, o por CLI: `cargo run --bin test_pipeline -- workspace/compiscript.yalp workspace/compiscript.yal workspace/rubrica.cps --lalr` (ojo al **orden**: `.yalp` antes que `.yal`) |
+| **Análisis semántico** | `src/semantico/` (15 submódulos) | Se activa solo, dentro del pipeline, cuando el `.yalp` trae `%ident` y el modo no es LL(1) |
+| **Árbol sintáctico con representación visual** | `to_dot_annotated` en `src/sintactico/runtime/parse_tree.rs` | Pestaña **ÁRBOL** del IDE (render con viz.js, botón ↓ PNG) |
+| **Tabla de símbolos por entorno** | `SymbolTable::dump()` y `ScopeCollector::to_json()` | Pestaña **SÍMBOLOS** del IDE — ver §6 |
+| **Batería de pruebas** | `workspace/casos_semanticos.txt` y los `.cps` de `workspace/` | `cargo test`, o el panel **TEST CASES** del IDE — ver más abajo |
+| **IDE funcional** | `frontend/IDE/` | `docker compose up --build` → <http://localhost:4000> — ver [`GUIA_USO.md`](GUIA_USO.md) |
+| **Documentación** | Este archivo (fase semántica), [`ORGANIZACION.md`](ORGANIZACION.md) (fases y carpetas), [`PIPELINE_GUIDE.md`](PIPELINE_GUIDE.md) (pipeline de punta a punta), [`API_REFERENCE.md`](API_REFERENCE.md) (índice de funciones), [`GUIA_USO.md`](GUIA_USO.md) (ejecución) | — |
+
+### La batería de pruebas
+
+El enunciado pide **un caso exitoso y uno fallido por cada regla semántica**.
+Eso es `workspace/casos_semanticos.txt`: **45 programas completos, uno por
+línea**, cada uno un bloque `{ ... }` independiente. Su tabla de referencia
+—qué comprueba cada caso y qué código debe salir— está en
+[`workspace/casos_semanticos.README.md`](workspace/casos_semanticos.README.md),
+que además documenta los códigos sin caso y por qué son inalcanzables.
+
+```powershell
+cargo test --test bateria_semantica_tests   # los 45 casos, en LALR(1) y SLR(1)
+```
+
+Ese test no se conforma con "no explotó": exige el diagnóstico **exacto** de
+cada línea, ni uno de más ni uno de menos, y corre los 45 dos veces (una por
+modo). Es la comprobación reproducible de que cada regla está viva.
+
+**Desde el IDE**, para verlos de a uno: levantar el backend, cargar
+`workspace/compiscript.yal`, `workspace/compiscript.yalp` y
+`workspace/casos_semanticos.txt`, pulsar **RUN** y luego **PARSEAR**, y navegar
+el panel **TEST CASES** de la izquierda. Cada línea es un caso clicable y la
+pestaña **PROBLEMAS** muestra su diagnóstico. Un `.cps` multilínea, en cambio,
+se compila entero: el panel por línea solo aplica a las baterías `.txt`.
+
+#### Las otras baterías
+
+| Archivo | Casos | Qué cubre | Test |
+|---|---|---|---|
+| `workspace/casos_semanticos.txt` | 45 | Una regla por caso, con su éxito y su fallo | `bateria_semantica_tests.rs` |
+| `workspace/duplicates_casos.txt` | 15 | Declaraciones repetidas y símbolos nunca leídos (`S001`/`W001`) | `duplicates_tests.rs` |
+| `workspace/colecciones_casos.txt` | 22 | Las cuatro colecciones, sobre `colecciones.yalp` — otra gramática | `colecciones_tests.rs` |
+
+`duplicates_casos.txt` necesita la directiva `%warn_unused`, que
+`compiscript.yalp` **no** trae: el test se la antepone en memoria
+(`duplicates_tests.rs:35`). Para reproducirlo en el IDE hay que agregar esa
+línea al `.yalp` a mano.
+
+#### Programas `.cps` completos
+
+Para demostrar el analizador sobre código de verdad y no sobre casos de una
+línea, `workspace/` trae 16 archivos `.cps`. Los pares ok/error son los que más
+sirven en una defensa:
+
+| Éxito (cero diagnósticos) | Fallo (códigos esperados) | Tema |
+|---|---|---|
+| `rubrica.cps` | — | Las características del enunciado, todas juntas |
+| `clases_ok.cps` | `clases_errores.cps` | Clases, herencia, constructores |
+| `flujo_ok.cps` | `flujo_errores.cps` | Control de flujo completo |
+| `ejemplo_closures.cps` | — | Funciones anidadas y capturas |
+| `caso1_valido_multidim.cps` | `caso2_heterogeneo.cps`, `caso3_indice_no_entero.cps`, `caso4_no_indexable.cps` | Listas e índices |
+| — | `codigo_muerto.cps`, `codigo_muerto_corte.cps` | Código inalcanzable |
+
+#### La suite completa
+
+```powershell
+cargo test                    # todo: 170 unitarios + 145 de integración
+cargo test --lib semantico    # solo los unitarios de esta fase
+```
+
+Detalle de entorno en Windows: un test de `codegen_tests.rs` compila y ejecuta
+un binario, y el Control de aplicaciones puede bloquearlo con el error 4551
+(`una directiva de Control de aplicaciones bloqueó este archivo`). Si pasa,
+borrar el `.exe` de `target/debug/deps/` fuerza un re-enlace con otro hash y
+vuelve a correr. Es del entorno, no del código.
+
+El desglose de qué cubre cada archivo de test está en la §9.
+
+---
+
 ## 1. Mapa de módulos
 
-`src/semantico/` son 14 submódulos con una responsabilidad cada uno. Los tres
+`src/semantico/` son 15 submódulos con una responsabilidad cada uno. Los tres
 primeros son la infraestructura; el resto son familias de reglas.
 
 | Módulo | Responsabilidad |
@@ -271,8 +355,9 @@ La regla que sostiene todo: **`enter` declara y abre, `exit` cierra y cuelga.**
 
 ## 5. Catálogo de diagnósticos
 
-35 códigos. Todos los `S###` son errores (`level: "err"`); `W001` es advertencia
-(`level: "warn"`). Fuente: `src/semantico/errors/mod.rs`.
+40 códigos: `S001`–`S038` más `W001` y `W002`. Todos los `S###` son errores
+(`level: "err"`); los `W###` son advertencias (`level: "warn"`). Fuente:
+`src/semantico/errors/mod.rs`.
 
 | Código | `ErrorKind` | Significado | Módulo |
 |---|---|---|---|
@@ -383,18 +468,26 @@ Documentados a propósito, no olvidados:
   de no detectar `{ return 1; } print(2);`, donde un bloque suelto siempre
   retorna. Saberlo exigiría propagar la terminalidad hacia arriba y decidir
   sobre las ramas de un `if`, que ya es análisis de alcanzabilidad completo.
-- **El operador ternario** es lo único del `Compiscript.g4` oficial que el
-  subconjunto ejecutable todavía no traduce. El control de flujo ya está
+- **Dos formas del `Compiscript.g4` oficial no están en el subconjunto
+  ejecutable.** La primera es el **operador ternario** (`conditionalExpr`,
+  `Compiscript.g4:85-87`). La segunda es la **asignación como expresión**
+  (`AssignExpr` y `PropertyAssignExpr`, `Compiscript.g4:79-83`): acá
+  `expr: or_expr` (`workspace/compiscript.yalp:504-506`) arranca en el `or`, y
+  la asignación existe solo como sentencia (`assign_stmt`), así que
+  `while ((x = next()) > 0)` no parsea. El control de flujo, en cambio, ya está
   completo: `if`/`while`/`do-while`/`for`/`foreach`/`switch`/`try-catch`.
-- **Todo cuerpo de control de flujo exige llaves.** `if_stmt`, `while_stmt`,
-  `for_stmt` y `foreach_stmt` piden un `bloque`, y `bloque` es
-  `LBRACE ... RBRACE` (`workspace/compiscript.yalp:286-295`), así que
-  `if (n < 60) continue;` no parsea y hay que escribir
-  `if (n < 60) { continue; }`. Afecta a dos ejemplos de la especificación del
-  lenguaje (el de `break`/`continue` y el de recursión), que en
-  `workspace/rubrica.cps` van con llaves. Es deliberado: admitir una sentencia
-  suelta reintroduce el *dangling else*, una ambigüedad LALR real — no es
-  agregar una alternativa a la producción.
+- **Todo cuerpo de control de flujo exige llaves — igual que la `.g4`.** Esto
+  NO es una desviación: `Compiscript.g4:51-55` define `ifStatement`,
+  `whileStatement`, `forStatement` y `foreachStatement` con `block`, y
+  `block: '{' statement* '}'` (`Compiscript.g4:30`). La gramática oficial
+  también obliga a las llaves; acá `if_stmt`/`while_stmt`/`for_stmt`/
+  `foreach_stmt` piden `bloque` y `bloque` es `LBRACE ... RBRACE`
+  (`workspace/compiscript.yalp:286-295`), que es exactamente lo mismo. Los que
+  no siguen la gramática oficial son dos ejemplos **en prosa** del enunciado
+  (el de `break`/`continue` y el de recursión), escritos como
+  `if (n < 60) continue;`; en `workspace/rubrica.cps` van con llaves. Admitir
+  la sentencia suelta, además, reintroduciría el *dangling else*, una
+  ambigüedad LALR real.
 - **La gramática permite varios `default` en un `switch`** y en cualquier
   posición, mientras que la `.g4` admite a lo sumo uno y al final. Se resolvió
   así para no anidar epsilons que generan conflictos LALR; restringirlo sería
@@ -406,9 +499,18 @@ Documentados a propósito, no olvidados:
   asignación de almacenamiento del capítulo 7 del libro del dragón — ver la
   sección 8, que detalla qué le falta a la generación de código intermedio.
 - **Los tipos de expresiones compuestas no siempre se resuelven.** `resolve_expr_type`
-  cubre identificadores, `this`, literales, accesos a miembro e indexaciones;
-  una expresión más enredada devuelve `Unknown`, y las reglas que dependen de
-  ella se callan en vez de adivinar.
+  cubre identificadores, `this`, literales, accesos a miembro, indexaciones,
+  operadores, **llamadas a función** (por el retorno declarado del invocado) e
+  **instanciaciones** (`new C(...)` tipa como `C`); una expresión más enredada
+  devuelve `None`, y las reglas que dependen de ella se callan en vez de
+  adivinar. Que las llamadas tipen no es cosmético: sin eso,
+  `let x: T = f();`, `return f(x)` y `if (f())` quedaban sin verificar, porque
+  todas se rinden ante un tipo desconocido. La instanciación exige, además, que
+  la clase **exista** —la misma condición que usa `validate_instantiation`—: si
+  no se declaró, el `S007` ya se reporta y tipar como `Named(inexistente)` haría
+  que la asignación fallara con un `S006` **derivado** de aquel. Es el mismo
+  criterio que hace neutro a un tipo desconocido: un hueco no debe cascadear en
+  diagnósticos falsos.
 - **`members` no se aplana transitivamente**: un local declarado dos niveles
   adentro de una función no aparece colgado de ella. Aplanarlo hacia arriba
   arriesgaría filtrar la visibilidad de ese nombre más allá de su bloque.
@@ -478,15 +580,9 @@ Preferimos no analizar antes que analizar mal. Ver `api::pipeline`.
 
 ## 9. Pruebas
 
-166 tests unitarios (dentro de `src/`) y 137 de integración (en `tests/`); de
-estos últimos, uno de `codegen_tests.rs` ejecuta un binario recién compilado y
-puede quedar bloqueado por el Control de aplicaciones de Windows — es del
-entorno, no del código.
-
-```powershell
-cargo test                # todo
-cargo test --lib semantico # solo los unitarios de esta fase
-```
+170 tests unitarios (dentro de `src/`) y 145 de integración (en `tests/`). Dónde
+están las baterías de casos, cómo se corren y cómo se navegan desde el IDE está
+en la **§0**; acá va el desglose de qué cubre cada archivo.
 
 Los de integración corren por el **pipeline real** (`.yal` + `.yalp` + fuente),
 no con árboles armados a mano:
@@ -504,7 +600,9 @@ no con árboles armados a mano:
 | `contract_tests.rs` (7) | Los contratos entre fases: que el lexer entrega posiciones reales, que el árbol tiene la forma de la gramática, que las firmas y las clases sobreviven al pipeline |
 | `pascalito_tests.rs` (5) · `gramatica_agnostica_tests.rs` (3) | Que todo lo anterior vale para otras gramáticas |
 | `api_pipeline_tests.rs` (7) | La forma de la respuesta HTTP, incluido `scopes` |
-| `semantic_analysis_tests.rs` (4) · `type_system_tests.rs` (9) | El walker y la tabla de tipos aislados |
+| `semantic_analysis_tests.rs` (4) · `type_system_tests.rs` (13) | El walker y la tabla de tipos aislados |
+| `rubrica_compiscript_tests.rs` (14) | El enunciado de punta a punta: `rubrica.cps` sin un solo diagnóstico, el constructor heredado, la concatenación de textos, y que las llamadas y `new` tienen tipo sin encadenar errores derivados |
+| `type_annotations_tests.rs` (6) | El mapa lateral de tipos por nodo y su correlación con los `id` del DOT |
 
 Casos de ejemplo en `workspace/`: `ejemplo.cps`, `clases_ok.cps`,
 `clases_errores.cps`, `ejemplo_closures.cps`, `arreglos*.cps`, `caso1..4*.cps` y
