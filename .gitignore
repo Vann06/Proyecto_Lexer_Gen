@@ -32,3 +32,7 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.bak
+
+/CUMPLIMIENTO_REQUISITOS.md
+
+/graphify-out
