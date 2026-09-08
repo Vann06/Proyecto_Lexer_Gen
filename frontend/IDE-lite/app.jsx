@@ -475,17 +475,19 @@ function SymbolTableView(){
       </div>
       <table className="t">
         <thead>
-          <tr><th>#</th><th>ENTORNO</th><th>PROF.</th><th>NOMBRE</th><th>TIPO</th><th>DATO</th><th>MOD.</th><th>POS.</th></tr>
+          <tr><th>#</th><th>ENTORNO</th><th>APERTURA</th><th>PROF.</th><th>NOMBRE</th><th>TIPO</th><th>DATO</th><th>MOD.</th><th>POS.</th></tr>
         </thead>
         <tbody>
           {scopes.flatMap((sc, i) => {
             const entorno = `${sc.kind}${sc.label ? `(${sc.label})` : ""}`;
             const entornoColor = kindColor(sc.kind, SCOPE_KIND_COLOR);
+            const apertura = (sc.line || sc.col) ? `${sc.line}:${sc.col}` : "—";
             if (!sc.symbols || !sc.symbols.length) {
               return (
                 <tr key={i}>
                   <td className="dim">{sc.order}</td>
                   <td style={{color: entornoColor}}>{entorno}</td>
+                  <td className="dim">{apertura}</td>
                   <td className="dim">{sc.depth}</td>
                   <td className="dim" colSpan={5}>(sin declaraciones propias)</td>
                 </tr>
@@ -497,6 +499,7 @@ function SymbolTableView(){
                   <>
                     <td className="dim" rowSpan={sc.symbols.length}>{sc.order}</td>
                     <td style={{color: entornoColor}} rowSpan={sc.symbols.length}>{entorno}</td>
+                    <td className="dim" rowSpan={sc.symbols.length}>{apertura}</td>
                     <td className="dim" rowSpan={sc.symbols.length}>{sc.depth}</td>
                   </>
                 )}

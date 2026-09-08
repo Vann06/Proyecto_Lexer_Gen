@@ -35,12 +35,19 @@ pub enum ScopeKind {
 pub struct Scope {
     kind: ScopeKind,
     label: Option<String>,
+    /// Posición del nodo que abrió este scope (p. ej. la `{` de un `bloque`,
+    /// o el nombre de un `func_decl`/`class_decl`) — sin esto, dos `Block`
+    /// anónimos sin declaraciones propias son indistinguibles en la salida:
+    /// no hay forma de saber a qué `if`/`while`/cuerpo de función corresponde
+    /// cada uno.
+    open_line: usize,
+    open_col: usize,
     symbols: HashMap<String, Symbol>,
 }
 
 impl Scope {
-    fn new(kind: ScopeKind, label: Option<String>) -> Self {
-        Scope { kind, label, symbols: HashMap::new() }
+    fn new(kind: ScopeKind, label: Option<String>, open_line: usize, open_col: usize) -> Self {
+        Scope { kind, label, open_line, open_col, symbols: HashMap::new() }
     }
 
     pub fn kind(&self) -> ScopeKind {
@@ -49,6 +56,10 @@ impl Scope {
 
     pub fn label(&self) -> Option<&str> {
         self.label.as_deref()
+    }
+
+    pub fn position(&self) -> (usize, usize) {
+        (self.open_line, self.open_col)
     }
 
     /// Busca `name` SOLO en este scope (no en los exteriores) — de ahí "own".
@@ -91,11 +102,11 @@ pub struct ScopeStack {
 
 impl ScopeStack {
     pub fn new() -> Self {
-        ScopeStack { scopes: vec![Scope::new(ScopeKind::Global, None)] }
+        ScopeStack { scopes: vec![Scope::new(ScopeKind::Global, None, 0, 0)] }
     }
 
-    pub fn enter(&mut self, kind: ScopeKind, label: Option<String>) {
-        self.scopes.push(Scope::new(kind, label));
+    pub fn enter(&mut self, kind: ScopeKind, label: Option<String>, line: usize, col: usize) {
+        self.scopes.push(Scope::new(kind, label, line, col));
     }
 
     /// Desapila el scope actual y lo devuelve (por si el llamador quiere
@@ -174,6 +185,11 @@ pub struct ScopeSnapshot {
     pub label: Option<String>,
     /// Profundidad que ocupaba en la pila cuando se cerró (0 = Global).
     pub depth: usize,
+    /// Posición de apertura del scope (ver `Scope::open_line`/`open_col`) —
+    /// deja identificar CADA `Block` anónimo por su lugar en el código, en
+    /// vez de que todos luzcan idénticos cuando no declaran nada propio.
+    pub line: usize,
+    pub col: usize,
     /// Los símbolos declarados DIRECTAMENTE en él, ordenados por nombre.
     pub symbols: Vec<Symbol>,
 }
@@ -206,11 +222,14 @@ impl ScopeCollector {
     pub fn record(&mut self, scope: &Scope, depth: usize) {
         let mut symbols: Vec<Symbol> = scope.symbols().cloned().collect();
         symbols.sort_by(|a, b| a.name.cmp(&b.name));
+        let (line, col) = scope.position();
         self.snapshots.push(ScopeSnapshot {
             order: self.snapshots.len() + 1,
             kind: scope.kind(),
             label: scope.label().map(str::to_string),
             depth,
+            line,
+            col,
             symbols,
         });
     }
@@ -244,6 +263,8 @@ impl ScopeCollector {
                     "kind": format!("{:?}", snap.kind),
                     "label": snap.label,
                     "depth": snap.depth,
+                    "line": snap.line,
+                    "col": snap.col,
                     "symbols": snap.symbols.iter().map(|sym| json!({
                         "name": sym.name,
                         "kind": format!("{:?}", sym.kind),
@@ -262,11 +283,13 @@ impl ScopeCollector {
         let mut out = String::new();
         for snap in &self.snapshots {
             out.push_str(&format!(
-                "#{} {} (profundidad {})
+                "#{} {} (profundidad {}) @{}:{}
 ",
                 snap.order,
                 crate::semantico::symbols::scope_header_of(snap.kind, snap.label.as_deref()),
-                snap.depth
+                snap.depth,
+                snap.line,
+                snap.col
             ));
             if snap.symbols.is_empty() {
                 out.push_str("      (sin declaraciones propias)
@@ -301,7 +324,7 @@ mod tests {
     #[test]
     fn enter_and_exit_restore_previous_depth_and_kind() {
         let mut stack = ScopeStack::new();
-        stack.enter(ScopeKind::Function, Some("foo".to_string()));
+        stack.enter(ScopeKind::Function, Some("foo".to_string()), 1, 1);
         assert_eq!(stack.depth(), 2);
         assert_eq!(stack.current().kind(), ScopeKind::Function);
         assert_eq!(stack.current().label(), Some("foo"));
@@ -317,8 +340,8 @@ mod tests {
         let mut collector = ScopeCollector::new();
 
         // Global > Function("f") > Block
-        stack.enter(ScopeKind::Function, Some("f".to_string()));
-        stack.enter(ScopeKind::Block, None);
+        stack.enter(ScopeKind::Function, Some("f".to_string()), 1, 1);
+        stack.enter(ScopeKind::Block, None, 2, 3);
 
         // Se cierran de adentro hacia afuera, que es como los cierra el walker.
         let block = stack.exit().expect("hay Block");
@@ -334,11 +357,13 @@ mod tests {
         assert_eq!(snaps[0].kind, ScopeKind::Block);
         assert_eq!(snaps[0].label, None);
         assert_eq!(snaps[0].depth, 2, "el Block ocupaba la profundidad 2");
+        assert_eq!((snaps[0].line, snaps[0].col), (2, 3), "posición de apertura del Block");
 
         assert_eq!(snaps[1].order, 2);
         assert_eq!(snaps[1].kind, ScopeKind::Function);
         assert_eq!(snaps[1].label, Some("f".to_string()));
         assert_eq!(snaps[1].depth, 1, "la Function ocupaba la profundidad 1");
+        assert_eq!((snaps[1].line, snaps[1].col), (1, 1), "posición de apertura de la Function");
 
         // El Global no se cierra nunca, así que no puede aparecer.
         assert!(

@@ -112,8 +112,8 @@ pub fn declare_function(
 /// recorridos: primero `declare_function`, después `enter_function_scope`, y
 /// finalmente las declaraciones del cuerpo. Ese orden es el que habilita la
 /// recursión sin introducir un caso especial en `lookup`.
-pub fn enter_function_scope(table: &mut SymbolTable, name: &str) {
-    table.enter_scope_named(ScopeKind::Function, name);
+pub fn enter_function_scope(table: &mut SymbolTable, name: &str, line: usize, col: usize) {
+    table.enter_scope_named(ScopeKind::Function, name, line, col);
 }
 
 /// Valida una llamada por nombre contra la firma guardada en la tabla.

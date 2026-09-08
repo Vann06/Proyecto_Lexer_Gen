@@ -292,12 +292,12 @@ impl SymbolTable {
         SymbolTable { stack: ScopeStack::new() }
     }
 
-    pub fn enter_scope(&mut self, kind: ScopeKind) {
-        self.stack.enter(kind, None);
+    pub fn enter_scope(&mut self, kind: ScopeKind, line: usize, col: usize) {
+        self.stack.enter(kind, None, line, col);
     }
 
-    pub fn enter_scope_named(&mut self, kind: ScopeKind, label: impl Into<String>) {
-        self.stack.enter(kind, Some(label.into()));
+    pub fn enter_scope_named(&mut self, kind: ScopeKind, label: impl Into<String>, line: usize, col: usize) {
+        self.stack.enter(kind, Some(label.into()), line, col);
     }
 
     /// Cierra el scope actual y lo devuelve (para que quien llama pueda
@@ -625,7 +625,7 @@ mod tests {
     fn redeclare_in_different_nested_scope_is_allowed_shadowing() {
         let mut t = SymbolTable::new();
         t.declare("x", SymbolKind::Variable, 1, 1).unwrap();
-        t.enter_scope(ScopeKind::Function);
+        t.enter_scope(ScopeKind::Function, 1, 1);
         // Mismo nombre, scope DISTINTO — no es redeclaración, es shadowing.
         t.declare("x", SymbolKind::Parameter, 2, 5).unwrap();
         assert_eq!(t.lookup("x").unwrap().kind, SymbolKind::Parameter);
@@ -635,8 +635,8 @@ mod tests {
     fn lookup_from_nested_block_finds_outer_scope_symbol() {
         let mut t = SymbolTable::new();
         t.declare("x", SymbolKind::Variable, 1, 1).unwrap();
-        t.enter_scope(ScopeKind::Function);
-        t.enter_scope(ScopeKind::Block);
+        t.enter_scope(ScopeKind::Function, 1, 1);
+        t.enter_scope(ScopeKind::Block, 1, 1);
         // "x" no se redeclaró aquí adentro — el lookup debe atravesar
         // Block -> Function -> Global y encontrarla.
         let found = t.lookup("x").expect("x visible desde el bloque anidado");
@@ -647,9 +647,9 @@ mod tests {
     fn shadowing_lookup_returns_innermost_first() {
         let mut t = SymbolTable::new();
         t.declare("x", SymbolKind::Variable, 1, 1).unwrap();
-        t.enter_scope(ScopeKind::Function);
+        t.enter_scope(ScopeKind::Function, 1, 1);
         t.declare("x", SymbolKind::Parameter, 2, 5).unwrap();
-        t.enter_scope(ScopeKind::Block);
+        t.enter_scope(ScopeKind::Block, 1, 1);
         // Ningún "x" declarado en Block — debe ganar el de Function (el más
         // cercano), no el de Global.
         let found = t.lookup("x").unwrap();
@@ -660,7 +660,7 @@ mod tests {
     #[test]
     fn exit_scope_removes_inner_declarations_from_lookup() {
         let mut t = SymbolTable::new();
-        t.enter_scope(ScopeKind::Block);
+        t.enter_scope(ScopeKind::Block, 1, 1);
         t.declare("y", SymbolKind::Variable, 3, 3).unwrap();
         assert!(t.lookup("y").is_some());
 
@@ -681,9 +681,9 @@ mod tests {
     fn dump_reflects_each_active_scope() {
         let mut t = SymbolTable::new();
         t.declare("g", SymbolKind::Variable, 1, 1).unwrap();
-        t.enter_scope_named(ScopeKind::Function, "foo");
+        t.enter_scope_named(ScopeKind::Function, "foo", 1, 1);
         t.declare("a", SymbolKind::Parameter, 2, 10).unwrap();
-        t.enter_scope(ScopeKind::Block);
+        t.enter_scope(ScopeKind::Block, 1, 1);
         t.declare("y", SymbolKind::Variable, 3, 5).unwrap();
 
         let dump = t.dump();
@@ -713,7 +713,7 @@ mod tests {
     fn lookup_mut_respects_innermost_first_like_lookup() {
         let mut t = SymbolTable::new();
         t.declare("x", SymbolKind::Variable, 1, 1).unwrap();
-        t.enter_scope(ScopeKind::Function);
+        t.enter_scope(ScopeKind::Function, 1, 1);
         t.declare("x", SymbolKind::Parameter, 2, 5).unwrap();
 
         // Debe mutar el "x" del Function (el más cercano), no el de Global.
@@ -754,9 +754,9 @@ mod tests {
     fn lookup_with_scope_reports_absolute_depth_and_kind() {
         let mut t = SymbolTable::new();
         t.declare("g", SymbolKind::Variable, 1, 1).unwrap(); // depth 0, Global
-        t.enter_scope(ScopeKind::Function);
+        t.enter_scope(ScopeKind::Function, 1, 1);
         t.declare("p", SymbolKind::Parameter, 2, 1).unwrap(); // depth 1, Function
-        t.enter_scope(ScopeKind::Block);
+        t.enter_scope(ScopeKind::Block, 1, 1);
         t.declare("l", SymbolKind::Variable, 3, 1).unwrap(); // depth 2, Block
 
         let (sym, depth, kind) = t.lookup_with_scope("g").unwrap();

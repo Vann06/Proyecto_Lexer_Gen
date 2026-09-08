@@ -901,8 +901,8 @@ impl<'a> Visitor for Analyzer<'a> {
             let this_fn_depth = self.table.depth();
 
             match &label {
-                Some(l) => self.table.enter_scope_named(rule.kind, l.clone()),
-                None => self.table.enter_scope(rule.kind),
+                Some(l) => self.table.enter_scope_named(rule.kind, l.clone(), node.line, node.col),
+                None => self.table.enter_scope(rule.kind, node.line, node.col),
             }
 
             if rule.kind == ScopeKind::Function {
