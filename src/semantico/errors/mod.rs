@@ -60,8 +60,8 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    /// Forma `{level, code, msg, loc, line, col}` — la que ya lee `ProblemsList`
-    /// en `frontend/IDE/app.jsx` sin ningún cambio. `source_name` es el archivo
+    /// Forma `{level, code, msg, loc, line, col}` — la que lee `ProblemsView`
+    /// en `frontend/IDE-lite/app.jsx`. `source_name` es el archivo
     /// real (p. ej. `ejemplo.cps`), no un `"input.txt"` fijo — así el gutter del
     /// editor (que compara `loc` contra el nombre del archivo abierto) encuentra
     /// la línea sin importar cómo se llame el archivo cargado.

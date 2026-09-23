@@ -70,6 +70,7 @@
 // errores.
 
 pub mod analyzer;
+pub mod bindings;
 pub mod classes;
 pub mod closures;
 pub mod collections;
@@ -81,6 +82,7 @@ pub mod functions;
 pub mod operators;
 pub mod scopes;
 pub mod spec;
+pub mod storage;
 pub mod symbols;
 pub mod types;
 pub mod visitor;

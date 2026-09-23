@@ -93,6 +93,63 @@ pub struct Symbol {
     /// símbolo, y para una clase sin `: Padre`. La resolución de miembros
     /// heredados (`classes::resolve_member`) sube por esta cadena.
     pub parent: Option<String>,
+    /// Posición de este símbolo entre TODOS los declarados en el mismo
+    /// ámbito, en el orden real en que se declararon — lo que el `HashMap`
+    /// que los guarda no puede dar por sí solo. Lo asigna
+    /// `scopes::Scope::insert`, el único punto de inserción. Es la fuente de
+    /// verdad para una futura fase de asignación de almacenamiento: los
+    /// offsets de un marco y el layout de campos de un objeto se calculan
+    /// recorriendo los símbolos en este orden, nunca alfabético.
+    pub decl_index: usize,
+    /// El `id` (`scopes::Scope::id`) del ámbito donde se declaró este
+    /// símbolo — no el que este símbolo abre (eso ya lo da `members`), sino
+    /// en el que vive como entrada. Permite, dado un símbolo, subir por la
+    /// cadena `ScopeSnapshot::parent_id` hasta encontrar el ámbito con
+    /// nombre (función o clase) que lo contiene.
+    pub scope_id: Option<usize>,
+    /// El TAMAÑO TOTAL de lo que este símbolo abrió: `frame_size` si es una
+    /// `Function` (cuánto reservar en el prólogo), `instance_size` si es una
+    /// `Class`/`Struct` (cuánto pesa un objeto). `None` para todo lo demás,
+    /// y para una función/clase cuyo layout aún no corrió. Vive en el
+    /// símbolo mismo, y no en `members` o en el `ScopeSnapshot`, porque una
+    /// fase de código intermedio busca por nombre en la tabla, no
+    /// recorriendo ámbitos. Lo llena `storage::allocate_scope` (funciones) o
+    /// `storage::allocate_classes` (clases/structs); antes de eso es `None`.
+    pub storage_size: Option<usize>,
+    /// Nivel de anidamiento estático de una FUNCIÓN (§7.3 del libro): 1 para
+    /// una declarada en el Global o como método, el de la que la encierra +1
+    /// para una anidada. Las clases no suman nivel. La fase de TAC lo usa al
+    /// llamarla: desde una función de nivel `nc`, el enlace de acceso de una
+    /// de nivel `ng` se obtiene siguiendo `nc - ng + 1` enlaces desde el
+    /// `$fp` propio. `None` para todo lo que no es función.
+    pub nesting_level: Option<usize>,
+}
+
+impl Default for Symbol {
+    /// Valores neutros para construir un `Symbol` en tests o literales
+    /// parciales con `..Symbol::default()` — así un campo nuevo no obliga a
+    /// tocar cada sitio que arma uno. `kind: Variable` porque es el caso más
+    /// común; el resto de campos ya son `None`/`false` por naturaleza.
+    fn default() -> Self {
+        Symbol {
+            name: String::new(),
+            kind: SymbolKind::Variable,
+            line: 0,
+            col: 0,
+            ty: None,
+            mutable: true,
+            initialized: false,
+            used: false,
+            signature: None,
+            storage: None,
+            members: None,
+            parent: None,
+            decl_index: 0,
+            scope_id: None,
+            storage_size: None,
+            nesting_level: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -292,6 +349,14 @@ impl SymbolTable {
         SymbolTable { stack: ScopeStack::new() }
     }
 
+    /// Acceso mutable al ámbito actualmente abierto, SIN desapilarlo. Lo
+    /// necesita `storage::allocate_scope` para el Global: a diferencia de
+    /// cualquier otro ámbito, el Global nunca pasa por `exit_scope` (no se
+    /// puede cerrar), así que es el único que hay que asignar sin cerrar.
+    pub fn current_scope_mut(&mut self) -> &mut Scope {
+        self.stack.current_mut()
+    }
+
     pub fn enter_scope(&mut self, kind: ScopeKind, line: usize, col: usize) {
         self.stack.enter(kind, None, line, col);
     }
@@ -325,14 +390,7 @@ impl SymbolTable {
             kind,
             line,
             col,
-            ty: None,
-            mutable: true,
-            initialized: false,
-            used: false,
-            signature: None,
-            storage: None,
-            members: None,
-            parent: None,
+            ..Symbol::default()
         });
         Ok(())
     }
@@ -443,6 +501,13 @@ impl SymbolTable {
     /// Igual que `lookup`, pero mutable — la forma de llenar los atributos
     /// que `declare()` no puede conocer todavía (tipo inferido, firma
     /// completa, `used`, `storage`) sin tener que reconstruir el símbolo.
+    /// Busca `name` SOLO en el Global, sin importar qué ámbitos estén
+    /// abiertos. Al terminar el análisis es lo mismo que `lookup`; se usa
+    /// para resolver una referencia cuyo `scope_id` ya se sabe que es 0.
+    pub fn lookup_global(&self, name: &str) -> Option<&Symbol> {
+        self.stack.iter_outermost_first().next().and_then(|global| global.get_own(name))
+    }
+
     pub fn lookup_mut(&mut self, name: &str) -> Option<&mut Symbol> {
         self.stack.iter_innermost_first_mut().find_map(|scope| scope.get_own_mut(name))
     }
@@ -737,9 +802,9 @@ mod tests {
         let sym = t.lookup_mut("Punto").unwrap();
         sym.ty = Some(Type::Named("Punto".to_string()));
         let mut x = Symbol {
-            name: "x".to_string(), kind: SymbolKind::Variable, line: 2, col: 3,
-            ty: Some(Type::Int), mutable: true, initialized: false, used: false,
-            signature: None, storage: None, members: None, parent: None,
+            name: "x".to_string(), line: 2, col: 3,
+            ty: Some(Type::Int),
+            ..Symbol::default()
         };
         x.ty = Some(Type::Int);
         sym.members = Some(vec![x]);
@@ -778,34 +843,22 @@ mod tests {
         assert_eq!(
             describe(&Symbol {
                 name: "x".to_string(),
-                kind: SymbolKind::Variable,
                 line: 1,
                 col: 1,
-                ty: None,
-                mutable: true,
-                initialized: false,
-                used: false,
-                signature: None,
-                storage: None,
-                members: None,
-                parent: None,
+                ..Symbol::default()
             }),
             "Variable"
         );
         assert_eq!(
             describe(&Symbol {
                 name: "x".to_string(),
-                kind: SymbolKind::Variable,
                 line: 1,
                 col: 1,
                 ty: Some(Type::Int),
                 mutable: false,
                 initialized: true,
                 used: true,
-                signature: None,
-                storage: None,
-                members: None,
-                parent: None,
+                ..Symbol::default()
             }),
             "Variable, Int, const, usado"
         );

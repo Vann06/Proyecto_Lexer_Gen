@@ -330,3 +330,20 @@ pub fn resolve_arithmetic(
 pub fn resolve_assignment(expected: &Type, found: &Type) -> Result<Coercion, TypeError> {
     TYPE_COMPATIBILITY.assignment(expected, found)
 }
+
+/// La conversión que necesita un valor `found` para usarse donde se espera
+/// `expected` — `Exact` también cuando son incompatibles (ese error ya lo
+/// reporta quien valida; acá solo interesa qué marcar para la fase de TAC).
+pub fn coercion_to(expected: &Type, found: &Type) -> Coercion {
+    resolve_assignment(expected, found).unwrap_or(Coercion::Exact)
+}
+
+/// Para una comparación mixta (`i < 2.5`, `i == f`): el lado `integer` se
+/// amplía a `float` antes de comparar. Devuelve `(izquierda, derecha)`.
+pub fn comparison_coercions(left: &Type, right: &Type) -> (Coercion, Coercion) {
+    match (left, right) {
+        (Type::Int, Type::Float) => (Coercion::IntToFloat, Coercion::Exact),
+        (Type::Float, Type::Int) => (Coercion::Exact, Coercion::IntToFloat),
+        _ => (Coercion::Exact, Coercion::Exact),
+    }
+}

@@ -3,6 +3,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
 
+use super::flow::FlowDirective;
+
 /// Asociatividad de un operador declarada con %left / %right / %nonassoc.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Associativity {
@@ -109,6 +111,10 @@ pub struct Grammar {
     /// normales tipados con esta misma directiva — sin un concepto de
     /// "record" nuevo en la gramática.
     pub type_of_directives: Vec<(String, String)>,
+    /// `(producción, nombre de tipo)`, uno por línea `%fixed_type` — para
+    /// declaraciones cuyo tipo no está escrito en el fuente porque la
+    /// gramática no tiene dónde (p.ej. la variable de un `catch`).
+    pub fixed_type_directives: Vec<(String, String)>,
     /// `(token terminal, nombre de tipo)`, uno por línea `%type_token` —
     /// p.ej. `%type_token INT_T integer`.
     pub type_token_directives: Vec<(String, String)>,
@@ -256,6 +262,16 @@ pub struct Grammar {
     /// `(producción, token marcador, índice de los elementos)` de
     /// `%tuple_literal`. Reusa la lista de `%arg_list_symbol`.
     pub tuple_literal: Option<(String, String, usize)>,
+    /// `(producción, token de apertura, índice de la expresión interna)` de
+    /// cada `%group` — p.ej. `%group atom LPAREN 1` para
+    /// `atom: LPAREN expr RPAREN`. Una agrupación tiene el tipo de lo que
+    /// encierra; sin esto `(1 + 2) * 3` quedaba sin tipo.
+    pub group_directives: Vec<(String, String, usize)>,
+    /// Una por cada `%flow` — la forma de cada construcción de control de
+    /// flujo para la fase de código intermedio. Ya validadas: vocabulario al
+    /// leer la línea, índices contra las producciones al terminar el archivo
+    /// (ver `sintactico::gramatica::flow`).
+    pub flow_directives: Vec<FlowDirective>,
 }
 
 impl Grammar {
@@ -390,10 +406,14 @@ impl Grammar {
             set_literal: None,
             tuple_type: None,
             tuple_literal: None,
+            group_directives: Vec::new(),
+            flow_directives: Vec::new(),
+            fixed_type_directives: Vec::new(),
         };
 
-        grammar.parse_tokens_section(sections[0]);
+        grammar.parse_tokens_section(sections[0])?;
         grammar.parse_productions_section(sections[1], prod_start_line)?;
+        grammar.validate_flow_directives()?;
 
         Ok(grammar)
     }
@@ -918,7 +938,40 @@ impl Grammar {
         Ok(())
     }
 
-    fn parse_tokens_section(&mut self, section: &str) {
+    /// Cada `%flow` contra las producciones reales: la producción tiene que
+    /// existir, y el índice de cada rol OBLIGATORIO tiene que caber en todas
+    /// sus alternativas. Un rol opcional (el `else` de un `if`) puede faltar
+    /// en alguna: esa ausencia es justamente lo que distingue un `if` sin
+    /// `else`.
+    fn validate_flow_directives(&self) -> Result<(), String> {
+        for (i, d) in self.flow_directives.iter().enumerate() {
+            if self.flow_directives[..i].iter().any(|prev| prev.production == d.production) {
+                return Err(format!("Error en directiva `%flow {} {}`: la producción '{}' ya tiene un %flow.", d.kind, d.production, d.production));
+            }
+            let Some(production) = self.productions.iter().find(|p| p.head == d.production) else {
+                return Err(format!("Error en directiva `%flow {} {}`: la producción '{}' no existe.", d.kind, d.production, d.production));
+            };
+            for &(role, index) in &d.roles {
+                if !d.kind.required_roles().contains(&role) {
+                    continue;
+                }
+                if let Some(body) = production.bodies.iter().find(|b| index >= b.len()) {
+                    let alt = if body.is_empty() {
+                        "ε".to_string()
+                    } else {
+                        body.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(" ")
+                    };
+                    return Err(format!(
+                        "Error en directiva `%flow {} {}`: el rol '{}' apunta al hijo {}, pero la alternativa `{}: {}` tiene solo {} hijo(s).",
+                        d.kind, d.production, role, index, d.production, alt, body.len()
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn parse_tokens_section(&mut self, section: &str) -> Result<(), String> {
         for line in section.lines() {
             let line = line.trim();
             if line.is_empty() { continue; }
@@ -958,6 +1011,11 @@ impl Grammar {
                 let mut parts = line[6..].split_whitespace();
                 if let (Some(production), Some(kind)) = (parts.next(), parts.next()) {
                     self.scope_directives.push((production.to_string(), kind.to_string()));
+                }
+            } else if line.starts_with("%fixed_type") {
+                let mut parts = line[11..].split_whitespace();
+                if let (Some(production), Some(kind)) = (parts.next(), parts.next()) {
+                    self.fixed_type_directives.push((production.to_string(), kind.to_string()));
                 }
             } else if line.starts_with("%type_of") {
                 let mut parts = line[8..].split_whitespace();
@@ -1022,6 +1080,15 @@ impl Grammar {
                 let mut parts = line[6..].split_whitespace();
                 if let (Some(token), Some(op)) = (parts.next(), parts.next()) {
                     self.unary_directives.push((token.to_string(), op.to_string()));
+                }
+            } else if let Some(rest) = line.strip_prefix("%flow") {
+                self.flow_directives.push(FlowDirective::parse(rest)?);
+            } else if line.starts_with("%group") {
+                let mut parts = line[6..].split_whitespace();
+                if let (Some(production), Some(open_token), Some(inner_idx)) = (parts.next(), parts.next(), parts.next()) {
+                    if let Ok(inner_idx) = inner_idx.parse::<usize>() {
+                        self.group_directives.push((production.to_string(), open_token.to_string(), inner_idx));
+                    }
                 }
             } else if line.starts_with("%call") {
                 let mut parts = line[5..].split_whitespace();
@@ -1205,6 +1272,7 @@ impl Grammar {
                 }
             }
         }
+        Ok(())
     }
 
     fn parse_productions_section(&mut self, section: &str, start_line: usize) -> Result<(), String> {

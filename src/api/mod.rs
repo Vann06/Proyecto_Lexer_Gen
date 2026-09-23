@@ -88,6 +88,15 @@ pub struct ParseResponse {
     /// si el modo es LL(1) (ver `pipeline`), o si no se tipo ninguna
     /// expresion.
     pub types: Vec<Value>,
+    /// `Bindings::to_json()`: a que declaracion apunta cada hoja
+    /// identificador -- `[{id, lexeme, line, col, scope_id, decl_index}]`,
+    /// con el mismo `id` que `types` y `parse_tree_dot`. Vacio en los mismos
+    /// casos que `types`.
+    pub bindings: Vec<Value>,
+    /// `storage::dump()` del `LayoutReport`: tamano de cada marco de
+    /// activacion (por `scope_id`), del area estatica y de cada clase, con
+    /// `[incompleto]` donde algun simbolo no tuvo tipo. Vacio sin analisis.
+    pub layout: String,
 }
 
 #[derive(Serialize)]

@@ -11,10 +11,8 @@ services:
       - ./workspace:/app/workspace
     restart: unless-stopped
 
-  # UI estática — sirve el panel semántico (frontend/IDE-lite) en :4000 para
-  # probar tokens/árbol/tabla de símbolos/tipos/errores semánticos con vistas
-  # limpias. El IDE completo (stepper LR, DFA, codegen) sigue archivado y
-  # documentado en frontend/IDE-full/ — ver su README para levantarlo aparte.
+  # UI estática — sirve el IDE (frontend/IDE-lite) en :4000: tokens, árbol,
+  # tabla de símbolos, tipos y problemas del pipeline.
   frontend:
     build:
       context: ./frontend/IDE-lite

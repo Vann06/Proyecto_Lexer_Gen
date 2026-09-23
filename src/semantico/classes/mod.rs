@@ -17,7 +17,7 @@ use crate::semantico::operators;
 use crate::semantico::spec::SemanticSpec;
 use crate::semantico::symbols::{SemanticError, Signature, Symbol, SymbolKind, SymbolTable};
 use crate::semantico::types::{
-    resolve_arithmetic, resolve_assignment, ArithmeticOperator, Type, TypeAnnotations,
+    coercion_to, resolve_arithmetic, resolve_assignment, ArithmeticOperator, Type, TypeAnnotations,
 };
 use crate::sintactico::gramatica::first::EPSILON;
 use crate::sintactico::runtime::parse_tree::ParseNode;
@@ -130,8 +130,10 @@ pub fn find_member_access(node: &ParseNode, spec: &SemanticSpec) -> Option<(usiz
 ///  - una hoja == `this_token`: el `.ty` de lo que `lookup("this")` encuentre.
 ///  - una hoja cuyo símbolo está en `spec.type_tokens` (un literal, p.ej.
 ///    INT_LIT/STR_LIT/TRUE/FALSE): el `Type` que ese token representa.
-///  - cualquier otra forma (operador binario, llamada, `new`, paréntesis
-///    con contenido compuesto): `None` — "no lo sabemos", no es error.
+///  - una agrupación (`spec.groups`, p.ej. `( expr )`): el tipo de lo que
+///    encierra.
+///  - cualquier otra forma que no se sepa tipar: `None` — "no lo sabemos",
+///    no es error.
 pub fn resolve_expr_type(
     node: &ParseNode,
     table: &SymbolTable,
@@ -317,6 +319,15 @@ fn resolve_expr_type_inner(
     if let Some((op, operand)) = operators::find_unary(node, spec) {
         let operand_ty = resolve_expr_type(operand, table, spec, rec)?;
         return operators::resolve_unary(op, &operand_ty, node.line, node.col).ok();
+    }
+
+    // Agrupación (`( expr )`, según `spec.groups`): el tipo de lo que encierra.
+    // Al final a propósito: ninguna otra forma de las de arriba empieza con
+    // el token de apertura de una agrupación en la misma producción.
+    if let Some(rule) = spec.groups.iter().find(|g| g.production == node.symbol) {
+        if node.children.first().map(|c| c.symbol.as_str()) == Some(rule.open_token.as_str()) {
+            return resolve_expr_type(node.children.get(rule.inner_index)?, table, spec, rec);
+        }
     }
 
     None
@@ -549,6 +560,7 @@ pub fn validate_struct_literal(
         if let (Some(expected), Some(found)) =
             (declared.ty.clone(), resolve_expr_type(value_node, table, spec, rec))
         {
+            rec.record_coercion(value_node, coercion_to(&expected, &found));
             if resolve_assignment(&expected, &found).is_err() {
                 errors.push(SemanticError::StructFieldTypeMismatch {
                     struct_name: struct_name.to_string(),
@@ -621,6 +633,7 @@ pub fn validate_instantiation(
 
     let signature = constructor_signature(table, class_name, spec);
     let arg_types = argument_types(arg_nodes, table, spec, rec);
+    record_argument_coercions(&signature, arg_nodes, &arg_types, rec);
 
     functions::check_arguments(&signature, &arg_types)
         .into_iter()
@@ -690,6 +703,25 @@ pub fn resolve_callee<'a>(
     None
 }
 
+/// Marca la ampliación de cada argumento contra su parámetro (`f(1)` con
+/// `f(x: float)`). Solo si la aridad coincide: con la aridad mal los pares
+/// parámetro/argumento no significan nada (y ya hay un diagnóstico).
+fn record_argument_coercions(
+    signature: &Signature,
+    arg_nodes: &[&ParseNode],
+    arg_types: &[Option<Type>],
+    rec: &mut TypeAnnotations,
+) {
+    if signature.params.len() != arg_nodes.len() {
+        return;
+    }
+    for ((param, node), found) in signature.params.iter().zip(arg_nodes).zip(arg_types) {
+        if let Some(found) = found {
+            rec.record_coercion(node, coercion_to(param, found));
+        }
+    }
+}
+
 /// Valida los argumentos de una invocación (`f(args)`, `obj.metodo(args)`)
 /// contra la firma del símbolo invocado. Si el símbolo no tiene `signature`
 /// —no es invocable, o es un método de una clase que todavía se está
@@ -720,6 +752,7 @@ pub fn validate_call(
         }
     };
     let arg_types = argument_types(arg_nodes, table, spec, rec);
+    record_argument_coercions(signature, arg_nodes, &arg_types, rec);
 
     functions::check_arguments(signature, &arg_types)
         .into_iter()
@@ -756,31 +789,20 @@ mod tests {
             kind: SymbolKind::Class,
             line: 1,
             col: 1,
-            ty: None,
-            mutable: true,
-            initialized: false,
-            used: false,
-            signature: None,
-            storage: None,
             members: Some(members),
             parent: parent.map(str::to_string),
+            ..Symbol::default()
         }
     }
 
     fn attr(name: &str, ty: Type) -> Symbol {
         Symbol {
             name: name.to_string(),
-            kind: SymbolKind::Variable,
             line: 1,
             col: 1,
             ty: Some(ty),
-            mutable: true,
             initialized: true,
-            used: false,
-            signature: None,
-            storage: None,
-            members: None,
-            parent: None,
+            ..Symbol::default()
         }
     }
 
@@ -792,14 +814,8 @@ mod tests {
             kind: SymbolKind::Function,
             line: 1,
             col: 1,
-            ty: None,
-            mutable: true,
-            initialized: false,
-            used: false,
             signature: Some(Signature { params, returns: Type::Void }),
-            storage: None,
-            members: None,
-            parent: None,
+            ..Symbol::default()
         }
     }
 

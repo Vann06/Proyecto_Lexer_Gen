@@ -1,16 +1,12 @@
 /* eslint-disable */
-// IDE-lite: mismo look & layout pixel/retro que frontend/IDE-full/app.jsx
-// (mismo CSS, mismo editor con resaltado, misma sidebar de archivos), pero
-// recortado a solo lo que hace falta para probar el análisis semántico:
-// flujo de tokens, árbol sintáctico (que sale auto-anotado con el tipo de
-// cada expresión en cuanto hay análisis semántico — es el "árbol de análisis
-// anotado" del libro del dragón, ver src/sintactico/runtime/parse_tree.rs),
-// tabla de símbolos (estado final + por entorno, incluidos bloques anónimos),
-// tabla de tipos por nodo, y reporte de errores semánticos. Se sacaron
-// GRAMÁTICA/FIRST/FOLLOW/ESTADOS/ACTION-GOTO/LR(0)/CÓD.GEN/CLOSURES y el
-// stepper PARSE CONSOLE — con eso también se fue la necesidad de
-// STATES/ACTION/GOTO/FIRST/FOLLOW/PRODS/TRACE/GEN_CODE/LR0_DOT/CLOSURES en
-// `data.jsx`. Ver frontend/IDE-full/ para esas vistas.
+// IDE-lite: editor con resaltado + sidebar de archivos + las vistas del
+// análisis: flujo de tokens, árbol sintáctico (que sale auto-anotado con el
+// tipo de cada expresión en cuanto hay análisis semántico — es el "árbol de
+// análisis anotado" del libro del dragón, ver
+// src/sintactico/runtime/parse_tree.rs), tabla de símbolos (estado final +
+// por entorno, incluidos bloques anónimos), tabla de tipos por nodo y
+// problemas de todas las fases. Todo sale de una sola llamada a
+// `POST /api/pipeline`.
 const { useState, useEffect, useRef } = React;
 const D = window.IDE_DATA;
 
@@ -135,54 +131,83 @@ function tokenize(text, lang){
   return out;
 }
 
+/* Todo el editor trabaja con saltos `\n`: el textarea ya normaliza así su
+   `value`, pero un archivo de Windows llega con `\r\n`, y un `\r` suelto en
+   la capa de resaltado o en el conteo de líneas la desalinea del textarea. */
+function normalizeEol(text){ return text.replace(/\r\n?/g, "\n"); }
+
+/* Resaltado listo para la capa de fondo. Un bloque `white-space:pre` no
+   dibuja la última línea vacía si el texto termina en salto de línea, y el
+   textarea sí: sin el `\n` extra, el cursor en esa última línea quedaría
+   por debajo del texto resaltado. */
+function highlightFor(text, lang){
+  const html = tokenize(text, lang);
+  return text.endsWith("\n") ? html + "\n" : html;
+}
+
+/* Métrica de línea del editor, la MISMA que usa el CSS (--code-pad,
+   --code-lh en index.html). Se lee del CSS para no duplicar los números. */
+function codeMetrics(){
+  const css = getComputedStyle(document.documentElement);
+  const px = (name, fallback) => parseFloat(css.getPropertyValue(name)) || fallback;
+  return { pad: px("--code-pad", 12), lh: px("--code-lh", 25) };
+}
+
+/* Número de línea de un problema, si apunta a `fileName` (null = no se
+   filtra por archivo). Los diagnósticos del backend traen `line`; los del
+   IDE solo `loc` ("archivo:línea:col"). */
+function problemLine(p, fileName){
+  if (p.loc && fileName && !p.loc.startsWith(fileName + ":")) return null;
+  if (p.line != null && Number.isFinite(p.line) && p.line > 0) return p.line;
+  const parts = (p.loc || "").split(":");
+  const n = parseInt(parts[1], 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 /* ============================== Editor ============================== */
 
-function Editor({ file, onEdit, contentVersion }){
+function Editor({ file, onEdit, contentVersion, jump }){
   const f = D.FILES[file];
   const taRef  = useRef();
   const gutRef = useRef();
   const hlRef  = useRef();
   const lang = langForFile(f);
   const [lineCount,   setLineCount]   = useState(() => f.rawContent.split('\n').length);
-  const [highlighted, setHighlighted] = useState(() => tokenize(f.rawContent, lang));
+  const [highlighted, setHighlighted] = useState(() => highlightFor(f.rawContent, lang));
 
   useEffect(() => {
     if (taRef.current) taRef.current.value = f.rawContent;
     setLineCount(f.rawContent.split('\n').length);
-    setHighlighted(tokenize(f.rawContent, lang));
+    setHighlighted(highlightFor(f.rawContent, lang));
   }, [file, contentVersion]);
 
-  const lineFromLoc = (loc) => {
-    if (!loc) return null;
-    const parts = loc.split(":");
-    if (parts.length < 2) return null;
-    const n = parseInt(parts[1], 10);
-    return Number.isFinite(n) ? n : null;
-  };
+  // Líneas con problemas de ESTE archivo. Un problema sin `loc` (los del
+  // backend siempre lo traen) se asume del fuente de prueba.
   const collectLines = (level) => {
     const lines = new Set();
     for (const p of D.PROBLEMS) {
       if (p.level !== level) continue;
-      let n = null;
-      if (p.loc && p.loc.includes(f.name)) {
-        n = lineFromLoc(p.loc);
-      } else if (file === "test" && p.line != null) {
-        n = p.line;
-      }
-      if (n != null && !Number.isNaN(n)) lines.add(n);
+      const n = p.loc ? problemLine(p, f.name) : (file === "test" ? problemLine(p, null) : null);
+      if (n != null && n <= lineCount) lines.add(n);
     }
     return lines;
   };
   const errs  = collectLines("err");
   const warns = collectLines("warn");
 
+  // Franjas detrás de cada línea con problema (un error gana a un warning).
+  const { pad, lh } = codeMetrics();
+  const marks = [...new Set([...errs, ...warns])]
+    .map(n => `<div class="line-mark ${errs.has(n) ? "err" : "warn"}" style="top:${pad + (n - 1) * lh}px"></div>`)
+    .join("");
+
   const handleChange = e => {
-    const content = e.target.value;
+    const content = normalizeEol(e.target.value);
     D.FILES[file].rawContent = content;
     D.FILES[file].dirty = true;
     const newCount = content.split('\n').length;
     if (newCount !== lineCount) setLineCount(newCount);
-    setHighlighted(tokenize(content, lang));
+    setHighlighted(highlightFor(content, lang));
     onEdit(file);
   };
 
@@ -194,6 +219,24 @@ function Editor({ file, onEdit, contentVersion }){
       hlRef.current.scrollLeft = taRef.current.scrollLeft;
     }
   };
+
+  // Ir a una línea pedida desde el panel de problemas: seleccionarla, dejarla
+  // a la vista y darle el foco al editor. Corre después del efecto de carga
+  // de arriba, así que si el clic también cambió de archivo el textarea ya
+  // tiene el contenido nuevo.
+  useEffect(() => {
+    if (!jump || jump.file !== file || !taRef.current) return;
+    const ta = taRef.current;
+    const lines = ta.value.split("\n");
+    const line = Math.min(Math.max(jump.line, 1), lines.length);
+    let start = 0;
+    for (let i = 0; i < line - 1; i++) start += lines[i].length + 1;
+    const { pad, lh } = codeMetrics();
+    ta.focus();
+    ta.setSelectionRange(start, start + lines[line - 1].length);
+    ta.scrollTop = Math.max(0, pad + (line - 1) * lh - ta.clientHeight / 2);
+    syncScroll();
+  }, [jump, file]);
 
   return (
     <>
@@ -219,7 +262,7 @@ function Editor({ file, onEdit, contentVersion }){
             ref={hlRef}
             className="highlight-layer"
             aria-hidden="true"
-            dangerouslySetInnerHTML={{__html: highlighted}}
+            dangerouslySetInnerHTML={{__html: marks + highlighted}}
           />
           <textarea
             ref={taRef}
@@ -528,7 +571,7 @@ function TypesView(){
       <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
         ▍ TIPOS
         <span className="dim" style={{marginLeft:10}}>
-          · sin anotaciones · requiere .yalp con %ident y modo LALR/SLR (no LL(1))
+          · sin anotaciones · requiere un .yalp con %ident
         </span>
       </div>
     );
@@ -561,36 +604,47 @@ function TypesView(){
   );
 }
 
-/* D.PROBLEMS filtrado a solo diagnósticos semánticos (código S0xx — ver
-   semantico::errors::ErrorCollector). Los sintácticos/léxicos (que también
-   viajan en D.PROBLEMS) no se muestran acá: no están en el alcance de este
-   panel. */
-function SemanticErrorsView(){
-  const semantic = D.PROBLEMS.filter(p => (p.code||"").startsWith("S"));
-  const counts = { err:semantic.filter(p=>p.level==="err").length,
-                   warn:semantic.filter(p=>p.level==="warn").length,
-                   info:semantic.filter(p=>p.level==="info").length };
+/* Fase de un problema, por el prefijo de su código (ver los `code` que
+   emiten `api::pipeline`, `api::sintactico` y `semantico::errors`). */
+const PROBLEM_PHASE = { L:"léxico", P:"sintáctico", S:"semántico", W:"advertencia", E:"IDE", G:"gramática", I:"IDE" };
+
+/* TODOS los problemas de la última corrida —errores, advertencias e info, de
+   cualquier fase—, ordenados por posición. Antes esta vista filtraba solo
+   los `S0xx`, y así se perdían los warnings (`W001` símbolo sin usar, `W002`
+   código inalcanzable), los errores léxicos/sintácticos y los avisos del
+   propio IDE. Clic en uno con posición: el editor salta a esa línea. */
+function ProblemsView({ onJump }){
+  const problems = D.PROBLEMS
+    .map((p, i) => ({ p, i }))
+    .sort((a, b) => ((a.p.line ?? 1e9) - (b.p.line ?? 1e9)) || ((a.p.col ?? 0) - (b.p.col ?? 0)) || (a.i - b.i))
+    .map(({ p }) => p);
+  const counts = { err:problems.filter(p=>p.level==="err").length,
+                   warn:problems.filter(p=>p.level==="warn").length,
+                   info:problems.filter(p=>p.level==="info").length };
   return (
     <div>
       <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
-        ▍ ERRORES SEMÁNTICOS ·
+        ▍ PROBLEMAS ·
         <span className="err"> {counts.err} err</span> ·
         <span className="warn"> {counts.warn} warn</span> ·
         <span className="info"> {counts.info} info</span>
       </div>
-      {!semantic.length && <div className="dim" style={{padding:16}}>sin errores semánticos</div>}
-      {semantic.map((p,i)=>{
-        const hasPos = p.line != null && p.col != null;
-        const locLabel = hasPos
-          ? `línea ${p.line}, col ${p.col}`
-          : (p.loc || "");
+      {!problems.length && <div className="dim" style={{padding:16}}>sin problemas</div>}
+      {problems.map((p,i)=>{
+        const hasPos = p.line != null && p.col != null && p.line > 0;
+        const locLabel = hasPos ? `línea ${p.line}, col ${p.col}` : (p.loc || "");
+        const phase = PROBLEM_PHASE[(p.code || "")[0]];
         return (
-          <div key={i} className={"prob "+p.level}>
+          <div key={i}
+               className={"prob "+p.level+(hasPos ? " clickable" : "")}
+               onClick={hasPos ? () => onJump(p) : undefined}
+               title={hasPos ? "Ir a la línea en el editor" : undefined}>
             <div className="tag">{p.level==="err"?"ERR":p.level==="warn"?"WRN":"INF"}</div>
             <div style={{flex:1}}>
               <div className="msg">{p.msg}</div>
               <div className="loc" style={{display:"flex", gap:8, flexWrap:"wrap", alignItems:"center"}}>
                 {p.code && <span>{p.code}</span>}
+                {phase && <span className="phase">{phase}</span>}
                 {hasPos && (
                   <span className="prob-pos">
                     <span style={{color:"var(--cyan)"}}>↗</span>
@@ -609,14 +663,14 @@ function SemanticErrorsView(){
 
 /* ============================== Right results panel ============================== */
 
-function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, resultsSize }){
-  const semCount = D.PROBLEMS.filter(p => (p.code||"").startsWith("S")).length;
+function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, resultsSize, onJump }){
+  const problemCount = D.PROBLEMS.length;
   const TABS = [
     {id:"tokens",   label:"TOKENS", badge: D.TOKENS.length || null},
     {id:"tree",     label:"ÁRBOL SINTÁCTICO"},
     {id:"symbols",  label:"SÍMBOLOS", badge: (D.SCOPES && D.SCOPES.length) || null},
     {id:"types",    label:"TIPOS", badge: (D.TYPES && D.TYPES.length) || null},
-    {id:"errors",   label:"ERRORES SEM.", badge: semCount || null},
+    {id:"errors",   label:"PROBLEMAS", badge: problemCount || null},
   ];
 
   return (
@@ -624,7 +678,7 @@ function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, result
       <div className="panel-title">
         <span className="swatch"/>RESULTS
         <button className="results-toggle" onClick={onToggleSize} title="Cambiar tamaño del panel">
-          {resultsSize==="normal"?"⟩⟩ AMPLIAR": resultsSize==="wide"?"◁ OCULTAR": "⟨⟨ NORMAL"}
+          {resultsSize==="normal"?"⟩⟩ AMPLIAR":"⟨⟨ NORMAL"}
         </button>
       </div>
       <div className="panel">
@@ -642,7 +696,7 @@ function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, result
           {activeTab==="tree"    && <ParseTreeView renderKey={renderKey}/>}
           {activeTab==="symbols" && <SymbolTableView/>}
           {activeTab==="types"   && <TypesView/>}
-          {activeTab==="errors"  && <SemanticErrorsView/>}
+          {activeTab==="errors"  && <ProblemsView onJump={onJump}/>}
         </div>
       </div>
     </>
@@ -651,7 +705,10 @@ function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, result
 
 /* ============================== Header ============================== */
 
-const MODE_LABELS = { lalr:"LALR(1)", slr:"SLR(1)", ll1:"LL(1)" };
+/* Solo los modos LR: en LL(1) el backend no corre el análisis semántico
+   (la transformación de la gramática renombra producciones — ver
+   `api::pipeline`), así que SÍMBOLOS/TIPOS/PROBLEMAS quedaban vacíos. */
+const MODE_LABELS = { lalr:"LALR(1)", slr:"SLR(1)" };
 
 function Header({ activeFile, setFile, onRun, onSave, loading, mode, setMode }){
   const tabs = ["yal","yalp","test","g4"];
@@ -730,9 +787,19 @@ function App(){
   const [resultsSize,    setResultsSize]   = useState("normal"); // "normal"|"wide"|"custom"
   const [layout,         setLayout]        = useState({ left: 240, right: 460 });
   const [drag,           setDrag]          = useState(null);
+  const [jump,           setJump]          = useState(null);
   const appRef = useRef(null);
 
   const rerender = () => bump(n => n + 1);
+
+  // Clic en un problema: abrir el archivo al que apunta (por el nombre en su
+  // `loc`; si no se reconoce, el fuente de prueba) y saltar a su línea. El
+  // `nonce` hace que dos clics seguidos en el mismo problema vuelvan a saltar.
+  const handleJump = (p) => {
+    const slot = Object.keys(D.FILES).find(k => p.loc && p.loc.startsWith(D.FILES[k].name + ":")) || "test";
+    setFile(slot);
+    setJump({ file: slot, line: p.line, nonce: Date.now() });
+  };
 
   // ── WORKSPACE: carga yal/yalp/test del servidor al arrancar (el .g4 de
   // referencia nunca vive ahí — no hay slot para él en el backend). ──────────
@@ -753,7 +820,7 @@ function App(){
         const name = pickByKind[slot];
         if (!name) continue;
         const content = await fetch(`${API}/api/workspace/${encodeURIComponent(name)}`).then(r => r.text());
-        D.FILES[slot].rawContent = content;
+        D.FILES[slot].rawContent = normalizeEol(content);
         D.FILES[slot].name  = name;
         D.FILES[slot].dirty = false;
       }
@@ -773,7 +840,7 @@ function App(){
     const reader = new FileReader();
     reader.onload = async e => {
       const content = e.target.result;
-      D.FILES[fileId].rawContent = content;
+      D.FILES[fileId].rawContent = normalizeEol(content);
       D.FILES[fileId].name  = file.name;
       D.FILES[fileId].dirty = false;
       if (fileId !== "g4") {
@@ -941,7 +1008,7 @@ function App(){
       <div className="grid-handle v left" onMouseDown={() => setDrag({ kind: "left" })} />
 
       <div id="editor-wrap" data-screen-label="editor">
-        <Editor file={activeFile} onEdit={handleEdit} contentVersion={contentVersion}/>
+        <Editor file={activeFile} onEdit={handleEdit} contentVersion={contentVersion} jump={jump}/>
       </div>
 
       <div className="grid-handle v right" onMouseDown={() => setDrag({ kind: "right" })} />
@@ -952,7 +1019,8 @@ function App(){
           setActiveTab={setTab}
           renderKey={renderKey}
           onToggleSize={cycleResults}
-          resultsSize={resultsSize}/>
+          resultsSize={resultsSize}
+          onJump={handleJump}/>
       </div>
 
       <StatusBar activeFile={activeFile} mode={mode}/>

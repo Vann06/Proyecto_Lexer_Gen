@@ -44,11 +44,12 @@ use serde_json::{json, Value};
 
 use crate::sintactico::runtime::parse_tree::{NodeTypes, ParseNode};
 
-use super::Type;
+use super::{Coercion, Type};
 
 /// Identidad de un nodo dentro de un árbol vivo. Ver la invariante en el
-/// doc-comment del módulo.
-fn key(node: &ParseNode) -> usize {
+/// doc-comment del módulo. `pub(crate)` para que otros mapas laterales
+/// (`semantico::bindings`) usen exactamente la misma clave.
+pub(crate) fn key(node: &ParseNode) -> usize {
     node as *const ParseNode as usize
 }
 
@@ -61,6 +62,13 @@ fn key(node: &ParseNode) -> usize {
 #[derive(Debug, Default, Clone)]
 pub struct TypeAnnotations {
     types: HashMap<usize, Type>,
+    /// La ampliación implícita que necesita un nodo de expresión ANTES de
+    /// usarse — el `widen(addr, t, w)` de §6.5.2 del libro. Se registra sobre
+    /// el nodo que se convierte (el operando o el valor asignado), no sobre
+    /// la operación: así la fase de TAC, al terminar de generar la dirección
+    /// de ese hijo, sabe si tiene que emitir `t = (float) addr`. Solo se
+    /// guardan las que NO son `Exact`; ausente significa "ya tiene el tipo".
+    coercions: HashMap<usize, Coercion>,
 }
 
 impl TypeAnnotations {
@@ -81,6 +89,24 @@ impl TypeAnnotations {
         self.types.get(&key(node))
     }
 
+    /// Anota que `node` necesita la conversión `coercion` antes de usarse.
+    /// `Exact` no se guarda (es el valor por omisión de `coercion`).
+    pub fn record_coercion(&mut self, node: &ParseNode, coercion: Coercion) {
+        if coercion != Coercion::Exact {
+            self.coercions.insert(key(node), coercion);
+        }
+    }
+
+    /// La conversión que necesita `node`; `Exact` si no necesita ninguna.
+    pub fn coercion(&self, node: &ParseNode) -> Coercion {
+        self.coercions.get(&key(node)).copied().unwrap_or(Coercion::Exact)
+    }
+
+    /// Cuántos nodos necesitan una conversión distinta de `Exact`.
+    pub fn coercion_count(&self) -> usize {
+        self.coercions.len()
+    }
+
     pub fn len(&self) -> usize {
         self.types.len()
     }
@@ -89,8 +115,9 @@ impl TypeAnnotations {
         self.types.is_empty()
     }
 
-    /// Forma `[{id, symbol, lexeme, line, col, ty}]` — la que consume la
-    /// pestaña de tipos del IDE.
+    /// Forma `[{id, symbol, lexeme, line, col, ty, coercion}]` — la que
+    /// consume la pestaña de tipos del IDE. `coercion` es `null` o
+    /// `"int->float"`.
     ///
     /// El `id` es `n{índice en preorden}`, EL MISMO identificador que
     /// `parse_tree::to_dot` le da a ese nodo en el grafo. Esa coincidencia es
@@ -113,6 +140,10 @@ impl TypeAnnotations {
         *next_id += 1;
 
         if let Some(ty) = self.get(node) {
+            let coercion = match self.coercion(node) {
+                Coercion::Exact => None,
+                Coercion::IntToFloat => Some("int->float"),
+            };
             out.push(json!({
                 "id": format!("n{my_id}"),
                 "symbol": node.symbol,
@@ -120,6 +151,7 @@ impl TypeAnnotations {
                 "line": node.line,
                 "col": node.col,
                 "ty": ty.to_string(),
+                "coercion": coercion,
             }));
         }
 

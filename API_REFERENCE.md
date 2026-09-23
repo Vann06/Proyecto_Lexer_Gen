@@ -260,51 +260,39 @@ Errores: `LexerGenError` (`src/error.rs:6`).
 
 ---
 
-## Frontend (`frontend/IDE/`)
+## Frontend (`frontend/IDE-lite/`)
 
-Sin bundler: el HTML carga React/Babel/viz.js por CDN y compila los `.jsx` en
-el navegador. Al editar un `.jsx` hay que subir el `?v=N` del `<script>`
-correspondiente en `IDE Analizador Sintactico.html:535-536`.
+Sin bundler: `index.html` carga React/Babel/viz.js por CDN y compila los `.jsx`
+en el navegador. Al editar un `.jsx` hay que subir el `?v=N` del `<script>`
+correspondiente en `index.html`, o el navegador (y nginx en Docker) sirven la
+versión vieja desde la caché.
 
 ### `data.jsx` — estado global
 
-Define `window.IDE_DATA` (`:114`), aliasado como `D` en `app.jsx:3`. Contiene
-mock data (`FILES`, `STATES`, `ACTION`, `GOTO`, `TERMINALS`, `NONTERMINALS`,
-`FIRST`, `FOLLOW`, `PRODS`, `TRACE`, `TOKENS:100`, `PROBLEMS:109`) que el
-backend sobreescribe en RUN/PARSEAR, más los campos que **solo** se llenan
-desde la API: `PARSE_ACCEPTED`, `PARSE_ERROR`, `GEN_CODE`, `LR0_DOT`,
-`PARSE_TREE_DOT`. También `YAL_RAW`/`YALP_RAW`/`TEST_RAW` como contenido inicial.
+Define `window.IDE_DATA`, aliasado como `D` en `app.jsx`: los archivos
+cargados (`FILES`, con el contenido inicial `YAL_RAW`/`YALP_RAW`/`TEST_RAW`/
+`G4_RAW`) y lo que devolvió la última llamada a `/api/pipeline`: `TOKENS`,
+`PROBLEMS`, `PARSE_ACCEPTED`, `PARSE_ERROR`, `PARSE_TREE_DOT`, `SYMBOL_TABLE`,
+`SCOPES` y `TYPES`.
 
 ### `app.jsx` — un componente por panel
 
-| Línea | Componente / función | Qué hace |
-|---|---|---|
-| `5` | `const API` | Base URL del backend — hardcodeada a `http://localhost:8080` |
-| `9` | `FileTree` | Árbol de archivos + botones de carga |
-| `46` | `escHtml(s)` | Escapa HTML antes de inyectar highlight |
-| `48` | `HL_RULES` | Reglas de syntax highlighting por lenguaje |
-| `69` | `tokenize(text, lang)` | Tokenizador del editor (solo para colorear) |
-| `93` | `Editor` | Editor editable con highlight y subrayado de errores |
-| `195` | `GrammarView` | Producciones numeradas |
-| `228` | `FirstFollow({which})` | Tabla FIRST o FOLLOW |
-| `252` | `StatesView` | Lista de estados con sus ítems |
-| `317` | `LL1TableView` | Tabla M[NT,T] |
-| `363` | `ActionGotoTable` | Tabla ACTION/GOTO con la fila del paso actual resaltada |
-| `431` | `TokensView` | Tokens del lexer (kind, lexema, línea, columna) |
-| `455` | `LR0Graph` | Renderiza `D.LR0_DOT` con viz.js |
-| `497` | `GeneratedCode` | Muestra `D.GEN_CODE` |
-| `532` | `ProblemsList` | Panel PROBLEMS desde `D.PROBLEMS` |
-| `574` / `598` | `_buildTreeLR` / `_buildTreeLL1` | Reconstruyen el árbol desde la traza |
-| `628` | `buildParseTree(trace, mode)` | Dispatcher de los dos anteriores |
-| `634` | `buildTreeDot(root)` | Árbol → DOT (con `visit` interno en `:644`) |
-| `662` | `ParseTreeView` | Renderiza el árbol con viz.js |
-| `726` | `StackView` | Pila del parser en el paso actual |
-| `770` | `ParseConsole` | Traza paso a paso, controles de navegación |
-| `1015` | `ResultsPanel` | Contenedor con pestañas de todo lo anterior |
-| `1066` | `MODE_LABELS` | `lalr`/`slr`/`ll1` → etiqueta visible |
-| `1068` | `Header` | Botones RUN / SAVE / selector de modo |
-| `1115` | `StatusBar` | Barra inferior |
-| `1138` | `App` | Estado global y llamadas al backend: `/api/workspace` (`:1169`, `:1182`, `:1218`, `:1235`), `/api/parser/compile` (`:1258`), `/api/codegen` (`:1288`), `/api/pipeline` (`:1355`), `/api/parser/parse` (`:1378`) |
+| Componente / función | Qué hace |
+|---|---|
+| `const API` | Base URL del backend — hardcodeada a `http://localhost:8080` |
+| `FileTree` | Explorer: los cuatro archivos y sus botones de carga |
+| `HL_RULES` / `tokenize(text, lang)` | Resaltado de sintaxis del editor (solo para colorear) |
+| `normalizeEol` / `highlightFor` / `codeMetrics` / `problemLine` | Utilidades del editor: saltos `\n`, capa de resaltado, alto de línea (el mismo `--code-lh` del CSS) y línea de un problema |
+| `Editor` | Editor con resaltado, gutter, marcas de línea por problema y salto a línea |
+| `TokensView` | Tokens del lexer (kind, lexema, línea, columna) |
+| `ParseTreeView` | Renderiza `D.PARSE_TREE_DOT` con viz.js |
+| `SymbolTableView` | Tabla de símbolos (`D.SYMBOL_TABLE` + `D.SCOPES`) |
+| `TypesView` | Tipo de cada nodo de expresión (`D.TYPES`) |
+| `ProblemsView` | Todos los problemas, ordenados por línea; clic → salta a la línea |
+| `ResultsPanel` | Contenedor con las pestañas de las vistas anteriores |
+| `MODE_LABELS` / `Header` | Selector LALR(1)/SLR(1), ANALIZAR y SAVE |
+| `StatusBar` | Barra inferior |
+| `App` | Estado global y llamadas al backend: `/api/workspace` (carga y guardado) y `/api/pipeline` (ANALIZAR) |
 
 ---
 

@@ -2,7 +2,7 @@
 
 Documento para agentes o front-ends que quieran consumir o invocar el sistema.
 
-> **El IDE real (`frontend/IDE/`) no usa nada de esto.** Habla con el servidor
+> **El IDE real (`frontend/IDE-lite/`) no usa nada de esto.** Habla con el servidor
 > HTTP (`src/bin/api.rs`) descrito en [GUIA_USO.md](GUIA_USO.md) —
 > `POST /api/pipeline` hace exactamente lo que describe este documento, pero
 > devuelve JSON en vez de que el caller tenga que invocar un binario y

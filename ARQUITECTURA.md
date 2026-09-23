@@ -22,8 +22,8 @@ ejecuta. Todo lo demás de este archivo desarrolla la segunda fila.
 | **Análisis semántico** | `src/semantico/` (15 submódulos) | Se activa solo, dentro del pipeline, cuando el `.yalp` trae `%ident` y el modo no es LL(1) |
 | **Árbol sintáctico con representación visual** | `to_dot_annotated` en `src/sintactico/runtime/parse_tree.rs` | Pestaña **ÁRBOL** del IDE (render con viz.js, botón ↓ PNG) |
 | **Tabla de símbolos por entorno** | `SymbolTable::dump()` y `ScopeCollector::to_json()` | Pestaña **SÍMBOLOS** del IDE — ver §6 |
-| **Batería de pruebas** | `workspace/casos_semanticos.txt` y los `.cps` de `workspace/` | `cargo test`, o el panel **TEST CASES** del IDE — ver más abajo |
-| **IDE funcional** | `frontend/IDE/` | `docker compose up --build` → <http://localhost:4000> — ver [`GUIA_USO.md`](GUIA_USO.md) |
+| **Batería de pruebas** | `workspace/casos_semanticos.txt` y los `.cps` de `workspace/` | `cargo test`, o ▶ ANALIZAR en el IDE y la pestaña **PROBLEMAS** — ver más abajo |
+| **IDE funcional** | `frontend/IDE-lite/` | `docker compose up --build` → <http://localhost:4000> — ver [`GUIA_USO.md`](GUIA_USO.md) |
 | **Documentación** | Este archivo (fase semántica), [`ORGANIZACION.md`](ORGANIZACION.md) (fases y carpetas), [`PIPELINE_GUIDE.md`](PIPELINE_GUIDE.md) (pipeline de punta a punta), [`API_REFERENCE.md`](API_REFERENCE.md) (índice de funciones), [`GUIA_USO.md`](GUIA_USO.md) (ejecución) | — |
 
 ### La batería de pruebas
@@ -43,12 +43,11 @@ Ese test no se conforma con "no explotó": exige el diagnóstico **exacto** de
 cada línea, ni uno de más ni uno de menos, y corre los 45 dos veces (una por
 modo). Es la comprobación reproducible de que cada regla está viva.
 
-**Desde el IDE**, para verlos de a uno: levantar el backend, cargar
-`workspace/compiscript.yal`, `workspace/compiscript.yalp` y
-`workspace/casos_semanticos.txt`, pulsar **RUN** y luego **PARSEAR**, y navegar
-el panel **TEST CASES** de la izquierda. Cada línea es un caso clicable y la
-pestaña **PROBLEMAS** muestra su diagnóstico. Un `.cps` multilínea, en cambio,
-se compila entero: el panel por línea solo aplica a las baterías `.txt`.
+**Desde el IDE**: levantar el backend, cargar `workspace/compiscript.yal`,
+`workspace/compiscript.yalp` y `workspace/casos_semanticos.txt`, y pulsar
+**▶ ANALIZAR**. El archivo se analiza entero; como cada caso ocupa una línea,
+la pestaña **PROBLEMAS** lista el diagnóstico de cada caso fallido en su
+línea, y un clic lleva el editor a ese caso.
 
 #### Las otras baterías
 
@@ -153,6 +152,7 @@ análisis semántico en absoluto: la gramática sigue compilando y parseando igu
 | Directiva | Forma | Qué configura |
 |---|---|---|
 | `%type_of` | `%type_of var_decl tipo` | Cuál hijo de esa producción es el nodo de tipo (por símbolo, no por índice). |
+| `%fixed_type` | `%fixed_type catch_param string` | Tipo fijo para las declaraciones de una producción cuyo tipo el fuente no escribe porque la gramática no tiene dónde. En Compiscript, la variable de `catch (err)`: es siempre el mensaje del error atrapado (no hay `throw`), así que es `string`. Nace inicializada. |
 | `%type_token` | `%type_token INT_T integer` | Qué `Type` representa cada terminal de tipo o literal. |
 | `%init_of` | `%init_of var_decl expr` | Cuál hijo es el inicializador, para validarlo contra el tipo declarado (o inferir el tipo si no se declaró). |
 | `%immutable` | `%immutable const_decl` | Que esa declaración es inmutable: exige inicializador y rechaza asignaciones posteriores. |
@@ -177,6 +177,7 @@ enumerar `or_expr`/`and_expr`/`equality_expr`/…)
 | `%member_access` | `%member_access primary DOT` | Producción y token del acceso a miembro. |
 | `%new` | `%new atom NEW 1 3` | Producción, token, índice del nombre de clase e índice de la lista de argumentos. |
 | `%call` | `%call primary LPAREN 0 2` | Producción, token, índice del invocado e índice de los argumentos. |
+| `%group` | `%group atom LPAREN 1` | Producción, token de apertura e índice de la expresión encerrada: una agrupación `( expr )` tiene el tipo de lo que encierra. |
 | `%arg_list_symbol` | `%arg_list_symbol args` | Símbolo de la lista de argumentos, para aplanarla. |
 | `%constructor` | `%constructor constructor` | Nombre convencional del método que actúa como constructor (estilo JS/TS, igual que `Compiscript.g4`). La firma se busca **subiendo la cadena de herencia**, con el propio ganando sobre el heredado; si se agota la cadena, la clase tiene un constructor implícito de aridad 0. |
 
@@ -190,6 +191,7 @@ enumerar `or_expr`/`and_expr`/`equality_expr`/…)
 | `%switch` | `%switch switch_stmt 2` | Producción del `switch` y su discriminante. **No** se exige booleano: se valida que cada `%case` sea compatible con él. Abre además un contexto que admite `break` pero no `continue`. |
 | `%case` | `%case switch_case 1` | Producción de una rama `case` y el valor con el que compara. La rama `default` se declara como producción aparte porque no lleva valor. |
 | `%foreach` | `%foreach foreach_stmt 2 4` | Producción del bucle, índice de la variable de iteración e índice del iterable. La variable se declara **dentro** del ámbito del bucle, con el tipo de elemento del iterable. |
+| `%flow` | `%flow if if_stmt cond=2 then=4 else=6` | **Para la fase de código intermedio** (no la usa el análisis semántico): tipo de construcción (`if`, `while`, `do_while`, `for`, `foreach`, `switch`, `case`, `default`, `try`, `catch`), producción y un índice por cada parte con nombre (`cond`, `then`, `else`, `body`, `init`, `update`, `var`, `iter`, `disc`, `cases`, `value`, `handler`). Un rol opcional que falta en una alternativa —el `else` de un `if` corto— o que solo deriva ε —un `for_init` vacío— significa que esa parte no existe. A diferencia del resto, un `%flow` mal escrito **es un error de la gramática**: tipo o rol desconocido, rol obligatorio faltante, producción inexistente, o un índice obligatorio que no cabe en alguna alternativa. Vocabulario en `sintactico::gramatica::flow`; consulta en `intermedio::spec`. |
 
 **Structs y listas**
 
@@ -287,6 +289,10 @@ pub struct Symbol {
     pub storage: Option<StorageInfo>,
     pub members: Option<Vec<Symbol>>,
     pub parent: Option<String>,    // clase padre, solo para SymbolKind::Class
+    pub decl_index: usize,         // orden de declaración dentro de su ámbito
+    pub scope_id: Option<usize>,   // ámbito donde vive (0 = Global)
+    pub storage_size: Option<usize>, // frame_size (función) o instance_size (clase)
+    pub nesting_level: Option<usize>, // nivel estático de una función (§7.3)
 }
 ```
 
@@ -297,7 +303,10 @@ Quién llena qué, y cuándo:
 - `signature` — al declarar una función, **antes** de recorrer su cuerpo: por eso una función recursiva se ve a sí misma.
 - `members` — solo, cuando `analyzer::walk` **cierra** el ámbito que ese símbolo abrió. Así los campos y métodos de una clase quedan consultables sin volver a recorrer el árbol. No se aplana transitivamente: un local de un bloque anidado dentro de una función no cuelga de la función.
 - `parent` — al declarar una clase con `: Padre`. Es la cadena por la que sube `classes::resolve_member`.
-- `storage` — **nadie**: es la fase de asignación de almacenamiento, no implementada (ver §7).
+- `decl_index`/`scope_id` — `Scope::insert`, el único punto de inserción.
+- `storage` — `storage::allocate_scope` al cerrar cada función o bloque (y al final para el Global); `storage::allocate_classes` para los campos de clases y structs (ver §8).
+- `storage_size` — al cerrar una función (`frame_size`) o en la post-pasada de clases (`instance_size`).
+- `nesting_level` — al abrir el ámbito de una función: 1 si está en el Global o es un método, el de su función encerradora + 1 si está anidada.
 
 ### `Type` (`types/mod.rs`)
 
@@ -495,12 +504,12 @@ Documentados a propósito, no olvidados:
 - **La condición de un `for` es obligatoria**, mientras que en la `.g4` es
   `expression?`. Mismo motivo, y mismo criterio que el `for` de
   `examples/grammar/miniprog.yalp`.
-- **`Symbol.storage` (offset y tamaño) nunca se llena.** Es la fase de
-  asignación de almacenamiento del capítulo 7 del libro del dragón — ver la
-  sección 8, que detalla qué le falta a la generación de código intermedio.
+- **Un símbolo sin tipo no recibe `storage`.** Sin tipo no hay ancho; su
+  marco queda marcado incompleto en vez de recibir un tamaño inventado — ver
+  la sección 8.
 - **Los tipos de expresiones compuestas no siempre se resuelven.** `resolve_expr_type`
   cubre identificadores, `this`, literales, accesos a miembro, indexaciones,
-  operadores, **llamadas a función** (por el retorno declarado del invocado) e
+  operadores, agrupaciones `( expr )` (`%group`), **llamadas a función** (por el retorno declarado del invocado) e
   **instanciaciones** (`new C(...)` tipa como `C`); una expresión más enredada
   devuelve `None`, y las reglas que dependen de ella se callan en vez de
   adivinar. Que las llamadas tipen no es cosmético: sin eso,
@@ -536,36 +545,90 @@ hijos; la tabla entra en esa misma regla como servicio de consulta.
 | Qué | Dónde | Estado |
 |---|---|---|
 | El árbol de derivación | `sintactico::runtime::parse_tree::ParseNode` | Vive todo el pipeline; `analyze` lo toma por `&`, así que sobrevive intacto al análisis |
-| El tipo de cada nodo de expresión | `types::TypeAnnotations` (campo `types` de `AnalysisResult`) | Completo para toda expresión que `resolve_expr_type` sepa tipar |
+| El tipo de cada nodo de expresión | `types::TypeAnnotations` (campo `types` de `AnalysisResult`) | Completo para toda expresión que `resolve_expr_type` sepa tipar, incluidas las agrupaciones `( expr )` (`%group`) |
+| La ampliación de cada operando (`widen`, §6.5.2) | `TypeAnnotations::coercion(node)` | En todo lugar donde un `integer` se usa como `float`: operaciones aritméticas, comparaciones mixtas, asignaciones (a variable y a miembro), inicializadores, argumentos de llamadas y constructores, `return`, campos de literal de struct y elementos de listas/conjuntos/mapas mixtos. `Exact` si no hace falta ninguna |
+| A qué declaración apunta cada identificador | `bindings::Bindings` (campo `bindings`) + `AnalysisResult::resolve`/`symbol_for` | Usos, destinos de asignación y nombres declarados. `resolve` devuelve el `Symbol` final, con `storage` |
+| Cómo llegar a cada variable desde donde se usa (§7.3) | `SymbolRef::access` | `Static` (área estática), `Local` (`offset($fp)`), `NonLocal { hops }` (seguir `hops` enlaces de acceso) o `Field` (por `this`) |
+| Nivel de anidamiento de cada función | `Symbol::nesting_level`, `LayoutReport::functions` | Para armar el enlace de acceso al llamar: desde nivel `nc` a una función de nivel `ng`, seguir `nc - ng + 1` enlaces desde el `$fp` propio |
+| La forma de cada `if`/`while`/`for`/`switch`... | `intermedio::spec::IntermediateSpec` (directivas `%flow`) | `flow_of(node)` y `FlowShape::child(node, rol)`; `None` si la parte no existe |
 | Tipos, firmas y herencia | `symbols::Symbol` (`ty`, `signature`, `parent`, `members`) | Completo |
-| Los ámbitos, incluidos los anónimos | `scopes::ScopeCollector` | Completo, con la salvedad de abajo |
+| Los ámbitos, incluidos los anónimos | `scopes::ScopeCollector` | Completo, con `id` y `parent_id` para reconstruir qué bloque cae en qué función |
+| Dónde vive cada variable y cuánto pesa cada marco/objeto (cap. 7) | `Symbol.storage`, `Symbol.storage_size` y `storage::LayoutReport` (campo `layout`) | Offsets de parámetros (`$fp+12…`), locales (`$fp-12…`, los de bloques anidados acumulan en el marco de su función), área estática del Global, campos de clase (el hijo empieza donde termina el padre) y vtable |
 
-Las anotaciones de tipo son la pieza nueva: antes el tipo de cada expresión se
-calculaba durante el recorrido y se descartaba. Sin ellas, la regla de
-`E -> E1 + E2` no tendría con qué decidir si hace falta una ampliación ni qué
-instrucción emitir. Es el *árbol de análisis anotado* del libro, con una
-diferencia deliberada: los atributos viven en un mapa lateral y no dentro del
+Las anotaciones de tipo son el *árbol de análisis anotado* del libro, con una
+diferencia deliberada: los atributos viven en mapas laterales y no dentro del
 `ParseNode` —igual que el `ParseTreeProperty` de ANTLR— para no meter un tipo
-semántico en una estructura de la capa sintáctica. Ver
-`types::annotations` para la invariante de las claves.
+semántico en una estructura de la capa sintáctica. `bindings` sigue el mismo
+diseño y la misma invariante de claves (ver `types::annotations`).
 
-### Los dos huecos conocidos
+Todo esto sale también por la API: `types` trae `coercion` por fila,
+`bindings` los enlaces (con `access` y `hops`) con el mismo `id` que el DOT,
+`scopes` el `id`, `parent_id` y el `offset`/`size`/`nesting_level` de cada
+símbolo, y `layout` el volcado de `storage::dump` (cada marco con su función
+y nivel).
 
-**1. `Symbol.storage` nunca se llena.** El campo existe
-(`StorageInfo { offset, size_bytes }`, `symbols/mod.rs`), pero los ocho sitios
-que construyen un `Symbol` —cuatro en `symbols`, cuatro en `classes`— escriben
-`storage: None`, y nada lo completa después. Es la asignación de almacenamiento
-del capítulo 7 del libro: una pasada que recorra cada ámbito acumulando
-desplazamientos según el `width` de cada tipo. Hasta que exista, el código
-intermedio puede nombrar variables pero no ubicarlas en un marco de activación.
+### El marco de activación
 
-**2. Los ámbitos anónimos no están en la tabla final.** Al terminar el
-recorrido la tabla viva solo conserva el Global; lo declarado dentro de una
-función o una clase sobrevive anidado en `Symbol.members`, pero lo de un bloque
-anónimo se descarta. Está en `ScopeCollector`, sí, pero como **lista plana
-ordenada por cierre**, con un `depth` y sin enlace al ámbito padre. Para saber
-qué locales caen en el marco de qué función hay que reconstruir esa relación a
-partir del `depth`.
+Convención MIPS por defecto (`storage::TargetLayout`), igual para TODAS las
+funciones:
+
+| Offset | Contenido |
+|---|---|
+| `$fp+12…` | Parámetros, en orden de declaración. En un método, `$fp+12` es `this` (el primer parámetro oculto, que pasa el llamador) y los del usuario siguen desde `$fp+16` |
+| `$fp+8` | Enlace de acceso: el `$fp` de la función que encierra estáticamente a esta |
+| `$fp+4` | Valor de retorno |
+| `$fp+0` | Enlace de control (el `$fp` del llamador) |
+| `$fp-4` | `$ra` / estado salvado |
+| `$fp-8…` | Locales, hacia abajo; los de bloques anidados acumulan en el marco de su función |
+
+Una función de nivel 1 también reserva el enlace de acceso aunque no lo use:
+una convención de llamada uniforme es más simple que un caso especial. El
+enlace de acceso con marcos en pila es correcto porque Compiscript no deja
+usar una función como valor (`operators`: una función nombrada a secas no es
+un valor), así que una función anidada nunca sobrevive a la que la encierra.
+
+### Lo que la fase intermedia tiene que respetar
+
+- **No generar si hay errores.** Solo corre si `errors` no trae ningún error
+  (las advertencias no bloquean).
+- **No generar direcciones sobre un layout incompleto.** Un símbolo sin tipo
+  (p. ej. `let d = null;`) no tiene ancho: su marco queda en
+  `layout.incomplete_scopes` y `layout.is_complete()` da `false`. No se le
+  inventa un tamaño.
+- **Clases solo en el Global.** `allocate_classes` corre sobre las clases y
+  structs del Global; una clase declarada dentro de una función quedaría sin
+  layout (ninguna gramática del proyecto lo permite hoy).
+
+### Cómo se traduce `try`/`catch`
+
+Compiscript no tiene `throw`: una excepción solo nace de un error en tiempo de
+ejecución (índice fuera de rango, división por cero, miembro de `null`). Con
+`%flow try` / `%flow catch` y la variable del catch tipada (`%fixed_type`), la
+fase intermedia lo traduce así:
+
+```
+  try_begin Lcatch      ; apila un manejador: la etiqueta + el $fp/$sp actuales
+  <cuerpo>
+  try_end               ; lo desapila
+  goto Lfin
+Lcatch:
+  err = <mensaje del error>   ; err: string, con su offset del marco
+  <cuerpo del catch>
+Lfin:
+```
+
+Cada operación que puede fallar emite un chequeo que, si falla, hace
+`raise "<mensaje>"`: salta al manejador del tope restaurando su `$fp`/`$sp`, o
+aborta el programa si no hay ninguno. Qué operaciones se chequean lo decide el
+generador de TAC, no el análisis.
+
+### Lo que todavía falta
+
+**El tipo de `null`.** `let d = null;` no tiene tipo, así que `d` no recibe
+`storage` y deja su marco incompleto (en `rubrica.cps`, el área estática). Es a
+propósito: no se le inventa un tamaño. Hace falta que el lenguaje defina el
+tipo de `null` —p. ej. un tipo referencia compatible con cualquier clase—
+antes de generar código para él.
 
 ### La restricción de LL(1)
 

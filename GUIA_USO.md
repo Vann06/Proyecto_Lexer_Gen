@@ -30,13 +30,10 @@ docker compose down
 cargo run --bin api
 
 # Terminal 2 — servidor frontend en http://localhost:5500
-python3 -m http.server 5500 --directory frontend/IDE
+python3 -m http.server 5500 --directory frontend/IDE-lite
 ```
 
-Luego abrir [http://localhost:5500/IDE%20Analizador%20Sintactico.html](http://localhost:5500/IDE%20Analizador%20Sintactico.html)
-en el navegador — la raíz del sitio (`/`) sirve un listado de directorio en
-vez del IDE, porque nginx es quien renombra ese archivo a `index.html` al
-construir la imagen Docker; `http.server` no lo hace.
+Luego abrir [http://localhost:5500](http://localhost:5500) en el navegador.
 
 ---
 
@@ -44,56 +41,43 @@ construir la imagen Docker; `http.server` no lo hace.
 
 ### 1. Cargar archivos
 
-En el panel izquierdo bajo **CARGAR ARCHIVOS**, usa los botones para subir:
+En el panel izquierdo (**EXPLORER**) hay un botón por archivo:
 
 - `↑ .yal / .yalex` — definiciones léxicas
-- `↑ .yalp / .yapar` — gramática del parser
-- `↑ input.txt` — cadena de prueba
+- `↑ .yalp / .yapar` — gramática del parser (con las directivas semánticas)
+- `↑ .cps / .txt` — el programa fuente a analizar
+- `↑ .g4 (referencia)` — solo para verlo al lado; nunca se manda al backend
 
-Los archivos se guardan automáticamente en la carpeta `workspace/` del proyecto.  
-Al abrir el IDE, los archivos del workspace se cargan solos.
+Los archivos se guardan en la carpeta `workspace/` del proyecto, y al abrir el
+IDE los del workspace se cargan solos.
 
 ---
 
 ### 2. Editar y guardar
 
-El editor es completamente editable con syntax highlighting en tiempo real.  
-Haz clic en **SAVE** (esquina superior derecha) para escribir los cambios a disco.
+El editor es editable, con resaltado de sintaxis en tiempo real. **SAVE**
+(esquina superior derecha) escribe los cambios a disco.
 
 ---
 
-### 3. Compilar — botón RUN
+### 3. Analizar — botón ▶ ANALIZAR
 
-Haz clic en **▶ RUN**.
+Elige el modo en el header (**LALR(1)** o **SLR(1)**) y pulsa **▶ ANALIZAR**.
+Corre el pipeline completo (léxico → sintáctico → semántico) sobre el archivo
+fuente entero con una sola llamada a `POST /api/pipeline`, y llena las
+pestañas de la derecha:
 
-El botón muestra `...` mientras el backend procesa. Al terminar, los paneles de resultados se actualizan:
+| Pestaña | Qué muestra |
+|---|---|
+| TOKENS | Los tokens del lexer con su línea y columna |
+| ÁRBOL SINTÁCTICO | El árbol de derivación, anotado con el tipo de cada expresión |
+| SÍMBOLOS | La tabla de símbolos: estado final y una foto de cada ámbito |
+| TIPOS | El tipo inferido de cada nodo de expresión |
+| PROBLEMAS | Errores léxicos, sintácticos y semánticos, y advertencias, ordenados por línea |
 
-| Tab         | Qué muestra                                       |
-|-------------|---------------------------------------------------|
-| GRAMÁTICA   | Producciones numeradas + terminales/no-terminales |
-| FIRST       | Conjuntos FIRST de cada no-terminal               |
-| FOLLOW      | Conjuntos FOLLOW de cada no-terminal              |
-| ESTADOS     | Colección canónica con ítems y lookaheads         |
-| ACTION/GOTO | Tabla completa con la celda activa resaltada      |
-| LR(0)       | Autómata LR(0) como grafo interactivo             |
-| PROBLEMAS   | Conflictos S/R o R/R, o confirmación sin errores  |
-
-Modos disponibles (selector en el header): **LALR(1)**, **SLR(1)**, **LL(1)**
-
----
-
-### 4. Parsear una cadena
-
-1. Escribe los tokens en el campo inferior (separados por espacios), ej: `c c d c d`
-2. Presiona **▶ PARSEAR** o `Enter`
-3. Navega la traza paso a paso:
-
-| Botón  | Acción                        |
-|--------|-------------------------------|
-| ⏮      | Primer paso                   |
-| ◀ PASO | Retroceder un paso            |
-| PASO ▶ | Avanzar un paso               |
-| ⏭      | Último paso (resultado final) |
+En **PROBLEMAS**, un clic en un problema lleva el editor a su línea. Las líneas
+con problemas quedan marcadas en el gutter y con una franja de fondo: roja si es
+un error, amarilla si es una advertencia.
 
 ---
 

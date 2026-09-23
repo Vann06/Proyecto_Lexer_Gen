@@ -11,7 +11,7 @@
 use crate::semantico::classes::{self, flatten_arg_list};
 use crate::semantico::spec::SemanticSpec;
 use crate::semantico::symbols::{SemanticError, SymbolTable};
-use crate::semantico::types::{resolve_assignment, Type, TypeAnnotations};
+use crate::semantico::types::{resolve_assignment, Coercion, Type, TypeAnnotations};
 use crate::sintactico::runtime::parse_tree::ParseNode;
 
 /// Si `node` es la producción de literal de lista configurada en
@@ -96,6 +96,17 @@ fn common_type(
                         col: element.col,
                     });
                 }
+            }
+        }
+    }
+
+    // `[1, 2.5]` es `float[]`: los elementos `integer` se amplían al
+    // guardarse. Se decide al final porque el tipo común puede ensancharse a
+    // `float` DESPUÉS de haber visto enteros.
+    if common == Some(Type::Float) {
+        for element in elements {
+            if rec.get(element) == Some(&Type::Int) {
+                rec.record_coercion(element, Coercion::IntToFloat);
             }
         }
     }

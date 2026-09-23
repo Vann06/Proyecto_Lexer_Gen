@@ -2,8 +2,8 @@
 
 `casos_semanticos.txt` cubre **cada regla semántica con un caso exitoso y uno
 fallido**. Cada línea es un programa completo e independiente —un bloque
-`{ ... }`— así que el IDE muestra una entrada por caso en el panel de TEST
-CASES y se pueden ejecutar de a uno.
+`{ ... }`—, así que al analizar el archivo entero cada diagnóstico queda en la
+línea de su caso.
 
 El mismo archivo lo usa `tests/bateria_semantica_tests.rs`, que lo analiza por
 el mismo pipeline del IDE en LALR(1) y SLR(1) y exige que cada línea produzca
@@ -15,13 +15,12 @@ de menos.
 1. Levanta el backend: desde la raíz, `docker compose up --build`.
 2. Abre `http://localhost:4000` y carga `workspace/compiscript.yal`,
    `workspace/compiscript.yalp` y `workspace/casos_semanticos.txt`.
-3. Selecciona LALR(1) o SLR(1) y pulsa **RUN** para compilar la gramática.
-4. Pulsa **PARSEAR** y ve seleccionando cada caso en el panel de la izquierda.
-5. Mira la pestaña **PROBLEMAS**: los `S###` salen como ERR y los `W###` como
-   WRN. El gutter del editor marca la línea en rojo o amarillo.
-
-Un `.cps` multilínea, en cambio, se carga y compila **entero**: el panel de
-casos por línea solo aplica a los `.txt` de batería como este.
+3. Selecciona LALR(1) o SLR(1) y pulsa **▶ ANALIZAR**: se analiza el archivo
+   entero, y como cada caso ocupa una línea, cada diagnóstico cae en la línea
+   de su caso.
+4. En la pestaña **PROBLEMAS** salen ordenados por línea: los `S###` como ERR
+   y los `W###` como WRN. El gutter y una franja marcan la línea en rojo o
+   amarillo, y un clic en el problema lleva el editor a ese caso.
 
 ## Qué comprueba cada caso
 

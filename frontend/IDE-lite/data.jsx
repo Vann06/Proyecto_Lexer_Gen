@@ -1,10 +1,6 @@
 /* ============================================================================
-   IDE-lite: mismo D global mutable que el IDE completo (frontend/IDE-full/),
-   recortado a lo que este panel necesita — sin STATES/ACTION/GOTO/FIRST/
-   FOLLOW/PRODS/TRACE/GEN_CODE/LR0_DOT/CLOSURES, porque las vistas que los
-   consumían (GRAMÁTICA, FIRST, FOLLOW, ESTADOS, ACTION/GOTO, LR(0), CÓD.GEN,
-   CLOSURES, y el stepper PARSE CONSOLE) no están en este panel — ver
-   frontend/IDE-full/ si hace falta cualquiera de esas.
+   IDE-lite: el `D` global mutable que comparten todas las vistas — los
+   archivos cargados y lo que devolvió la última llamada a /api/pipeline.
 
    Contenido por defecto: la gramática real de Compiscript
    (workspace/compiscript.yal + .yalp, la que usa `tests/bateria_semantica_tests.rs`)

@@ -75,7 +75,7 @@ fn pascalito_symbol_table_distinguishes_records_from_classes() {
     // Clases: `Class`, con `self` tipado dentro de cada método.
     assert!(tabla.contains("Figura: Class"), "{tabla}");
     assert!(tabla.contains("Circulo: Class"), "{tabla}");
-    assert!(tabla.contains("this: Variable, Named(\"Circulo\")"), "self tipado en el método:\n{tabla}");
+    assert!(tabla.contains("this: Parameter, Named(\"Circulo\")"), "self tipado en el método:\n{tabla}");
 
     // Constante declarada con `let`.
     assert!(tabla.contains("FIJA: Variable, Int, const"), "{tabla}");

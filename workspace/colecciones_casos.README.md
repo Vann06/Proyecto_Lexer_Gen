@@ -15,9 +15,12 @@ específica de ella.
 1. Levanta el backend: desde la raíz, `docker compose up --build`.
 2. Abre `http://localhost:4000` y carga `workspace/colecciones.yal`,
    `workspace/colecciones.yalp` y `workspace/colecciones_casos.txt`.
-3. Selecciona LALR(1) o SLR(1) y pulsa **RUN**.
-4. Pulsa **PARSEAR** y ve seleccionando cada caso en el panel de la izquierda.
-5. En **PROBLEMAS** salen los códigos; el gutter marca la línea.
+3. Selecciona LALR(1) o SLR(1) y pulsa **▶ ANALIZAR**: se analiza el archivo
+   entero, y como cada caso ocupa una línea, cada diagnóstico cae en la línea
+   de su caso.
+4. En la pestaña **PROBLEMAS** salen ordenados por línea: los `S###` como ERR
+   y los `W###` como WRN. El gutter y una franja marcan la línea en rojo o
+   amarillo, y un clic en el problema lleva el editor a ese caso.
 
 ## La sintaxis de esta gramática
 

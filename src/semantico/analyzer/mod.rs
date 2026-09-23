@@ -21,9 +21,11 @@ use crate::semantico::functions::FunctionContext;
 use crate::semantico::operators;
 use crate::semantico::scopes::{ScopeCollector, ScopeKind};
 use crate::semantico::spec::{SemanticSpec, ChildLocator};
-use crate::semantico::symbols::{SemanticError, Signature, SymbolKind, SymbolTable};
+use crate::semantico::bindings::{Access, Bindings, SymbolRef};
+use crate::semantico::storage::{self, FrameAllocator, FrameOwner, LayoutReport, LayoutStatus, TargetLayout};
+use crate::semantico::symbols::{SemanticError, Signature, Symbol, SymbolKind, SymbolTable};
 use crate::semantico::types::{
-    resolve_arithmetic, resolve_assignment, Type, TypeAnnotations,
+    comparison_coercions, resolve_arithmetic, resolve_assignment, Type, TypeAnnotations,
 };
 use crate::semantico::visitor::{self, Flow, Visitor};
 use crate::sintactico::runtime::parse_tree::ParseNode;
@@ -41,11 +43,53 @@ pub struct AnalysisResult {
     /// cubre los ámbitos con nombre. Ver `scopes::ScopeCollector`.
     pub scopes: ScopeCollector,
     /// El tipo inferido de cada nodo de expresion, indexado por la identidad
-    /// del nodo dentro de `tree`. Es lo que una futura fase de generacion de
-    /// codigo intermedio necesita para decidir, en cada operacion, que
-    /// instruccion emitir y donde hace falta una ampliacion — ver
-    /// `types::annotations`.
+    /// del nodo dentro de `tree`, y la ampliacion (`int -> float`) que
+    /// necesita cada operando o valor asignado. Es lo que la fase de codigo
+    /// intermedio necesita para decidir, en cada operacion, que instruccion
+    /// emitir y donde insertar la conversion — ver `types::annotations`.
     pub types: TypeAnnotations,
+    /// A que declaracion apunta cada hoja identificador (uso, destino de
+    /// asignacion o nombre declarado). Con `resolve` da el `Symbol` final,
+    /// ya con su `storage`. Ver `bindings`.
+    pub bindings: Bindings,
+    /// Marcos por funcion, area estatica y layout de clases (capitulo 7 del
+    /// libro). Una fase de TAC debe negarse a generar direcciones si
+    /// `layout.is_complete()` es falso. Ver `storage::LayoutReport`.
+    pub layout: LayoutReport,
+}
+
+impl AnalysisResult {
+    /// El `Symbol` definitivo al que apunta `r`, con `storage` ya asignado.
+    ///
+    /// - `scope_id == 0`: el Global, que sigue vivo en `table`.
+    /// - Un ambito de clase/struct: el miembro colgado del simbolo de la
+    ///   clase en el Global, porque es ahi —y no en la foto del ambito— donde
+    ///   `storage::allocate_classes` escribe el offset de cada campo.
+    /// - Cualquier otro: la foto que dejo el ambito al cerrarse.
+    pub fn resolve(&self, r: &SymbolRef) -> Option<&Symbol> {
+        let matches = |s: &&Symbol| s.name == r.name && s.decl_index == r.decl_index;
+        if r.scope_id == 0 {
+            return self.table.lookup_global(&r.name).filter(|s| s.decl_index == r.decl_index);
+        }
+        let snap = self.scopes.snapshots().iter().find(|s| s.id == r.scope_id)?;
+        if matches!(snap.kind, ScopeKind::Class | ScopeKind::Struct) {
+            let from_class = snap
+                .label
+                .as_deref()
+                .and_then(|class| self.table.lookup_global(class))
+                .and_then(|class| class.members.as_ref())
+                .and_then(|members| members.iter().find(matches));
+            if from_class.is_some() {
+                return from_class;
+            }
+        }
+        snap.symbols.iter().find(matches)
+    }
+
+    /// Atajo: el simbolo que nombra la hoja `node`, si se resolvio.
+    pub fn symbol_for(&self, node: &ParseNode) -> Option<&Symbol> {
+        self.bindings.get(node).and_then(|r| self.resolve(r))
+    }
 }
 
 /// Punto de entrada: recorre `tree` según `spec` y devuelve la tabla de
@@ -61,12 +105,64 @@ pub fn analyze(tree: &ParseNode, spec: &SemanticSpec) -> AnalysisResult {
             analyzer.errors.push(warning);
         }
     }
+    // El Global nunca pasa por `exit` (no se puede cerrar), así que sus
+    // símbolos directos no recibieron `storage` durante el recorrido — se
+    // asignan acá, al final, con el mismo `global_alloc` que ya venía
+    // acumulando cualquier bloque suelto a nivel de programa. (El orden
+    // relativo entre una variable global y un bloque top-level que la rodea
+    // en el archivo no queda perfectamente preservado por esto —ambos
+    // comparten el mismo asignador pero el Global se procesa al final—, algo
+    // sin consecuencia real: siguen siendo offsets únicos del mismo
+    // segmento estático, no de un marco con orden observable.)
+    let global = analyzer.table.current_scope_mut();
+    let global_id = global.id();
+    if storage::allocate_scope(global, &mut analyzer.global_alloc) == LayoutStatus::Incomplete {
+        analyzer.layout.incomplete_scopes.insert(global_id);
+    }
+    analyzer.layout.frames.insert(global_id, analyzer.global_alloc.size());
+
+    // Clases y structs: una post-pasada y no en `exit`, porque el offset del
+    // primer campo propio de un `Hijo` depende del tamaño de su `Padre`, que
+    // puede declararse más abajo en el archivo. Solo las del Global: una
+    // clase declarada dentro de una función queda sin layout (ninguna
+    // gramática del proyecto lo permite hoy).
+    let mut classes: Vec<&mut Symbol> = analyzer
+        .table
+        .current_scope_mut()
+        .symbols_mut()
+        .filter(|s| matches!(s.kind, SymbolKind::Class | SymbolKind::Struct))
+        .collect();
+    analyzer.layout.classes = storage::allocate_classes(&mut classes, &analyzer.target);
+
     AnalysisResult {
         table: analyzer.table,
         errors: analyzer.errors,
         closures: analyzer.closures,
         types: analyzer.types,
         scopes: analyzer.scopes,
+        bindings: analyzer.bindings,
+        layout: analyzer.layout,
+    }
+}
+
+/// Cómo alcanza el código que se está recorriendo AHORA a un símbolo
+/// declarado a profundidad de ámbitos `def_depth` en un ámbito `def_kind`
+/// (lo que devuelve `SymbolTable::lookup_with_scope`).
+///
+/// `function_stack` son las funciones abiertas, de afuera hacia adentro,
+/// con la profundidad de ámbito de cada una: su largo es el nivel estático
+/// del uso, y cuántas tienen profundidad `<= def_depth` es el nivel de la
+/// declaración. La diferencia es cuántos enlaces de acceso hay que seguir.
+fn access_from(function_stack: &[(usize, String)], def_depth: usize, def_kind: ScopeKind) -> Access {
+    if matches!(def_kind, ScopeKind::Class | ScopeKind::Struct) {
+        return Access::Field;
+    }
+    let use_level = function_stack.len();
+    let decl_level = function_stack.iter().filter(|(depth, _)| *depth <= def_depth).count();
+    match (decl_level, use_level - decl_level) {
+        (0, _) => Access::Static,
+        (_, 0) => Access::Local,
+        (_, hops) => Access::NonLocal { hops },
     }
 }
 
@@ -155,10 +251,39 @@ struct Analyzer<'a> {
     /// que resuelve, asi que basta con pasarle este campo. Ver
     /// `types::annotations` para por que no vive dentro del `ParseNode`.
     types: TypeAnnotations,
+    /// Anchos y offsets base de la máquina destino — MIPS por `Default`. Un
+    /// solo lugar para no repetir `TargetLayout::default()` cada vez que se
+    /// necesita (ver `storage::TargetLayout`).
+    target: TargetLayout,
+    /// Un `FrameAllocator` por función ACTIVA, tope = la más interna. Se
+    /// empuja al abrir un scope `Function` (`enter`) y se saca al cerrarlo
+    /// (`exit`) — mientras tanto, cualquier scope `Block` que se cierre
+    /// DENTRO de esa función usa el mismo asignador (`last_mut()`), que es
+    /// justo lo que hace que sus locales ACUMULEN en el marco de la función
+    /// en vez de solaparse con los de un bloque hermano. Ver
+    /// `storage::FrameAllocator`.
+    /// Cada entrada lleva el `scope_id` de la función dueña del marco: es la
+    /// clave con la que ese marco queda en `layout.frames`, y la que se marca
+    /// incompleta si CUALQUIER bloque anidado tuvo un símbolo sin tipo.
+    frame_allocators: Vec<(usize, FrameAllocator)>,
+    /// Asignador del área estática: los símbolos que declara directamente el
+    /// Global (que nunca se cierra, así que nunca pasa por `frame_allocators`)
+    /// y cualquier `Block` que se cierre sin ninguna función activa (un
+    /// bloque suelto a nivel de programa, si la gramática lo permite). Vive
+    /// aparte de `frame_allocators` porque no se apila ni se desapila nunca:
+    /// dura todo el recorrido.
+    global_alloc: FrameAllocator,
+    /// Ver `AnalysisResult::bindings`. Se llena en el momento de cada
+    /// `lookup`, mientras el ámbito correcto sigue en la pila.
+    bindings: Bindings,
+    /// Ver `AnalysisResult::layout`. Los marcos se agregan al cerrar cada
+    /// función; el área estática y las clases, al final de `analyze`.
+    layout: LayoutReport,
 }
 
 impl<'a> Analyzer<'a> {
     fn new(spec: &'a SemanticSpec) -> Self {
+        let target = TargetLayout::default();
         Analyzer {
             spec,
             table: SymbolTable::new(),
@@ -176,6 +301,11 @@ impl<'a> Analyzer<'a> {
             analyzed_sequences: HashSet::new(),
             unreachable: HashSet::new(),
             types: TypeAnnotations::new(),
+            global_alloc: FrameAllocator::new_static(&target),
+            bindings: Bindings::new(),
+            layout: LayoutReport::default(),
+            target,
+            frame_allocators: Vec::new(),
         }
     }
 
@@ -261,6 +391,7 @@ impl<'a> Visitor for Analyzer<'a> {
             let name = node.lexeme.as_deref().unwrap_or(&node.symbol);
             match self.table.lookup_with_scope(name) {
                 Some((sym, def_depth, def_kind)) => {
+                    self.bindings.record(node, sym, access_from(&self.function_stack, def_depth, def_kind));
                     // Resolución de nombres libres: si hay una función activa
                     // (el tope de function_stack) y este nombre vive en una
                     // profundidad MENOR que la del scope propio de esa
@@ -313,8 +444,16 @@ impl<'a> Visitor for Analyzer<'a> {
         // el scope del método actual (ver más abajo) — si no existe, `this`
         // se usó fuera de un método de clase.
         if node.children.is_empty() && Some(&node.symbol) == self.spec.this_token.as_ref() {
-            if self.table.lookup("this").is_none() {
-                self.errors.push_semantic(&SemanticError::ThisOutsideClass { line: node.line, col: node.col });
+            match self.table.lookup_with_scope("this") {
+                // Se enlaza como cualquier identificador: TAC necesita saber
+                // dónde está `this` (el primer parámetro oculto del método) y
+                // cómo llegar a él desde una función anidada en el método.
+                Some((sym, def_depth, def_kind)) => {
+                    self.bindings.record(node, sym, access_from(&self.function_stack, def_depth, def_kind));
+                }
+                None => {
+                    self.errors.push_semantic(&SemanticError::ThisOutsideClass { line: node.line, col: node.col });
+                }
             }
             self.frames.push(Frame::default());
             return Flow::SkipChildren;
@@ -346,14 +485,15 @@ impl<'a> Visitor for Analyzer<'a> {
                                 (node.children.last().filter(|_| node.children.len() > member_idx + 1), expected)
                             {
                                 if let Some(found) = classes::resolve_expr_type(value_node, &self.table, self.spec, &mut self.types) {
-                                    if resolve_assignment(&expected, &found).is_err() {
-                                        self.errors.push_semantic(&SemanticError::AssignmentTypeMismatch {
+                                    match resolve_assignment(&expected, &found) {
+                                        Ok(coercion) => self.types.record_coercion(value_node, coercion),
+                                        Err(_) => self.errors.push_semantic(&SemanticError::AssignmentTypeMismatch {
                                             name: format!("{class_name}.{member_name}"),
                                             expected,
                                             found,
                                             line: member_id.line,
                                             col: member_id.col,
-                                        });
+                                        }),
                                     }
                                 }
                             }
@@ -378,14 +518,20 @@ impl<'a> Visitor for Analyzer<'a> {
             let left_ty = classes::resolve_expr_type(left, &self.table, self.spec, &mut self.types);
             let right_ty = classes::resolve_expr_type(right, &self.table, self.spec, &mut self.types);
             if let (Some(l), Some(r)) = (left_ty, right_ty) {
-                if resolve_arithmetic(op, &l, &r).is_err() {
-                    self.errors.push_semantic(&SemanticError::InvalidArithmetic {
+                match resolve_arithmetic(op, &l, &r) {
+                    // `widen` del libro: el operando que se amplía queda
+                    // marcado para que TAC emita la conversión antes de operar.
+                    Ok(res) => {
+                        self.types.record_coercion(left, res.left_coercion);
+                        self.types.record_coercion(right, res.right_coercion);
+                    }
+                    Err(_) => self.errors.push_semantic(&SemanticError::InvalidArithmetic {
                         operator: op.to_string(),
                         left: l,
                         right: r,
                         line: node.children[1].line,
                         col: node.children[1].col,
-                    });
+                    }),
                 }
             }
         }
@@ -411,8 +557,13 @@ impl<'a> Visitor for Analyzer<'a> {
             let right_ty = classes::resolve_expr_type(right, &self.table, self.spec, &mut self.types);
             if let (Some(l), Some(r)) = (left_ty, right_ty) {
                 let pos = &node.children[1];
-                if let Err(e) = operators::resolve_comparison(op, &l, &r, pos.line, pos.col) {
-                    self.errors.push_operator(&e);
+                match operators::resolve_comparison(op, &l, &r, pos.line, pos.col) {
+                    Ok(_) => {
+                        let (lc, rc) = comparison_coercions(&l, &r);
+                        self.types.record_coercion(left, lc);
+                        self.types.record_coercion(right, rc);
+                    }
+                    Err(e) => self.errors.push_operator(&e),
                 }
             }
         }
@@ -511,10 +662,16 @@ impl<'a> Visitor for Analyzer<'a> {
                 // La posición sale de la hoja del token de retorno, no del
                 // nodo interno: una hoja siempre trae línea/columna reales.
                 let pos_node = node.children.first().unwrap_or(node);
-                if let Err(err) =
-                    self.fn_context.validate_return(value_ty.as_ref(), pos_node.line, pos_node.col)
-                {
-                    self.errors.push_function(&err);
+                match self.fn_context.validate_return(value_ty.as_ref(), pos_node.line, pos_node.col) {
+                    // `return 1;` en una función `float`: el valor devuelto
+                    // se amplía antes de copiarse al marco.
+                    Ok(Some(coercion)) => {
+                        if let Some(value_node) = value_node {
+                            self.types.record_coercion(value_node, coercion);
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(err) => self.errors.push_function(&err),
                 }
             }
         }
@@ -532,8 +689,18 @@ impl<'a> Visitor for Analyzer<'a> {
                 if let (Some(target), Some(value_node)) = (target, node.children.get(rule.value_index)) {
                     let name = target.lexeme.as_deref().unwrap_or(&target.symbol).to_string();
                     let value_type = classes::resolve_expr_type(value_node, &self.table, self.spec, &mut self.types);
-                    if let Err(e) = self.table.assign(&name, value_type.as_ref(), target.line, target.col) {
-                        self.errors.push_semantic(&e);
+                    match self.table.assign(&name, value_type.as_ref(), target.line, target.col) {
+                        Ok(coercion) => {
+                            if let Some(coercion) = coercion {
+                                self.types.record_coercion(value_node, coercion);
+                            }
+                        }
+                        Err(e) => self.errors.push_semantic(&e),
+                    }
+                    // El destino también es una referencia a una variable —
+                    // TAC necesita saber a QUÉ `x` se le guarda el valor.
+                    if let Some((sym, def_depth, def_kind)) = self.table.lookup_with_scope(&name) {
+                        self.bindings.record(target, sym, access_from(&self.function_stack, def_depth, def_kind));
                     }
                     // El destino ya se consumió acá (y `assign` ya reportó si
                     // no existía): excluirlo del recorrido evita un segundo
@@ -743,6 +910,9 @@ impl<'a> Visitor for Analyzer<'a> {
                         .and_then(|locator| find_child_index(node, locator))
                         .map(|i| &node.children[i]);
                     let init_type = init_node.and_then(|n| classes::resolve_expr_type(n, &self.table, self.spec, &mut self.types));
+                    // Copia para la coerción del inicializador: `init_type`
+                    // se consume abajo al declarar.
+                    let init_type_for_coercion = init_type.clone();
 
                     let decl_result = match type_idx {
                         Some(i) => {
@@ -772,6 +942,20 @@ impl<'a> Visitor for Analyzer<'a> {
                         // hace `x: integer`, y entonces `x = "texto"` sí se
                         // detecta más adelante). Si no, declaración sin tipo,
                         // igual que siempre.
+                        // Tipo fijo por la gramática (`%fixed_type`): la
+                        // variable de un `catch` es siempre el mensaje del
+                        // error. Nace inicializada — recibe su valor al
+                        // entrar al manejador.
+                        None if self.spec.fixed_types.contains_key(&node.symbol) => self.table.declare_typed(
+                            &name,
+                            rule.kind.clone(),
+                            self.spec.fixed_types[&node.symbol].clone(),
+                            !rule.immutable,
+                            true,
+                            init_type.clone(),
+                            name_node.line,
+                            name_node.col,
+                        ),
                         None => match &init_type {
                             Some(inferred) => self.table.declare_typed(
                                 &name,
@@ -798,6 +982,21 @@ impl<'a> Visitor for Analyzer<'a> {
                     };
                     match decl_result {
                         Ok(()) => {
+                            // El nombre en su propia declaración también se
+                            // enlaza: es la definición de `x` en `let x = e`,
+                            // el destino de la primera asignación en TAC.
+                            if let Some((sym, def_depth, def_kind)) = self.table.lookup_with_scope(&name) {
+                                self.bindings.record(name_node, sym, access_from(&self.function_stack, def_depth, def_kind));
+                                // `let f: float = 1` necesita la misma
+                                // ampliación que una asignación.
+                                if let (Some(init), Some(declared), Some(found)) =
+                                    (init_node, sym.ty.clone(), init_type_for_coercion.as_ref())
+                                {
+                                    if let Ok(coercion) = resolve_assignment(&declared, found) {
+                                        self.types.record_coercion(init, coercion);
+                                    }
+                                }
+                            }
                             // Parámetro declarado con éxito: registrarlo en el
                             // `param_order` del scope contenedor (el frame
                             // abierto más cercano hacia atrás en la pila) —
@@ -907,6 +1106,13 @@ impl<'a> Visitor for Analyzer<'a> {
 
             if rule.kind == ScopeKind::Function {
                 opened_function = true;
+                // Marco propio de esta función — cualquier `Block` anidado
+                // que se cierre mientras esta función siga abierta va a
+                // compartir este mismo asignador (ver el campo
+                // `frame_allocators`), así que sus locales acumulan en vez de
+                // solaparse.
+                let fn_scope_id = self.table.current_scope_mut().id();
+                self.frame_allocators.push((fn_scope_id, FrameAllocator::new_function(&self.target)));
                 // El nombre que declaró ESTE mismo nodo (func_decl declara Y
                 // abre scope a la vez); si no hay uno (una función sin nombre
                 // no existe en esta gramática, pero no hay por qué asumirlo
@@ -935,12 +1141,27 @@ impl<'a> Visitor for Analyzer<'a> {
                 self.fn_context.enter_returning(fn_name.clone(), returns);
                 self.flow_context.enter_function();
 
-                self.function_stack.push((this_fn_depth, fn_name));
+                self.function_stack.push((this_fn_depth, fn_name.clone()));
+                // Nivel estático = cuántas funciones hay abiertas contando
+                // esta (las clases no suman). `lookup` desde adentro del
+                // ámbito recién abierto encuentra a la función en el de
+                // afuera, que es donde se declaró.
+                let level = self.function_stack.len();
+                if let Some(sym) = self.table.lookup_mut(&fn_name) {
+                    sym.nesting_level = Some(level);
+                }
+                self.layout.functions.insert(fn_scope_id, FrameOwner { name: fn_name, level });
             }
 
             if let Some(class_name) = enclosing_class_for_this {
+                // `this` es el PRIMER PARÁMETRO OCULTO del método: el
+                // llamador lo pasa como cualquier argumento. Se declara al
+                // abrir el ámbito, antes que los parámetros del usuario, así
+                // que `storage` le da la primera ranura (`$fp+12`). No entra
+                // en la `Signature`: esa se arma con `param_order`, donde
+                // `this` nunca se registra.
                 self.table
-                    .declare("this", SymbolKind::Variable, node.line, node.col)
+                    .declare("this", SymbolKind::Parameter, node.line, node.col)
                     .expect("el scope recién abierto está vacío, 'this' no puede estar ya declarado ahí");
                 let this_sym = self.table.lookup_mut("this").expect("recién declarado");
                 this_sym.ty = Some(Type::Named(class_name));
@@ -1083,10 +1304,50 @@ impl<'a> Visitor for Analyzer<'a> {
         if frame.entered_scope {
             // El scope que se cierra es el que este mismo `enter` acaba de
             // abrir arriba — nunca puede ser el Global, así que esto no falla.
-            let closed = self
+            let mut closed = self
                 .table
                 .exit_scope()
                 .expect("el scope recién abierto por este nodo debe poder cerrarse");
+
+            // Asignación de almacenamiento (capítulo 7 del libro del dragón):
+            // los marcos de función y de sus bloques anidados comparten un
+            // solo `FrameAllocator` (ver el campo homónimo), así que los
+            // locales de un bloque ACUMULAN en el marco de la función que lo
+            // contiene en vez de solaparse con los de un bloque hermano.
+            // Antes de `scopes.record()` a propósito: así el snapshot que
+            // queda de un ámbito anónimo también sale con `storage` ya
+            // lleno, sin una segunda pasada.
+            //
+            // Las clases/structs NO pasan por acá: el offset de un campo
+            // puede depender del tamaño del padre, que puede cerrar su scope
+            // DESPUÉS que el hijo si se declara más abajo en el archivo —
+            // eso lo resuelve `storage::allocate_classes`, una post-pasada
+            // aparte que corre una vez que TODA la tabla está poblada.
+            if matches!(closed.kind(), ScopeKind::Function | ScopeKind::Block) {
+                // El marco dueño: la función abierta más interna, o el área
+                // estática (id 0) si el bloque está suelto a nivel de programa.
+                let (owner_id, alloc) = match self.frame_allocators.last_mut() {
+                    Some((id, alloc)) => (*id, alloc),
+                    None => (0, &mut self.global_alloc),
+                };
+                if storage::allocate_scope(&mut closed, alloc) == LayoutStatus::Incomplete {
+                    self.layout.incomplete_scopes.insert(owner_id);
+                }
+            }
+            // Si este nodo abrió el scope de una función, ese scope YA
+            // recibió su asignación (arriba, mientras su `FrameAllocator`
+            // seguía siendo el tope de la pila) — ahora sí se puede sacar.
+            // `size()` es el `frame_size` de la función: cuánto reservar en
+            // el prólogo, incluido el área fija de enlace de control/`$ra`.
+            let function_frame_size = if frame.opened_function {
+                self.frame_allocators.pop().map(|(id, alloc)| {
+                    self.layout.frames.insert(id, alloc.size());
+                    alloc.size()
+                })
+            } else {
+                None
+            };
+
             // Profundidad que OCUPABA: `depth()` cuenta los scopes de la pila,
             // así que DESPUÉS de desapilar coincide con el índice que tenía el
             // que se acaba de cerrar (0 = Global). Medirla antes daría uno de
@@ -1123,7 +1384,21 @@ impl<'a> Visitor for Analyzer<'a> {
             // mira `AnalysisResult::scopes`.
             if let Some(name) = &frame.declared_name {
                 if let Some(sym) = self.table.lookup_mut(name) {
-                    sym.members = Some(closed.symbols().cloned().collect());
+                    // Orden de declaración, no el orden del `HashMap` que los
+                    // respalda (que no garantiza ninguno y varía entre
+                    // corridas) — necesario para que el layout de campos de
+                    // un objeto sea determinista.
+                    let mut own_members: Vec<Symbol> = closed.symbols().cloned().collect();
+                    own_members.sort_by_key(|m| m.decl_index);
+                    sym.members = Some(own_members);
+
+                    // `frame_size` de esta función (`None` para cualquier
+                    // otro símbolo con nombre que abra scope — una clase o un
+                    // struct reciben su `instance_size` aparte, en
+                    // `storage::allocate_classes`).
+                    if let Some(size) = function_frame_size {
+                        sym.storage_size = Some(size);
+                    }
 
                     // `Signature`: efecto colateral puramente aditivo para
                     // cualquier símbolo "invocable" (Function/Other — nunca
@@ -2597,5 +2872,177 @@ mod tests {
         let result = analyze(&programa, &struct_spec());
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         assert_eq!(result.table.lookup("p").unwrap().ty, Some(Type::Named("Punto".to_string())));
+    }
+
+    // ============ Traspaso a código intermedio: coerciones y enlaces ============
+
+    /// `i: integer`, `f: float`, `f = i + 2.5` y `f = 3`, con los nombres de
+    /// producción de siempre. Ninguna gramática de `workspace/` tiene `float`,
+    /// así que la ampliación solo se puede probar con un árbol armado a mano.
+    fn widening_program() -> (ParseNode, SemanticSpec) {
+        let suma = internal("expr", vec![leaf("ID", "i", 3, 5), leaf("PLUS", "+", 3, 7), leaf("FLOAT_LIT", "2.5", 3, 9)]);
+        let tree = internal("programa", vec![
+            internal("var_decl", vec![tipo("INT_T", "integer"), leaf("ID", "i", 1, 1)]),
+            internal("var_decl", vec![tipo("FLOAT_T", "float"), leaf("ID", "f", 2, 1)]),
+            internal("assign_stmt", vec![leaf("ID", "f", 3, 1), leaf("ASSIGN", "=", 3, 3), suma]),
+            internal("assign_stmt", vec![leaf("ID", "f", 4, 1), leaf("ASSIGN", "=", 4, 3), leaf("INT_LIT", "3", 4, 5)]),
+        ]);
+
+        let mut type_tokens = HashMap::new();
+        type_tokens.insert("INT_T".to_string(), Type::Int);
+        type_tokens.insert("FLOAT_T".to_string(), Type::Float);
+        type_tokens.insert("INT_LIT".to_string(), Type::Int);
+        type_tokens.insert("FLOAT_LIT".to_string(), Type::Float);
+        let mut spec = spec_without_classes(
+            vec![DeclarationRule {
+                production: "var_decl".to_string(),
+                kind: SymbolKind::Variable,
+                name_child: None,
+                implicit: false,
+                type_child: Some(ChildLocator::Index(0)),
+                init_child: None,
+                immutable: false,
+            }],
+            vec![],
+            type_tokens,
+        );
+        spec.arith_tokens.insert("PLUS".to_string(), ArithmeticOperator::Add);
+        spec.assign = Some(AssignRule { production: "assign_stmt".to_string(), target_index: 0, value_index: 2 });
+        (tree, spec)
+    }
+
+    #[test]
+    fn the_integer_operand_of_a_mixed_sum_is_marked_for_widening() {
+        use crate::semantico::types::Coercion;
+        let (tree, spec) = widening_program();
+        let result = analyze(&tree, &spec);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+
+        let suma = &tree.children[2].children[2];
+        assert_eq!(result.types.coercion(&suma.children[0]), Coercion::IntToFloat, "`i` se amplía");
+        assert_eq!(result.types.coercion(&suma.children[2]), Coercion::Exact, "`2.5` ya es float");
+        // `f = 3`: el valor asignado también se amplía.
+        assert_eq!(result.types.coercion(&tree.children[3].children[2]), Coercion::IntToFloat);
+        assert_eq!(result.types.coercion_count(), 2);
+    }
+
+    #[test]
+    fn every_identifier_leaf_resolves_to_its_declaration_with_storage() {
+        let (tree, spec) = widening_program();
+        let result = analyze(&tree, &spec);
+
+        let decl_i = &tree.children[0].children[1];
+        let use_i = &tree.children[2].children[2].children[0];
+        let target_f = &tree.children[2].children[0];
+
+        let i = result.symbol_for(use_i).expect("el uso de `i` se enlaza");
+        assert_eq!(i.name, "i");
+        assert_eq!(result.bindings.get(decl_i), result.bindings.get(use_i), "declaración y uso son el mismo símbolo");
+
+        let f = result.symbol_for(target_f).expect("el destino `f` se enlaza");
+        assert_eq!(f.ty, Some(Type::Float));
+        // Área estática del Global: `i` en 0 (4 bytes), `f` a continuación.
+        assert_eq!(i.storage.as_ref().map(|s| s.offset), Some(0));
+        assert_eq!(f.storage.as_ref().map(|s| (s.offset, s.size_bytes)), Some((4, 8)));
+        assert!(result.layout.is_complete());
+        assert_eq!(result.layout.frames.get(&0), Some(&12));
+    }
+
+    // ========= Ampliación int -> float en argumentos, return, comparaciones y listas =========
+
+    fn float_spec() -> SemanticSpec {
+        let mut spec = class_spec();
+        spec.type_tokens.insert("FLOAT_T".to_string(), Type::Float);
+        spec.type_tokens.insert("INT_LIT".to_string(), Type::Int);
+        spec.type_tokens.insert("FLOAT_LIT".to_string(), Type::Float);
+        spec
+    }
+
+    #[test]
+    fn an_integer_argument_to_a_float_parameter_is_widened() {
+        use crate::semantico::types::Coercion;
+        // function mitad(x: float) {}   mitad(3)
+        let param = internal("param", vec![leaf("ID", "x", 1, 16), tipo("FLOAT_T", "float")]);
+        let func = internal("func_decl", vec![
+            leaf("FUNCTION", "function", 1, 1),
+            leaf("ID", "mitad", 1, 10),
+            param,
+            internal("bloque", vec![]),
+        ]);
+        let call = internal("primary", vec![
+            internal("primary", vec![internal("atom", vec![leaf("ID", "mitad", 2, 1)])]),
+            leaf("LPAREN", "(", 2, 6),
+            arg_list(vec![leaf("INT_LIT", "3", 2, 7)]),
+            leaf("RPAREN", ")", 2, 8),
+        ]);
+        let programa = internal("programa", vec![func, call]);
+        let result = analyze(&programa, &float_spec());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+
+        let argumento = &programa.children[1].children[2].children[0].children[0];
+        assert_eq!(argumento.lexeme.as_deref(), Some("3"));
+        assert_eq!(result.types.coercion(argumento), Coercion::IntToFloat);
+    }
+
+    #[test]
+    fn returning_an_integer_from_a_float_function_is_widened() {
+        use crate::semantico::types::Coercion;
+        let mut spec = returns_spec();
+        spec.type_tokens.insert("FLOAT_T".to_string(), Type::Float);
+        let f = function_returning("f", Some(tipo("FLOAT_T", "float")), return_with(Some(leaf("INT_LIT", "1", 2, 10))));
+        let result = analyze(&f, &spec);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+
+        let valor = &f.children[3].children[1];
+        assert_eq!(valor.symbol, "expr");
+        assert_eq!(result.types.coercion(valor), Coercion::IntToFloat);
+    }
+
+    #[test]
+    fn the_integer_side_of_a_mixed_comparison_is_widened() {
+        use crate::semantico::operators::ComparisonOperator;
+        use crate::semantico::types::Coercion;
+        let (_, mut spec) = widening_program();
+        spec.compare_tokens.insert("LT".to_string(), ComparisonOperator::Lt);
+        let comparacion = internal("expr", vec![leaf("ID", "i", 3, 1), leaf("LT", "<", 3, 3), leaf("ID", "f", 3, 5)]);
+        let tree = internal("programa", vec![
+            internal("var_decl", vec![tipo("INT_T", "integer"), leaf("ID", "i", 1, 1)]),
+            internal("var_decl", vec![tipo("FLOAT_T", "float"), leaf("ID", "f", 2, 1)]),
+            comparacion,
+        ]);
+        let result = analyze(&tree, &spec);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+
+        let comparacion = &tree.children[2];
+        assert_eq!(result.types.coercion(&comparacion.children[0]), Coercion::IntToFloat, "`i` se amplía");
+        assert_eq!(result.types.coercion(&comparacion.children[2]), Coercion::Exact, "`f` ya es float");
+    }
+
+    #[test]
+    fn integer_elements_of_a_float_list_are_widened() {
+        use crate::semantico::spec::ArrayLiteralRule;
+        use crate::semantico::types::Coercion;
+        let mut spec = float_spec();
+        spec.array_literal = Some(ArrayLiteralRule {
+            production: "atom".to_string(),
+            open_bracket_token: "LBRACKET".to_string(),
+            elements_index: 1,
+        });
+        // [1, 2.5]
+        let lista = internal("atom", vec![
+            leaf("LBRACKET", "[", 1, 1),
+            arg_list(vec![leaf("INT_LIT", "1", 1, 2), leaf("FLOAT_LIT", "2.5", 1, 5)]),
+            leaf("RBRACKET", "]", 1, 8),
+        ]);
+        let tree = internal("programa", vec![lista]);
+        let result = analyze(&tree, &spec);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+
+        let args = &tree.children[0].children[1].children[0];
+        let uno = &args.children[0].children[0];
+        let dos_y_medio = &args.children[2];
+        assert_eq!(uno.lexeme.as_deref(), Some("1"));
+        assert_eq!(result.types.coercion(uno), Coercion::IntToFloat);
+        assert_eq!(result.types.coercion(dos_y_medio), Coercion::Exact);
     }
 }

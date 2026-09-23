@@ -7,6 +7,7 @@ use crate::lexico::runtime::indent;
 use crate::lexico::runtime::simulator::{LexResult, Simulator};
 use crate::semantico::analyzer::analyze;
 use crate::semantico::spec::SemanticSpec;
+use crate::semantico::storage;
 use crate::sintactico::runtime::parse_tree::{to_dot, to_dot_annotated};
 use serde_json::{json, Value};
 
@@ -108,8 +109,8 @@ pub fn build_pipeline_response_named(
     // Parse the whole token stream as ONE input — not grouped by physical line.
     // A source can be a single multi-line program (a line break is not a statement
     // boundary in general); callers that want several independent test cases already
-    // send one call per case (frontend/IDE/app.jsx's handleParse sends one line at a
-    // time, and tests/run_examples_cases.rs iterates `src.lines()` itself). Splitting
+    // send one call per case (tests/run_examples_cases.rs iterates `src.lines()`
+    // itself). Splitting
     // internally here both mis-locates errors in genuine multi-line input and rebuilds
     // the whole parse table once per line for no reason.
     let token_kinds: Vec<String> = token_map.iter().map(|(k, _, _, _)| k.clone()).collect();
@@ -220,6 +221,8 @@ pub fn build_pipeline_response_named(
                         response.closures = analysis.closures.to_json();
                         response.scopes = analysis.scopes.to_json();
                         response.types = analysis.types.to_json(&tree);
+                        response.bindings = analysis.bindings.to_json(&tree);
+                        response.layout = storage::dump(&analysis.layout);
                         lex_problems.extend(analysis.errors.to_problems(source_name));
                         annotations = Some(analysis.types);
                     }

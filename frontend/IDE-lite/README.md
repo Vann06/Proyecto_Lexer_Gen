@@ -1,23 +1,20 @@
 # IDE-lite — panel semántico
 
-Mismo IDE que [`frontend/IDE-full/`](../IDE-full/README.md) — mismo CSS
-pixel/retro, mismo editor con resaltado y sidebar de archivos, mismo `D`
-global (`data.jsx`) — pero con los paneles que no hacían falta para probar el
-análisis semántico **quitados**, no un rediseño desde cero. Es lo que levanta
-`docker-compose.yml` en `:4000` por defecto.
+El IDE web del proyecto: editor con resaltado, sidebar de archivos y un solo
+botón **▶ ANALIZAR** que corre el pipeline completo (`POST /api/pipeline`)
+sobre TODO el archivo de prueba. Es lo que levanta `docker-compose.yml` en
+`:4000`.
 
-## Qué se sacó
+Modos de parser: **LALR(1)** y **SLR(1)**. No hay LL(1): en ese modo el
+backend no corre el análisis semántico (la transformación de la gramática
+renombra producciones, ver `api::pipeline`), así que las vistas quedarían
+vacías.
 
-- Pestañas GRAMÁTICA, FIRST, FOLLOW, ESTADOS, ACTION/GOTO, LR(0), CÓD.GEN,
-  CLOSURES.
-- El stepper PARSE CONSOLE (traza paso a paso, ACTION/GOTO resaltado por
-  paso) y toda la fila inferior de la grilla que ocupaba.
-- El flujo compilar-gramática → auto-parsear-primera-línea del IDE completo:
-  acá un solo botón **▶ ANALIZAR** corre el pipeline completo sobre TODO el
-  archivo de prueba de una vez (tiene más sentido para un `.cps` completo que
-  para casos de una línea).
+El IDE anterior (stepper LR paso a paso, DFA, FIRST/FOLLOW, tablas
+ACTION/GOTO, generación de código) se eliminó; sigue en el historial de git
+(`frontend/IDE-full/`) si hiciera falta.
 
-## Qué se agregó
+## El slot `.g4`
 
 Un cuarto slot de archivo — **`.g4` de referencia** (p.ej. el
 `Compiscript.g4` de la raíz del repo) — que se carga y se ve en el editor con
@@ -37,11 +34,7 @@ recalcula ni se reconstruye en el cliente:
 | ÁRBOL SINTÁCTICO | `parse_tree_dot` — sale auto-anotado con el tipo de cada expresión en cuanto hay análisis semántico (el "árbol de análisis anotado" del libro del dragón: mismo campo, el backend decide en `api/pipeline.rs` si lo dibuja plano o anotado según si corrió `analyze()`) |
 | SÍMBOLOS | `symbol_table` (estado final: Global + miembros de funciones/clases) **+** `scopes` (una foto de cada entorno Function/Class/Block al cerrarse — incluye los locales de un bloque anónimo que `symbol_table` no puede mostrar) |
 | TIPOS | `types` — el tipo inferido de cada nodo de expresión, en una tabla; el `id` de cada fila coincide con el nodo correspondiente en el árbol |
-| ERRORES SEM. | `problems` filtrado a los códigos `S0xx` |
-
-Todo esto (`scopes`, `types`, el árbol auto-anotado) ya existe en
-`frontend/IDE-full/` — acá solo se aisló en menos pestañas. Nada de esto
-necesitó cambios en el backend.
+| PROBLEMAS | `problems` completo: errores léxicos (`L`), sintácticos (`P`) y semánticos (`S`), advertencias (`W001` símbolo sin usar, `W002` código inalcanzable) y avisos del IDE (`E`), ordenados por línea. Clic en uno con posición: el editor salta a esa línea, que además queda marcada con una franja roja (error) o amarilla (advertencia) |
 
 ## Cómo levantarlo
 

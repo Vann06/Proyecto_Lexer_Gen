@@ -138,6 +138,25 @@ pub struct SemanticSpec {
     pub tuple_type: Option<(String, usize, String)>,
     /// Literal de tupla (`%tuple_literal`); reusa `args_list_symbol`.
     pub tuple_literal: Option<MarkedLiteralRule>,
+    /// Agrupaciones con paréntesis (`%group`): su tipo es el de la expresión
+    /// que encierran. Ver `GroupRule`.
+    pub groups: Vec<GroupRule>,
+    /// Producciones de declaración con tipo fijo (`%fixed_type`): se
+    /// declaran con ese tipo aunque el fuente no traiga anotación, porque la
+    /// gramática no tiene dónde escribirla — p.ej. `catch (e)`, donde `e`
+    /// es siempre el mensaje del error.
+    pub fixed_types: HashMap<String, Type>,
+}
+
+/// "La producción `production`, cuando empieza con `open_token`, es solo una
+/// agrupación de su hijo `inner_index`" — p.ej. `atom: LPAREN expr RPAREN`
+/// con `open_token: LPAREN`, `inner_index: 1`. Se reconoce por la forma igual
+/// que `%new`: la misma producción tiene otras alternativas (`atom: ID`...).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupRule {
+    pub production: String,
+    pub open_token: String,
+    pub inner_index: usize,
 }
 
 /// "La producción `production` asigna el valor de `value_index` a la
@@ -653,6 +672,20 @@ impl SemanticSpec {
             tuple_literal: grammar.tuple_literal.clone().map(|(production, marker_token, elements_index)| {
                 MarkedLiteralRule { production, marker_token, elements_index }
             }),
+            groups: grammar
+                .group_directives
+                .iter()
+                .map(|(production, open_token, inner_index)| GroupRule {
+                    production: production.clone(),
+                    open_token: open_token.clone(),
+                    inner_index: *inner_index,
+                })
+                .collect(),
+            fixed_types: grammar
+                .fixed_type_directives
+                .iter()
+                .map(|(production, kind)| (production.clone(), type_from_directive(kind)))
+                .collect(),
         })
     }
 }
@@ -811,6 +844,9 @@ mod tests {
             set_literal: None,
             tuple_type: None,
             tuple_literal: None,
+            group_directives: Vec::new(),
+            flow_directives: Vec::new(),
+            fixed_type_directives: Vec::new(),
         }
     }
 

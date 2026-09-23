@@ -33,6 +33,17 @@ pub enum ScopeKind {
 /// declarados directamente en él (no los de scopes exteriores).
 #[derive(Debug, Clone)]
 pub struct Scope {
+    /// Identificador único de este ámbito, asignado al abrirlo
+    /// (`ScopeStack::enter`) y estable el resto de su vida — incluso después
+    /// de cerrarse, porque sobrevive dentro del `ScopeSnapshot`. Es lo que le
+    /// permite a una fase futura (asignación de almacenamiento) reconstruir
+    /// "qué locales caen en el marco de qué función": un bloque anidado no
+    /// tiene marco propio, pero su `parent_id` sí apunta al ámbito que lo
+    /// tiene.
+    id: usize,
+    /// El `id` del ámbito que estaba activo cuando este se abrió. `None`
+    /// solo para el Global, que no tiene padre.
+    parent_id: Option<usize>,
     kind: ScopeKind,
     label: Option<String>,
     /// Posición del nodo que abrió este scope (p. ej. la `{` de un `bloque`,
@@ -43,11 +54,41 @@ pub struct Scope {
     open_line: usize,
     open_col: usize,
     symbols: HashMap<String, Symbol>,
+    /// Contador de declaraciones DENTRO de este ámbito — lo que
+    /// `Symbol::decl_index` necesita para saber en qué orden se declararon
+    /// los símbolos, algo que el `HashMap` de abajo no puede darnos por sí
+    /// solo (no preserva orden de inserción). Offsets de marco y layout de
+    /// campos de objeto dependen de este orden, no del nombre.
+    next_decl: usize,
 }
 
 impl Scope {
-    fn new(kind: ScopeKind, label: Option<String>, open_line: usize, open_col: usize) -> Self {
-        Scope { kind, label, open_line, open_col, symbols: HashMap::new() }
+    fn new(
+        id: usize,
+        parent_id: Option<usize>,
+        kind: ScopeKind,
+        label: Option<String>,
+        open_line: usize,
+        open_col: usize,
+    ) -> Self {
+        Scope {
+            id,
+            parent_id,
+            kind,
+            label,
+            open_line,
+            open_col,
+            symbols: HashMap::new(),
+            next_decl: 0,
+        }
+    }
+
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
+    pub fn parent_id(&self) -> Option<usize> {
+        self.parent_id
     }
 
     pub fn kind(&self) -> ScopeKind {
@@ -82,10 +123,25 @@ impl Scope {
         self.symbols.values()
     }
 
+    /// Igual que `symbols`, pero mutable — para las pasadas que completan
+    /// atributos de símbolos ya declarados (p. ej. `storage::allocate_classes`
+    /// sobre las clases del Global). No permite insertar ni quitar.
+    pub fn symbols_mut(&mut self) -> impl Iterator<Item = &mut Symbol> {
+        self.symbols.values_mut()
+    }
+
     // Privado a propósito: insertar sin chequear redeclaración es una
     // operación insegura semánticamente — solo `SymbolTable::declare` (que sí
     // chequea) debe poder hacerlo.
-    fn insert(&mut self, symbol: Symbol) {
+    //
+    // Único punto de inserción real (el otro sitio que arma un `Symbol`,
+    // `SymbolTable::declare`, termina llamando acá) — por eso es también el
+    // único lugar que necesita asignar `decl_index`/`scope_id`: nadie más
+    // mete símbolos en un ámbito por otra vía.
+    fn insert(&mut self, mut symbol: Symbol) {
+        symbol.decl_index = self.next_decl;
+        self.next_decl += 1;
+        symbol.scope_id = Some(self.id);
         self.symbols.insert(symbol.name.clone(), symbol);
     }
 }
@@ -98,15 +154,24 @@ pub struct PopGlobalScope;
 /// crea junto con el stack y nunca se puede desapilar (ver `exit`).
 pub struct ScopeStack {
     scopes: Vec<Scope>,
+    /// Siguiente `id` a repartir. El Global se lleva el 0; todo lo demás
+    /// cuenta hacia arriba en el orden en que se abre, sin reciclarse nunca
+    /// (ni siquiera cuando un scope se cierra) — así un `id` sigue
+    /// identificando de forma única a un ámbito ya cerrado dentro de su
+    /// `ScopeSnapshot`.
+    next_id: usize,
 }
 
 impl ScopeStack {
     pub fn new() -> Self {
-        ScopeStack { scopes: vec![Scope::new(ScopeKind::Global, None, 0, 0)] }
+        ScopeStack { scopes: vec![Scope::new(0, None, ScopeKind::Global, None, 0, 0)], next_id: 1 }
     }
 
     pub fn enter(&mut self, kind: ScopeKind, label: Option<String>, line: usize, col: usize) {
-        self.scopes.push(Scope::new(kind, label, line, col));
+        let id = self.next_id;
+        self.next_id += 1;
+        let parent_id = Some(self.current().id());
+        self.scopes.push(Scope::new(id, parent_id, kind, label, line, col));
     }
 
     /// Desapila el scope actual y lo devuelve (por si el llamador quiere
@@ -181,6 +246,17 @@ pub struct ScopeSnapshot {
     /// Orden de CIERRE: 1 es el primer ámbito que se cerró, o sea el más
     /// interno de los que se cerraron primero.
     pub order: usize,
+    /// El mismo `id` que tenía el `Scope` mientras estaba abierto
+    /// (`Scope::id`) — sobrevive al cierre para que una fase futura pueda
+    /// referirse a este ámbito por número en vez de por posición en la lista.
+    pub id: usize,
+    /// El `id` del ámbito que lo contenía. `None` solo si este snapshot fuera
+    /// el del Global, lo cual no pasa — el Global nunca se cierra ni se
+    /// registra acá (ver el comentario de `ScopeCollector`). Es el enlace que
+    /// faltaba: antes de esto, un bloque anónimo sabía su `depth` pero no A
+    /// QUÉ función o clase pertenecía; caminando `parent_id` hacia arriba se
+    /// llega al ámbito con nombre que lo contiene.
+    pub parent_id: Option<usize>,
     pub kind: ScopeKind,
     pub label: Option<String>,
     /// Profundidad que ocupaba en la pila cuando se cerró (0 = Global).
@@ -190,7 +266,11 @@ pub struct ScopeSnapshot {
     /// vez de que todos luzcan idénticos cuando no declaran nada propio.
     pub line: usize,
     pub col: usize,
-    /// Los símbolos declarados DIRECTAMENTE en él, ordenados por nombre.
+    /// Los símbolos declarados DIRECTAMENTE en él, ordenados por nombre (para
+    /// `dump()`/`to_json()`, que no cambian). Quien necesite el orden REAL de
+    /// declaración —una fase de asignación de almacenamiento, por ejemplo—
+    /// no debe asumir nada de este `Vec`: cada `Symbol` ya trae su propio
+    /// `decl_index`, que es la fuente de verdad del orden.
     pub symbols: Vec<Symbol>,
 }
 
@@ -225,6 +305,8 @@ impl ScopeCollector {
         let (line, col) = scope.position();
         self.snapshots.push(ScopeSnapshot {
             order: self.snapshots.len() + 1,
+            id: scope.id(),
+            parent_id: scope.parent_id(),
             kind: scope.kind(),
             label: scope.label().map(str::to_string),
             depth,
@@ -260,6 +342,8 @@ impl ScopeCollector {
             .map(|snap| {
                 json!({
                     "order": snap.order,
+                    "id": snap.id,
+                    "parent_id": snap.parent_id,
                     "kind": format!("{:?}", snap.kind),
                     "label": snap.label,
                     "depth": snap.depth,
@@ -273,6 +357,10 @@ impl ScopeCollector {
                         "initialized": sym.initialized,
                         "line": sym.line,
                         "col": sym.col,
+                        "decl_index": sym.decl_index,
+                        "offset": sym.storage.as_ref().map(|st| st.offset),
+                        "size": sym.storage.as_ref().map(|st| st.size_bytes),
+                        "nesting_level": sym.nesting_level,
                     })).collect::<Vec<_>>(),
                 })
             })
