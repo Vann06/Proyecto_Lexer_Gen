@@ -1,0 +1,9 @@
+[project]
+name = "dbms"
+version = "0.1.0"
+description = "DBMS con SQL: gramática ANTLR, catálogo y almacenamiento en JSON"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

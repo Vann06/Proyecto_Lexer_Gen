@@ -1,12 +1,8 @@
 /* eslint-disable */
-// IDE-lite: editor con resaltado + sidebar de archivos + las vistas del
-// análisis: flujo de tokens, árbol sintáctico (que sale auto-anotado con el
-// tipo de cada expresión en cuanto hay análisis semántico — es el "árbol de
-// análisis anotado" del libro del dragón, ver
-// src/sintactico/runtime/parse_tree.rs), tabla de símbolos (estado final +
-// por entorno, incluidos bloques anónimos), tabla de tipos por nodo y
-// problemas de todas las fases. Todo sale de una sola llamada a
-// `POST /api/pipeline`.
+// IDE-lite del DBMS: editor SQL con resaltado + sidebar de archivos + las
+// vistas del análisis: flujo de tokens, árbol de derivación de ANTLR y
+// problemas léxicos/sintácticos. Todo sale de `POST /api/sql/parse`.
+// (Fase 9: pestañas RESULTADOS y CATÁLOGO cuando exista /api/sql/run.)
 const { useState, useEffect, useRef } = React;
 const D = window.IDE_DATA;
 
@@ -14,31 +10,19 @@ const API = "http://localhost:8080";
 
 /* ============================== Helpers ============================== */
 
-function FileTree({ active, onPick, onLoadFile }){
+function FileTree({ active, onPick, onLoadFile, workspace, onOpenWorkspace }){
   return (
     <div className="filetree">
-      <div className="h">▍ CARGAR ARCHIVOS</div>
+      <div className="h">▍ CARGAR ARCHIVO</div>
       <div className="load-btns">
         <label className="load-btn">
-          ↑ .yal / .yalex
-          <input type="file" accept=".yal,.yalex" hidden onChange={e => e.target.files[0] && onLoadFile("yal", e.target.files[0])}/>
-        </label>
-        <label className="load-btn">
-          ↑ .yalp / .yapar
-          <input type="file" accept=".yalp,.yapar" hidden onChange={e => e.target.files[0] && onLoadFile("yalp", e.target.files[0])}/>
-        </label>
-        <label className="load-btn">
-          ↑ input.txt / .cps
-          <input type="file" accept=".txt,.cps,text/plain" hidden onChange={e => e.target.files[0] && onLoadFile("test", e.target.files[0])}/>
-        </label>
-        <label className="load-btn">
-          ↑ .g4 (referencia)
-          <input type="file" accept=".g4,text/plain" hidden onChange={e => e.target.files[0] && onLoadFile("g4", e.target.files[0])}/>
+          ↑ script .sql
+          <input type="file" accept=".sql,.txt,text/plain" hidden onChange={e => e.target.files[0] && onLoadFile(e.target.files[0])}/>
         </label>
       </div>
 
-      <div className="h">▍ WORKSPACE</div>
-      {["yal","yalp","test","g4"].map(id => (
+      <div className="h">▍ ABIERTOS</div>
+      {["sql","g4"].map(id => (
         <div key={id}
              className={"tree-row file " + D.FILES[id].kind + (active===id?" active":"")}
              onClick={() => onPick(id)}>
@@ -48,8 +32,19 @@ function FileTree({ active, onPick, onLoadFile }){
         </div>
       ))}
       <div className="dim" style={{fontSize:14, padding:"6px 10px"}}>
-        el .g4 es solo referencia — nunca se manda al backend, este generador no compila ANTLR
+        SQL.g4 es la gramática ANTLR real del backend (solo lectura)
       </div>
+
+      <div className="h">▍ WORKSPACE</div>
+      {!workspace.length && <div className="dim" style={{fontSize:14, padding:"6px 10px"}}>sin archivos (¿API apagada?)</div>}
+      {workspace.map(({ name, kind }) => (
+        <div key={name}
+             className={"tree-row file " + kind + (D.FILES.sql.name===name?" active":"")}
+             onClick={() => onOpenWorkspace(name)}>
+          <span className="icn"/>
+          <span>{name}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -58,53 +53,39 @@ function FileTree({ active, onPick, onLoadFile }){
 
 function escHtml(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 
+const SQL_KEYWORDS = "add|alter|and|as|asc|between|by|check|column|columns|constraint|create|cross|data|database|databases|default|delete|desc|describe|distinct|drop|exists|false|foreign|from|group|having|if|in|index|inner|insert|into|is|join|key|left|like|limit|not|null|offset|on|or|order|outer|primary|references|rename|right|select|set|show|table|tables|to|true|type|unique|update|use|values|where";
+const SQL_TYPES = "int|integer|float|real|double|char|varchar|date|boolean|bool";
+
 const HL_RULES = {
-  yal: [
-    { re: /\(\*[\s\S]*?\*\)/y, cls: "com" },
-    { re: /\b(let|rule|return|skip)\b/y, cls: "kw" },
-    { re: /\[[^\]]*\]/y, cls: "str" },
-    { re: /'[^']*'/y, cls: "str" },
-    { re: /[a-z_][a-zA-Z0-9_]*/y, cls: "fn" },
-    { re: /[0-9]+/y, cls: "num" },
-    { re: /[|*+?()\-={}]/y, cls: "op" },
-  ],
-  yalp: [
+  sql: [
+    { re: /--[^\n]*/y, cls: "com" },
     { re: /\/\*[\s\S]*?\*\//y, cls: "com" },
-    { re: /%%/y, cls: "kw" },
-    { re: /%(token|start|left|right|nonassoc|ignore|ident|declare|scope)\b/y, cls: "kw" },
-    { re: /[A-Z][A-Z0-9_]*/y, cls: "term" },
-    { re: /[a-z_][a-z0-9_]*/y, cls: "nonterm" },
-    { re: /[|:;]/y, cls: "op" },
-  ],
-  cps: [
-    { re: /\/\/[^\n]*/y, cls: "com" },
-    { re: /\/\*[\s\S]*?\*\//y, cls: "com" },
-    { re: /"(\\.|[^"\\])*"/y, cls: "str" },
-    { re: /\b(let|var|const|function|class|if|else|while|do|for|foreach|in|break|continue|return|try|catch|switch|case|default|print|new|this|null|true|false)\b/y, cls: "kw" },
-    { re: /\b(boolean|integer|string)\b/y, cls: "term" },
+    { re: /'(''|[^'])*'?/y, cls: "str" },
+    { re: /"(""|[^"])*"|`[^`]*`/y, cls: "fn" },
+    { re: new RegExp(`\\b(${SQL_TYPES})\\b`, "iy"), cls: "term" },
+    { re: new RegExp(`\\b(${SQL_KEYWORDS})\\b`, "iy"), cls: "kw" },
+    { re: /[A-Za-z_][A-Za-z0-9_]*(?=\s*\()/y, cls: "nonterm" },
     { re: /[A-Za-z_][A-Za-z0-9_]*/y, cls: "fn" },
-    { re: /[0-9]+/y, cls: "num" },
-    { re: /[{}()\[\];,.:=+\-*/%<>!&|?]+/y, cls: "op" },
+    { re: /[0-9]+(\.[0-9]*)?([eE][+-]?[0-9]+)?/y, cls: "num" },
+    { re: /[(),;.*=<>!+\-\/%|]+/y, cls: "op" },
   ],
   g4: [
     { re: /\/\/[^\n]*/y, cls: "com" },
     { re: /\/\*[\s\S]*?\*\//y, cls: "com" },
-    { re: /'[^']*'/y, cls: "str" },
-    { re: /\b(grammar|import|options|tokens|lexer|parser|fragment|returns|throws|catch|finally)\b/y, cls: "kw" },
+    { re: /'(\\.|[^'\\])*'/y, cls: "str" },
+    { re: /\b(grammar|import|options|tokens|lexer|parser|fragment|returns|throws|catch|finally|skip)\b/y, cls: "kw" },
+    { re: /#\s*[a-zA-Z_][a-zA-Z0-9_]*/y, cls: "num" },
     { re: /[A-Z][A-Za-z0-9_]*/y, cls: "term" },
     { re: /[a-z_][a-zA-Z0-9_]*/y, cls: "nonterm" },
-    { re: /[|:;?*+]/y, cls: "op" },
+    { re: /->|[|:;?*+~]/y, cls: "op" },
   ],
   txt: [],
 };
 
-/* Extensión real del archivo cargado, no el slot fijo — así un .cps se
-   resalta como Compiscript y un input.txt plano sigue sin resaltado. */
+/* Por extensión del archivo abierto, no por slot. */
 function langForFile(f){
   const name = (f && f.name) || "";
-  if (name.endsWith(".yal") || name.endsWith(".yalex")) return "yal";
-  if (name.endsWith(".yalp") || name.endsWith(".yapar")) return "yalp";
-  if (name.endsWith(".cps")) return "cps";
+  if (name.endsWith(".sql")) return "sql";
   if (name.endsWith(".g4")) return "g4";
   return "txt";
 }
@@ -181,13 +162,13 @@ function Editor({ file, onEdit, contentVersion, jump }){
     setHighlighted(highlightFor(f.rawContent, lang));
   }, [file, contentVersion]);
 
-  // Líneas con problemas de ESTE archivo. Un problema sin `loc` (los del
-  // backend siempre lo traen) se asume del fuente de prueba.
+  // Líneas con problemas de ESTE archivo. Un problema sin `loc` se asume
+  // del script SQL.
   const collectLines = (level) => {
     const lines = new Set();
     for (const p of D.PROBLEMS) {
       if (p.level !== level) continue;
-      const n = p.loc ? problemLine(p, f.name) : (file === "test" ? problemLine(p, null) : null);
+      const n = p.loc ? problemLine(p, f.name) : (file === "sql" ? problemLine(p, null) : null);
       if (n != null && n <= lineCount) lines.add(n);
     }
     return lines;
@@ -244,7 +225,8 @@ function Editor({ file, onEdit, contentVersion, jump }){
         <span className="b">src</span><span className="sep">›</span>
         <span className="b">{f.name}</span>
         <div className="right">
-          <span className="pill">{lang==="yal"?"YALex":lang==="yalp"?"YACC":lang==="cps"?"Compiscript":lang==="g4"?"ANTLR (ref.)":"text"}</span>
+          <span className="pill">{lang==="sql"?"SQL":lang==="g4"?"ANTLR":"text"}</span>
+          {f.readonly && <span className="dim">solo lectura</span>}
           {f.dirty && <span style={{color:"var(--yellow)"}}>● modificado</span>}
           <span>UTF-8</span>
         </div>
@@ -270,6 +252,7 @@ function Editor({ file, onEdit, contentVersion, jump }){
             defaultValue={f.rawContent}
             onChange={handleChange}
             onScroll={syncScroll}
+            readOnly={!!f.readonly}
             spellCheck={false}
             autoComplete="off"
             autoCorrect="off"
@@ -308,11 +291,10 @@ function TokensView(){
 }
 
 /* El árbol viene del backend YA renderizado a DOT (D.PARSE_TREE_DOT, campo
-   `parse_tree_dot` de /api/pipeline) — construido a partir del ParseNode
-   real, y auto-anotado con el tipo de cada expresión en cuanto corrió el
-   análisis semántico (ver src/api/pipeline.rs: el DOT se genera DESPUÉS del
-   análisis para poder pasarle las anotaciones). Sin %ident en el .yalp sale
-   el árbol plano de siempre. */
+   `parse_tree_dot` de /api/sql/parse): el árbol de derivación que construyó
+   el parser de ANTLR, con cada nodo etiquetado "regla · alternativa". Con
+   errores de sintaxis se dibuja igual el árbol parcial que dejó la
+   recuperación de errores de ANTLR (nodos de error en rojo). */
 function ParseTreeView({ renderKey }) {
   const containerRef = useRef();
 
@@ -366,7 +348,7 @@ function ParseTreeView({ renderKey }) {
     <div className="dfa-wrap">
       <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8, display:"flex", alignItems:"center", gap:10}}>
         ▍ ÁRBOL SINTÁCTICO
-        <span className="dim" style={{fontFamily:"VT323", fontSize:16}}>· con %ident sale anotado con el tipo de cada expresión</span>
+        <span className="dim" style={{fontFamily:"VT323", fontSize:16}}>· árbol de derivación de ANTLR (regla · alternativa)</span>
         {D.PARSE_TREE_DOT && (
           <button className="cbtn icon cyan" style={{fontSize:12, padding:"2px 8px"}} onClick={downloadPng}>↓ PNG</button>
         )}
@@ -376,243 +358,12 @@ function ParseTreeView({ renderKey }) {
   );
 }
 
-/* Un color por tipo de símbolo/ámbito, compartido entre las dos mitades del
-   panel (el árbol de ESTADO FINAL y las tarjetas POR ENTORNO) para que se
-   lean como la MISMA información vista dos veces, no como dos formatos
-   distintos — eso era buena parte de lo confuso del diseño anterior. */
-const SYMBOL_KIND_COLOR = {
-  Class:     "var(--pink)",
-  Struct:    "var(--blue)",
-  Function:  "var(--cyan)",
-  Parameter: "var(--green)",
-  Variable:  "var(--yellow)",
-};
-const SCOPE_KIND_COLOR = {
-  Global:   "var(--magenta)",
-  Function: "var(--cyan)",
-  Class:    "var(--pink)",
-  Struct:   "var(--blue)",
-  Block:    "var(--tx-dim)",
-};
-const kindColor = (kind, table) => table[kind] || "var(--tx)";
+/* Fase de un problema, por el prefijo de su código (ver
+   backend/dbms/frontend/parse.py y, más adelante, la semántica y el ejecutor). */
+const PROBLEM_PHASE = { LEX:"léxico", SYN:"sintáctico", SEM:"semántico", EXE:"ejecución", IDE:"IDE" };
 
-/* Convierte el texto plano de SymbolTable::dump() (indentado con espacios,
-   ver src/semantico/symbols/mod.rs:dump) en un árbol de nodos, comparando
-   sangría en vez de contar espacios a mano — así no importa si una línea es
-   un encabezado de ámbito "[0] Global" o un símbolo "x: Variable, Int @1:1",
-   ni cuántos niveles de miembros anidados (campos de una clase) trae. */
-function parseSymbolDump(text){
-  const root = { children: [] };
-  const stack = [{ indent: -1, node: root }];
-  for (const raw of text.split("\n")) {
-    if (!raw.trim()) continue;
-    const indent = raw.length - raw.trimStart().length;
-    const content = raw.trim();
-    const scopeMatch = content.match(/^\[(\d+)\]\s+(\w+)(?:\((.*)\))?$/);
-    const symMatch = content.match(/^([A-Za-z_][A-Za-z0-9_]*):\s+(.+)\s+@(\d+):(\d+)$/);
-    let node;
-    if (scopeMatch) {
-      node = { type:"scope", order:scopeMatch[1], kind:scopeMatch[2], label:scopeMatch[3]||null, children:[] };
-    } else if (symMatch) {
-      const parts = symMatch[2].split(", ");
-      node = { type:"symbol", name:symMatch[1], kind:parts[0], ty:null, isConst:false, used:false,
-                line:symMatch[3], col:symMatch[4], children:[] };
-      for (const p of parts.slice(1)) {
-        if (p === "const") node.isConst = true;
-        else if (p === "usado") node.used = true;
-        else node.ty = p;
-      }
-    } else {
-      node = { type:"text", text:content, children:[] };
-    }
-    while (stack.length > 1 && indent <= stack[stack.length-1].indent) stack.pop();
-    stack[stack.length-1].node.children.push(node);
-    stack.push({ indent, node });
-  }
-  return root.children;
-}
-
-/* Aplana el árbol de parseSymbolDump() a filas de tabla: una por símbolo, con
-   su "contenedor" (la ruta de ámbitos/símbolos que lo encierran, p. ej.
-   "Global › Animal › constructor") en vez de sangría — más legible en una
-   tabla que contar espacios en una celda. */
-function flattenSymbolDump(nodes, path){
-  let rows = [];
-  for (const node of nodes) {
-    if (node.type === "scope") {
-      const label = node.kind + (node.label ? `(${node.label})` : "");
-      rows = rows.concat(flattenSymbolDump(node.children, [...path, label]));
-    } else if (node.type === "symbol") {
-      rows.push({ ...node, container: path.join(" › ") || "—" });
-      rows = rows.concat(flattenSymbolDump(node.children, [...path, node.name]));
-    }
-  }
-  return rows;
-}
-
-function SymbolTableRows({ rows }){
-  return rows.map((r, i) => (
-    <tr key={i}>
-      <td style={{color:"var(--yellow)", textAlign:"left"}}>{r.name}</td>
-      <td style={{color: kindColor(r.kind, SYMBOL_KIND_COLOR)}}>{r.kind}</td>
-      <td style={{color:"var(--cyan)"}}>{r.ty || "—"}</td>
-      <td className="dim">{[r.isConst && "const", r.used && "usado"].filter(Boolean).join(", ") || "—"}</td>
-      <td className="dim">{r.line}:{r.col}</td>
-      <td className="dim" style={{textAlign:"left"}}>{r.container}</td>
-    </tr>
-  ));
-}
-
-const SYMBOL_TABLE_HEADERS = ["NOMBRE","TIPO","DATO","MOD.","POS.","CONTENEDOR"];
-
-/* Panel de la tabla de símbolos, en dos tablas que NO son redundantes:
-
-   1. ESTADO FINAL — SymbolTable::dump(): lo que sobrevive al terminar el
-      recorrido, o sea el Global con los miembros de funciones y clases
-      colgando anidados. Se parsea con parseSymbolDump()/flattenSymbolDump()
-      y se dibuja como tabla, una fila por símbolo, con su ruta de
-      contenedores en vez de sangría.
-   2. POR ENTORNO — D.SCOPES (campo `scopes` de /api/pipeline,
-      ScopeCollector::to_json()): una foto de CADA entorno en el momento en
-      que se cerró, en orden de cierre. Es lo único que deja ver lo declarado
-      en un ámbito ANÓNIMO — un `let` dentro de un `if` vive en un Block que
-      se desapila y no aparece en la tabla de arriba por ningún lado.
-
-   Vacío si el .yalp activo no trae la directiva %ident (sin análisis
-   semántico para él). */
-function SymbolTableView(){
-  const dump = D.SYMBOL_TABLE;
-  const scopes = D.SCOPES || [];
-  if (!dump) {
-    return (
-      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
-        ▍ TABLA DE SÍMBOLOS
-        <span className="dim" style={{marginLeft:10}}>
-          · ejecuta ANALIZAR sobre una gramática con %ident
-        </span>
-      </div>
-    );
-  }
-  const finalRows = flattenSymbolDump(parseSymbolDump(dump), []);
-  return (
-    <div>
-      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
-        ▍ TABLA DE SÍMBOLOS · ESTADO FINAL · {finalRows.length}
-        <span className="dim" style={{marginLeft:10}}>
-          · lo que queda vivo al terminar: el ámbito global y los miembros de
-          funciones y clases
-        </span>
-      </div>
-      <table className="t">
-        <thead><tr>{SYMBOL_TABLE_HEADERS.map(h => <th key={h}>{h}</th>)}</tr></thead>
-        <tbody><SymbolTableRows rows={finalRows}/></tbody>
-      </table>
-
-      <div className="h-pixel" style={{color:"var(--pink)", margin:"18px 0 8px"}}>
-        ▍ TABLA DE SÍMBOLOS · POR ENTORNO (función / clase / bloque) · {scopes.length}
-        <span className="dim" style={{marginLeft:10}}>
-          {scopes.length
-            ? "· cada entorno tal como estaba al cerrarse, en orden de cierre — incluye los bloques anónimos que no sobreviven arriba"
-            : "· este programa no abrió ningún ámbito propio"}
-        </span>
-      </div>
-      <table className="t">
-        <thead>
-          <tr><th>#</th><th>ENTORNO</th><th>APERTURA</th><th>PROF.</th><th>NOMBRE</th><th>TIPO</th><th>DATO</th><th>MOD.</th><th>POS.</th></tr>
-        </thead>
-        <tbody>
-          {scopes.flatMap((sc, i) => {
-            const entorno = `${sc.kind}${sc.label ? `(${sc.label})` : ""}`;
-            const entornoColor = kindColor(sc.kind, SCOPE_KIND_COLOR);
-            const apertura = (sc.line || sc.col) ? `${sc.line}:${sc.col}` : "—";
-            if (!sc.symbols || !sc.symbols.length) {
-              return (
-                <tr key={i}>
-                  <td className="dim">{sc.order}</td>
-                  <td style={{color: entornoColor}}>{entorno}</td>
-                  <td className="dim">{apertura}</td>
-                  <td className="dim">{sc.depth}</td>
-                  <td className="dim" colSpan={5}>(sin declaraciones propias)</td>
-                </tr>
-              );
-            }
-            return sc.symbols.map((sym, j) => (
-              <tr key={`${i}-${j}`}>
-                {j === 0 && (
-                  <>
-                    <td className="dim" rowSpan={sc.symbols.length}>{sc.order}</td>
-                    <td style={{color: entornoColor}} rowSpan={sc.symbols.length}>{entorno}</td>
-                    <td className="dim" rowSpan={sc.symbols.length}>{apertura}</td>
-                    <td className="dim" rowSpan={sc.symbols.length}>{sc.depth}</td>
-                  </>
-                )}
-                <td style={{color:"var(--yellow)", textAlign:"left"}}>{sym.name}</td>
-                <td style={{color: kindColor(sym.kind, SYMBOL_KIND_COLOR)}}>{sym.kind}</td>
-                <td style={{color:"var(--cyan)"}}>{sym.ty || "—"}</td>
-                <td className="dim">{sym.mutable === false ? "const" : "—"}</td>
-                <td className="dim">{sym.line}:{sym.col}</td>
-              </tr>
-            ));
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// El tipo que el analizador infirió para cada nodo de expresión — el "árbol
-// de análisis anotado" del libro del dragón, en forma de tabla. El mismo
-// dato va dibujado sobre el árbol en la pestaña ÁRBOL SINTÁCTICO; acá se
-// lista en orden de lectura para poder buscar un nodo puntual por su id.
-function TypesView(){
-  const types = D.TYPES;
-  if (!types || !types.length) {
-    return (
-      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
-        ▍ TIPOS
-        <span className="dim" style={{marginLeft:10}}>
-          · sin anotaciones · requiere un .yalp con %ident
-        </span>
-      </div>
-    );
-  }
-  return (
-    <div>
-      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
-        ▍ TIPOS · {types.length} nodo{types.length===1?"":"s"} de expresión anotado{types.length===1?"":"s"}
-        <span className="dim" style={{marginLeft:10}}>
-          · el id coincide con el nodo del árbol
-        </span>
-      </div>
-      <table className="t">
-        <thead>
-          <tr><th>id</th><th>nodo</th><th>lexema</th><th>tipo</th><th>pos</th></tr>
-        </thead>
-        <tbody>
-          {types.map((t,i)=>(
-            <tr key={i}>
-              <td className="dim">{t.id}</td>
-              <td style={{color:"var(--cyan)"}}>{t.symbol}</td>
-              <td style={{color:"var(--yellow)"}}>{t.lexeme==null?"":t.lexeme}</td>
-              <td style={{color:"var(--green)", fontWeight:600}}>{t.ty}</td>
-              <td className="dim">{t.line}:{t.col}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-/* Fase de un problema, por el prefijo de su código (ver los `code` que
-   emiten `api::pipeline`, `api::sintactico` y `semantico::errors`). */
-const PROBLEM_PHASE = { L:"léxico", P:"sintáctico", S:"semántico", W:"advertencia", E:"IDE", G:"gramática", I:"IDE" };
-
-/* TODOS los problemas de la última corrida —errores, advertencias e info, de
-   cualquier fase—, ordenados por posición. Antes esta vista filtraba solo
-   los `S0xx`, y así se perdían los warnings (`W001` símbolo sin usar, `W002`
-   código inalcanzable), los errores léxicos/sintácticos y los avisos del
-   propio IDE. Clic en uno con posición: el editor salta a esa línea. */
+/* TODOS los problemas de la última corrida, de cualquier fase, ordenados
+   por posición. Clic en uno con posición: el editor salta a esa línea. */
 function ProblemsView({ onJump }){
   const problems = D.PROBLEMS
     .map((p, i) => ({ p, i }))
@@ -633,7 +384,7 @@ function ProblemsView({ onJump }){
       {problems.map((p,i)=>{
         const hasPos = p.line != null && p.col != null && p.line > 0;
         const locLabel = hasPos ? `línea ${p.line}, col ${p.col}` : (p.loc || "");
-        const phase = PROBLEM_PHASE[(p.code || "")[0]];
+        const phase = PROBLEM_PHASE[(p.code || "").slice(0, 3)];
         return (
           <div key={i}
                className={"prob "+p.level+(hasPos ? " clickable" : "")}
@@ -668,8 +419,6 @@ function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, result
   const TABS = [
     {id:"tokens",   label:"TOKENS", badge: D.TOKENS.length || null},
     {id:"tree",     label:"ÁRBOL SINTÁCTICO"},
-    {id:"symbols",  label:"SÍMBOLOS", badge: (D.SCOPES && D.SCOPES.length) || null},
-    {id:"types",    label:"TIPOS", badge: (D.TYPES && D.TYPES.length) || null},
     {id:"errors",   label:"PROBLEMAS", badge: problemCount || null},
   ];
 
@@ -694,8 +443,6 @@ function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, result
         <div className="rbody">
           {activeTab==="tokens"  && <TokensView/>}
           {activeTab==="tree"    && <ParseTreeView renderKey={renderKey}/>}
-          {activeTab==="symbols" && <SymbolTableView/>}
-          {activeTab==="types"   && <TypesView/>}
           {activeTab==="errors"  && <ProblemsView onJump={onJump}/>}
         </div>
       </div>
@@ -705,13 +452,8 @@ function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, result
 
 /* ============================== Header ============================== */
 
-/* Solo los modos LR: en LL(1) el backend no corre el análisis semántico
-   (la transformación de la gramática renombra producciones — ver
-   `api::pipeline`), así que SÍMBOLOS/TIPOS/PROBLEMAS quedaban vacíos. */
-const MODE_LABELS = { lalr:"LALR(1)", slr:"SLR(1)" };
-
-function Header({ activeFile, setFile, onRun, onSave, loading, mode, setMode }){
-  const tabs = ["yal","yalp","test","g4"];
+function Header({ activeFile, setFile, onRun, onSave, loading }){
+  const tabs = ["sql","g4"];
   return (
     <header data-screen-label="IDE">
 
@@ -729,19 +471,11 @@ function Header({ activeFile, setFile, onRun, onSave, loading, mode, setMode }){
         })}
       </div>
       <div className="actions">
-        <div className="modegrp">
-          {Object.entries(MODE_LABELS).map(([key, label])=>
-            <button key={key}
-                    className={"modebtn " + (mode===key?"active":"")}
-                    onClick={()=>setMode(key)}>
-              {label}
-            </button>
-          )}
-        </div>
-        <button className="runbtn" onClick={onRun} disabled={loading} style={{opacity:loading?.5:1}}>
+        <button className="runbtn" onClick={onRun} disabled={loading} style={{opacity:loading?.5:1}}
+                title="Análisis léxico y sintáctico del script (todavía no ejecuta nada)">
           {loading ? "..." : <><span className="play"/>ANALIZAR</>}
         </button>
-        <button className="runbtn stepbtn" onClick={onSave} title="Guardar archivo activo">
+        <button className="runbtn stepbtn" onClick={onSave} title="Guardar el script en el workspace">
           SAVE
         </button>
         <div className="winbtns" style={{marginLeft:14}}>
@@ -756,15 +490,17 @@ function Header({ activeFile, setFile, onRun, onSave, loading, mode, setMode }){
 
 /* ============================== Status bar ============================== */
 
-function StatusBar({ activeFile, mode }){
+function StatusBar({ activeFile }){
   const f = D.FILES[activeFile];
-  const hasResult = D.PARSE_ACCEPTED !== null && D.PARSE_ACCEPTED !== undefined;
+  const errors = D.PROBLEMS.filter(p => p.level === "err").length;
   return (
     <div id="status">
-      <div className="sg"><span className="grm">{MODE_LABELS[mode]}</span></div>
-      {hasResult && (
-        <div className="sg" style={{color: D.PARSE_ACCEPTED ? "var(--green)" : "var(--red)"}}>
-          {D.PARSE_ACCEPTED ? "✓ ACEPTADA" : `✗ ${D.PARSE_ERROR || "RECHAZADA"}`}
+      <div className="sg"><span className="grm">SQL · ANTLR 4</span></div>
+      {D.PARSE_OK !== null && (
+        <div className="sg" style={{color: D.PARSE_OK ? "var(--green)" : "var(--red)"}}>
+          {D.PARSE_OK
+            ? `✓ SINTAXIS OK · ${D.STATEMENTS.length} sentencia${D.STATEMENTS.length===1?"":"s"}`
+            : `✗ ${errors} error${errors===1?"":"es"}`}
         </div>
       )}
       <div className="right">
@@ -778,97 +514,102 @@ function StatusBar({ activeFile, mode }){
 /* ============================== App ============================== */
 
 function App(){
-  const [activeFile,     setFile]          = useState("test");
+  const [activeFile,     setFile]          = useState("sql");
   const [activeTab,      setTab]           = useState("tree");
   const [loading,        setLoading]       = useState(false);
-  const [mode,           setMode]          = useState("lalr");
   const [renderKey,      bump]             = useState(0);
   const [contentVersion, setContentVersion] = useState(0);
   const [resultsSize,    setResultsSize]   = useState("normal"); // "normal"|"wide"|"custom"
   const [layout,         setLayout]        = useState({ left: 240, right: 460 });
   const [drag,           setDrag]          = useState(null);
   const [jump,           setJump]          = useState(null);
+  const [workspace,      setWorkspace]     = useState([]);
   const appRef = useRef(null);
 
   const rerender = () => bump(n => n + 1);
 
-  // Clic en un problema: abrir el archivo al que apunta (por el nombre en su
-  // `loc`; si no se reconoce, el fuente de prueba) y saltar a su línea. El
-  // `nonce` hace que dos clics seguidos en el mismo problema vuelvan a saltar.
+  // Clic en un problema: todos apuntan al script SQL. El `nonce` hace que
+  // dos clics seguidos en el mismo problema vuelvan a saltar.
   const handleJump = (p) => {
-    const slot = Object.keys(D.FILES).find(k => p.loc && p.loc.startsWith(D.FILES[k].name + ":")) || "test";
-    setFile(slot);
-    setJump({ file: slot, line: p.line, nonce: Date.now() });
+    setFile("sql");
+    setJump({ file: "sql", line: p.line, nonce: Date.now() });
   };
 
-  // ── WORKSPACE: carga yal/yalp/test del servidor al arrancar (el .g4 de
-  // referencia nunca vive ahí — no hay slot para él en el backend). ──────────
-  const PREFERRED_WORKSPACE_NAME = { yal: "compiscript.yal", yalp: "compiscript.yalp", test: "rubrica.cps" };
-  const fetchWorkspace = async () => {
+  const openInSqlSlot = (name, content) => {
+    D.FILES.sql.rawContent = normalizeEol(content);
+    D.FILES.sql.name  = name;
+    D.FILES.sql.dirty = false;
+    setFile("sql");
+    setContentVersion(v => v + 1);
+    rerender();
+  };
+
+  const openWorkspaceFile = async (name) => {
+    try {
+      const res = await fetch(`${API}/api/workspace/${encodeURIComponent(name)}`);
+      if (res.ok) openInSqlSlot(name, await res.text());
+    } catch(e) { console.warn("no se pudo abrir", name, e); }
+  };
+
+  // ── WORKSPACE: lista los .sql del servidor y, al arrancar, abre demo.sql
+  // (o el primero que haya). ──────────────────────────────────────────────
+  const fetchWorkspace = async (openDefault) => {
     try {
       const res = await fetch(`${API}/api/workspace`);
       if (!res.ok) return;
       const { files } = await res.json();
-      const pickByKind = { yal: null, yalp: null, test: null };
-      for (const { name, kind } of files) {
-        const slot = kind === "yal" ? "yal" : kind === "yalp" ? "yalp" : "test";
-        if (!pickByKind[slot] || name === PREFERRED_WORKSPACE_NAME[slot]) {
-          pickByKind[slot] = name;
-        }
+      setWorkspace(files);
+      if (openDefault) {
+        const pick = files.find(f => f.name === "demo.sql") || files.find(f => f.kind === "sql");
+        if (pick) await openWorkspaceFile(pick.name);
       }
-      for (const slot of Object.keys(pickByKind)) {
-        const name = pickByKind[slot];
-        if (!name) continue;
-        const content = await fetch(`${API}/api/workspace/${encodeURIComponent(name)}`).then(r => r.text());
-        D.FILES[slot].rawContent = normalizeEol(content);
-        D.FILES[slot].name  = name;
-        D.FILES[slot].dirty = false;
-      }
-      setContentVersion(v => v + 1);
-      rerender();
     } catch(e) { console.warn("workspace not available, using defaults", e); }
   };
 
-  useEffect(() => { fetchWorkspace(); }, []);
+  // La gramática real, para el slot SQL.g4 (solo lectura).
+  const fetchGrammar = async () => {
+    try {
+      const res = await fetch(`${API}/api/grammar`);
+      if (!res.ok) return;
+      D.FILES.g4.rawContent = normalizeEol(await res.text());
+    } catch(e) {
+      D.FILES.g4.rawContent = "// no se pudo cargar SQL.g4: la API no responde\n";
+    }
+    setContentVersion(v => v + 1);
+  };
+
+  useEffect(() => { fetchWorkspace(true); fetchGrammar(); }, []);
 
   const handleEdit = () => { rerender(); };
 
-  // ── CARGAR ARCHIVO: lee un File y, salvo el .g4 (referencia, nunca se
-  // persiste — sanitize_filename del backend no lo acepta), lo sube también
-  // al workspace. ──────────────────────────────────────────────────────────
-  const handleLoadFile = (fileId, file) => {
+  // ── CARGAR ARCHIVO: lo abre en el slot SQL y lo sube al workspace. ─────
+  const handleLoadFile = (file) => {
     const reader = new FileReader();
     reader.onload = async e => {
       const content = e.target.result;
-      D.FILES[fileId].rawContent = normalizeEol(content);
-      D.FILES[fileId].name  = file.name;
-      D.FILES[fileId].dirty = false;
-      if (fileId !== "g4") {
-        try {
-          await fetch(`${API}/api/workspace/${encodeURIComponent(file.name)}`, {
-            method: "PUT",
-            headers: { "Content-Type": "text/plain" },
-            body: content,
-          });
-        } catch(e) { /* funciona localmente aunque el backend falle */ }
-      }
-      setFile(fileId);
-      setContentVersion(v => v + 1);
-      rerender();
+      openInSqlSlot(file.name, content);
+      try {
+        await fetch(`${API}/api/workspace/${encodeURIComponent(file.name)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "text/plain" },
+          body: content,
+        });
+        fetchWorkspace(false);
+      } catch(e) { /* funciona localmente aunque el backend falle */ }
     };
     reader.readAsText(file);
   };
 
+  // SAVE siempre guarda el script (el slot SQL.g4 es de solo lectura).
   const handleSave = async () => {
-    const f = D.FILES[activeFile];
-    if (activeFile === "g4") return; // solo referencia, no hay dónde guardarlo
+    const f = D.FILES.sql;
     try {
       const res = await fetch(`${API}/api/workspace/${encodeURIComponent(f.name)}`, {
         method: "PUT",
         headers: { "Content-Type": "text/plain" },
         body: f.rawContent,
       });
-      if (res.ok) { D.FILES[activeFile].dirty = false; rerender(); }
+      if (res.ok) { f.dirty = false; fetchWorkspace(false); rerender(); }
     } catch(e) {
       const blob = new Blob([f.rawContent], { type: "text/plain" });
       const url  = URL.createObjectURL(blob);
@@ -876,76 +617,47 @@ function App(){
       a.href = url; a.download = f.name;
       document.body.appendChild(a); a.click();
       document.body.removeChild(a); URL.revokeObjectURL(url);
-      D.FILES[activeFile].dirty = false;
+      f.dirty = false;
       rerender();
     }
   };
 
-  // ── ANALIZAR: pipeline completo (.yal + .yalp + fuente) en un solo paso —
-  // sin stepper, así que no hace falta separar compilar-gramática de
-  // parsear-una-cadena como en el IDE completo. ───────────────────────────
+  // ── ANALIZAR: análisis léxico + sintáctico del script con ANTLR. ───────
   const handleRun = async () => {
-    if (!D.FILES.yal.rawContent.trim() || !D.FILES.yalp.rawContent.trim() || !D.FILES.test.rawContent.trim()) {
-      D.PROBLEMS = [{ level:"err", code:"E000", msg:"Cargá .yal, .yalp y el fuente de prueba antes de analizar.", loc:"" }];
-      setTab("errors");
-      rerender();
-      return;
-    }
+    const f = D.FILES.sql;
     setLoading(true);
     try {
-      const res = await fetch(`${API}/api/pipeline`, {
+      const res = await fetch(`${API}/api/sql/parse`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({
-          yal_content:  D.FILES.yal.rawContent,
-          yalp_content: D.FILES.yalp.rawContent,
-          source:       D.FILES.test.rawContent,
-          source_name:  D.FILES.test.name,
-          mode,
-        }),
+        body:    JSON.stringify({ script: f.rawContent }),
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
 
-      D.TOKENS = (data.token_map || []).map((t, i) => ({ i: i+1, k: t.kind, lx: t.lexeme, l: t.line, c: t.col }));
+      D.TOKENS = (data.tokens || []).map((t, i) => ({ i: i+1, k: t.kind, lx: t.lexeme, l: t.line, c: t.col }));
       D.PARSE_TREE_DOT = data.parse_tree_dot || "";
-      D.SYMBOL_TABLE    = data.symbol_table || "";
-      D.SCOPES          = Array.isArray(data.scopes) ? data.scopes : [];
-      D.TYPES           = Array.isArray(data.types) ? data.types : [];
-      D.PARSE_ACCEPTED = !!data.accepted;
-      D.PARSE_ERROR = data.error || null;
-      D.PROBLEMS = data.problems && data.problems.length ? data.problems : [];
+      D.STATEMENTS = data.statements || [];
+      D.PARSE_OK = !!data.ok;
+      // `loc` con el nombre del archivo: así el editor marca las líneas del
+      // script (problemLine filtra por archivo).
+      D.PROBLEMS = (data.problems || []).map(p => ({ ...p, loc: `${f.name}:${p.line}:${p.col}` }));
 
-      bump(n => n + 1);
-      const hasErrors = !data.accepted || (data.problems && data.problems.some(p => p.level === "err"));
-      setTab(hasErrors ? "errors" : "tree");
+      setTab(data.ok ? "tree" : "errors");
       rerender();
     } catch(e) {
-      console.error("API /pipeline:", e);
-      let msg = String(e);
-      try { const j = JSON.parse(msg.replace(/^Error:\s*/,"")); if (j.error) msg = j.error; } catch(_){}
+      console.error("API /sql/parse:", e);
       D.TOKENS = [];
       D.PARSE_TREE_DOT = "";
-      D.SYMBOL_TABLE = "";
-      D.SCOPES = [];
-      D.TYPES = [];
-      D.PARSE_ACCEPTED = null;
-      D.PARSE_ERROR = msg;
-      D.PROBLEMS = [{ level:"err", code:"E001", msg, loc:`pipeline ${mode.toUpperCase()}` }];
+      D.STATEMENTS = [];
+      D.PARSE_OK = null;
+      D.PROBLEMS = [{ level:"err", code:"IDE001", msg:`No se pudo contactar la API: ${e}`, loc:"" }];
       setTab("errors");
       rerender();
     } finally {
       setLoading(false);
     }
   };
-
-  // ── Auto-reanalizar cuando el modo cambia, si ya se corrió antes ──────────
-  const prevModeRef = useRef(mode);
-  useEffect(() => {
-    if (prevModeRef.current === mode) return;
-    prevModeRef.current = mode;
-    if (D.PARSE_ACCEPTED !== null) handleRun();
-  }, [mode]);
 
   const RESULTS_WIDTHS = { normal: 460, wide: 760 };
   const cycleResults = () => setResultsSize(s => s==="normal"?"wide":"normal");
@@ -996,13 +708,14 @@ function App(){
       }}
     >
       <Header activeFile={activeFile} setFile={setFile} onRun={handleRun} onSave={handleSave}
-              loading={loading} mode={mode} setMode={setMode}/>
+              loading={loading}/>
 
       <div id="files" className="panel" data-screen-label="files">
         <div className="panel-title">
           <span className="swatch"/>EXPLORER
         </div>
-        <FileTree active={activeFile} onPick={setFile} onLoadFile={handleLoadFile}/>
+        <FileTree active={activeFile} onPick={setFile} onLoadFile={handleLoadFile}
+                  workspace={workspace} onOpenWorkspace={openWorkspaceFile}/>
       </div>
 
       <div className="grid-handle v left" onMouseDown={() => setDrag({ kind: "left" })} />
@@ -1023,7 +736,7 @@ function App(){
           onJump={handleJump}/>
       </div>
 
-      <StatusBar activeFile={activeFile} mode={mode}/>
+      <StatusBar activeFile={activeFile}/>
     </div>
   );
 }

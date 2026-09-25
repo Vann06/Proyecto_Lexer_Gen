@@ -1,156 +1,82 @@
-# Lexer Generator
+# DBMS con SQL (ANTLR)
 
-Generador de analizadores léxicos (YALex) y sintácticos LR/LL (YAPar), con una
-API HTTP y un IDE web (`frontend/IDE-lite/`) para compilar gramáticas y ver la
-traza de parseo paso a paso. Ver [GUIA_USO.md](GUIA_USO.md) para levantar el
-IDE + API, o seguir leyendo para el generador de lexers standalone (CLI).
-Cubre léxico y sintáctico (Fases 0–14 del libro del dragón) y el **análisis
-semántico completo** (Fase 15), ya conectado a la API y al IDE: tabla de
-símbolos con entornos anidados, sistema de tipos, clases y herencia, funciones
-y closures, control de flujo, colecciones, duplicados y código muerto — 40
-diagnósticos con línea y columna. Ver
-[ARQUITECTURA.md](ARQUITECTURA.md) para cómo está construida esa fase, incluida
-[la explicación de por qué el analizador sintáctico es propio y no
-ANTLR](ARQUITECTURA.md#por-qué-no-se-usó-antlr). Código intermedio y código
-objetivo siguen en el roadmap — ver
-[ORGANIZACION.md](ORGANIZACION.md#fases-futuras-no-implementadas).
+Sistema gestor de bases de datos que interpreta **SQL**: creación de bases y
+tablas con restricciones, DML, consultas con JOIN/GROUP BY e índices. El
+análisis léxico y sintáctico lo genera **ANTLR 4** desde
+[`backend/grammar/SQL.g4`](backend/grammar/SQL.g4); el resto (AST, semántica,
+ejecución, almacenamiento en JSON) está en Python. Incluye una API HTTP y un
+IDE web (`frontend/IDE-lite/`).
 
-**¿Buscas los entregables?**
-[ARQUITECTURA.md §0](ARQUITECTURA.md#0-dónde-está-cada-entregable) mapea cada
-uno —analizador, árbol visual, tabla de símbolos por entorno, batería de
-pruebas, IDE y documentación— a su archivo y al comando que lo ejecuta,
-incluida la **batería de 45 casos** (`workspace/casos_semanticos.txt`) con su
-tabla regla→código y cómo recorrerla desde el IDE.
+> La versión anterior del proyecto (generador propio de lexers/parsers en
+> Rust + Compiscript) sigue en la rama `main`.
 
-**¿Vas a escribir código?** Revisa primero
-[API_REFERENCE.md](API_REFERENCE.md) — índice de cada función y método del
-proyecto (backend y frontend) con `archivo:línea`, para no reimplementar lo que
-ya existe.
+## Estado
 
-## Objetivo
-Leer un archivo `.yal`, procesar sus definiciones y reglas, construir internamente los autómatas necesarios y generar un analizador léxico funcional.
+| Fase | Contenido | Estado |
+|---|---|---|
+| 0 | Limpieza y andamiaje (Python, ANTLR, Docker, CI) | ✅ |
+| 1 | Gramática `SQL.g4` | ✅ |
+| 2 | Parse → errores en español → AST (`dbms.ast`) | ✅ |
+| 3 | Tipos, catálogo y almacenamiento JSON | pendiente |
+| 4 | Análisis semántico contra el catálogo | pendiente |
+| 5 | Ejecución DDL + restricciones (PK, FK, UNIQUE, CHECK, NOT NULL) | pendiente |
+| 6 | INSERT / UPDATE / DELETE / SELECT básico | pendiente |
+| 7 | JOIN, GROUP BY + agregados, índices | pendiente |
+| 8 | API `/api/sql/run`, `/api/catalog` | pendiente |
+| 9 | IDE: pestañas RESULTADOS y CATÁLOGO | pendiente |
+| 10 | Pruebas finales, ejemplos y documentación | pendiente |
 
-## Flujo del proyecto
-1. Parseo de especificación YALex
-2. Expansión de definiciones (`let`)
-3. Parseo de expresiones regulares a AST
-4. Construcción de AFN (Thompson)
-5. Conversión AFN -> AFD
-6. Minimización de AFD
-7. Generación de tabla de transiciones
-8. Simulación del lexer
-9. Generación de código fuente del analizador
+Hoy el botón **▶ ANALIZAR** del IDE hace el análisis léxico y sintáctico:
+muestra tokens, el árbol de derivación de ANTLR y los errores con línea y
+columna. Todavía no ejecuta sentencias.
 
----
-
-## 2. Estructura general
+## Estructura
 
 ```text
-lexer-generator/
-├── Cargo.toml
-├── .gitignore
-├── README.md
-├── Dockerfile.api
-├── docker-compose.yml
-├── frontend/IDE-lite/    # IDE React (servido por nginx en el contenedor)
-├── examples/
-│   ├── lexer/            # .yal de ejemplo (ejemplo_c.yal, hardtest.yal, ...)
-│   ├── grammar/          # .yalp de ejemplo
-│   ├── source/           # fuentes de prueba para tokenizar/parsear
-│   └── cases/            # casos de extremo a extremo (lexer+grammar+input+README por caso)
-├── workspace/            # archivos que sirve /api/workspace (montados como volumen en Docker)
-├── generated/            # salida de `cargo run` — crate standalone con el lexer generado
-├── tests/                # tests de integración (cargo test)
-└── src/
-    ├── lib.rs                # raíz del crate — declara lexico, sintactico, api, error
-    ├── main.rs                # CLI del generador de lexers standalone
-    ├── error.rs
-    ├── lexico/                # ── ANÁLISIS LÉXICO ──
-    │   ├── spec/              #   parseo de .yal (header, definiciones, reglas, trailer)
-    │   ├── regex/              #   parseo de expresiones regulares a AST
-    │   ├── automata/            #   Thompson (NFA), subset construction (DFA), minimización
-    │   ├── table/                #   tabla de transiciones del DFA
-    │   ├── runtime/               #   simulador del lexer (maximal munch) + síntesis INDENT/DEDENT
-    │   ├── codegen/                #   emite el lexer.rs standalone
-    │   └── graph/                   #   exporta AST/DFA a Graphviz DOT
-    ├── sintactico/            # ── ANÁLISIS SINTÁCTICO ──
-    │   ├── gramatica/          #   gramática YAPar (.yalp → Grammar), FIRST/FOLLOW
-    │   ├── automatas/           #   LR(0)/LR(1)/LALR
-    │   ├── tablas.rs             #   tabla ACTION/GOTO, conflictos
-    │   └── runtime/               #   parser LR dirigido por tabla, LL(1), árbol de derivación
-    ├── semantico/             # ── ANÁLISIS SEMÁNTICO (FASE 15, EN PROGRESO) ──
-    │   ├── analyzer/          #   walker genérico sobre ParseNode
-    │   ├── scopes/            #   entornos global/función/clase/bloque
-    │   ├── symbols/           #   tabla de símbolos y validación de asignaciones/const
-    │   ├── types/             #   Type, tabla de compatibilidad y coerciones
-    │   ├── spec/              #   reglas declarativas por gramática
-    │   ├── flow/              #   condiciones, break/continue, pila de contexto
-    │   └── operators/         #   lógicas, comparaciones, unarias, operando-no-valor
-    ├── api/                   # ── CAPA HTTP COMPARTIDA ── (lógica del servidor y los tests)
-    └── bin/
-        ├── api.rs                 # servidor HTTP (Axum) — expone api:: al IDE
-        ├── test_lalr.rs            # REPL de consola para LALR(1)/LR(1)
-        ├── test_ll1.rs              # REPL de consola para LL(1)
-        └── test_pipeline.rs          # pipeline completo por CLI: .yal + .yalp + fuente → árbol
+backend/
+├── grammar/SQL.g4        # fuente de verdad del lexer y el parser
+├── dbms/
+│   ├── parser/           # GENERADO por ANTLR (versionado; no editar)
+│   ├── frontend/         # parse(): errores → Problem, tokens, árbol → DOT
+│   ├── ast.py            # nodos del AST (dataclasses)
+│   └── builder.py        # visitor de ANTLR → AST
+├── api/main.py           # FastAPI
+└── tests/                # pytest
+frontend/IDE-lite/        # IDE React (nginx en Docker)
+workspace/                # scripts .sql que ve el IDE (demo.sql, errores_sintaxis.sql)
+scripts/gen_parser.*      # regenera backend/dbms/parser/ desde SQL.g4
 ```
 
----
+## Uso
 
-## Avance del análisis semántico
+**Con Docker:** `docker compose up --build` → IDE en http://localhost:4000,
+API en http://localhost:8080.
 
-El módulo `src/semantico/types/` concentra las reglas de tipado para evitar
-que el walker, la tabla de símbolos y las futuras fases reimplementen la misma
-política. Actualmente incluye:
+**Local:**
 
-- `Type`: `Int`, `Float`, `Bool`, `Str`, `Void`, tipos nominales, arreglos y
-  `Unknown`.
-- `CompatibilityTable`: resolución central de operaciones y asignaciones.
-- Verificación de `+`, `-`, `*` y `/` para operandos `integer`/`float`.
-- Coerción implícita segura `integer -> float`; no se permite
-  `float -> integer`.
-- Validación del valor inicial y de cada asignación contra el tipo declarado.
-- Inicializador obligatorio para constantes y rechazo de su reasignación.
-- `Unknown` ("esta fase no supo tipar la expresión") es NEUTRO: no participa
-  en ninguna incompatibilidad, ni como destino ni como valor. Es la diferencia
-  entre "no lo sé" y "está mal" — tratarlo como tipo real convertía cada hueco
-  de tipado en un diagnóstico falso.
-
-La tabla numérica compartida por los cuatro operadores es:
-
-| Izquierda | Derecha | Resultado | Coerción |
-|---|---|---|---|
-| `integer` | `integer` | `integer` | ninguna |
-| `integer` | `float` | `float` | izquierda a `float` |
-| `float` | `integer` | `float` | derecha a `float` |
-| `float` | `float` | `float` | ninguna |
-
-Las pruebas de integración están en `tests/type_system_tests.rs` y se pueden
-ejecutar de forma aislada con:
-
-```bash
-cargo test --test type_system_tests
+```sh
+cd backend
+pip install -r requirements-dev.txt
+python -m pytest                              # pruebas
+python -m uvicorn api.main:app --port 8080    # API
+# en otra terminal, servir el IDE:
+cd frontend/IDE-lite && python -m http.server 4000
 ```
 
-La infraestructura semántica **sí** forma parte de la respuesta del pipeline
-HTTP: `api::build_pipeline_response_named` corre el analizador sobre el árbol
-real y devuelve `problems`, `symbol_table` y `closures`
-(`src/api/pipeline.rs`). Se activa cuando el `.yalp` trae `%ident` y el modo no
-es `ll1` — LL(1) renombra producciones al factorizar, así que un `SemanticSpec`
-escrito contra los nombres originales dejaría de encontrarlas.
+**Regenerar el parser** después de cambiar `SQL.g4` (la primera vez
+`antlr4-tools` ofrece descargar Java; hay que aceptar):
 
----
-
-
-## Ejecución (CLI del generador de lexers)
-
-Pruebas con varios .txt de entrada en `examples/` y generación de lexers en `generated/`.
-Input txt propuestos en el proyecto (bajo `examples/source/`):
-* `input_test.txt`, `input_test2.txt`: texto de prueba con tokens válidos e inválidos.
-* `input_errors.txt`: texto de prueba con errores léxicos.
-
-```bash
-cargo run -- examples/lexer/ejemplo_c.yal examples/source/input_test2.txt
+```sh
+sh scripts/gen_parser.sh        # o: powershell scripts/gen_parser.ps1
 ```
 
-El código generado queda en `generated/src/lexer.rs` (crate standalone,
-`cargo run` dentro de `generated/` lo compila y ejecuta sobre el `.txt`).
+El CI falla si `backend/dbms/parser/` no coincide con la gramática.
+
+## Códigos de error
+
+| Prefijo | Fase | Ejemplo |
+|---|---|---|
+| `LEX` | léxico | `LEX001` carácter no reconocido, `LEX002` cadena sin cerrar |
+| `SYN` | sintáctico | `SYN001` entrada inesperada, `SYN002` entrada sobrante, `SYN003` falta un token, `SYN004` sentencia no válida |
+| `SEM` | semántico | (fase 4) |
+| `EXE` | ejecución | (fases 5–7) |

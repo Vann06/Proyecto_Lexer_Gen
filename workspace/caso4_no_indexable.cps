@@ -1,1 +1,0 @@
-let noArr: integer = 5; let boom = noArr[0];

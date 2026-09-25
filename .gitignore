@@ -1,23 +1,6 @@
-# Rust
-/target/
-# Cargo.lock is tracked deliberately: this package ships binaries (cargo run
-# --bin api / lexer-generator / test_*), and Dockerfile.api's COPY Cargo.toml
-# Cargo.lock depends on it existing in the repo for a reproducible build —
-# ignoring it here meant a fresh clone's docker build failed at that COPY.
-
-# Generated output
-/generated/*
-!/generated/.gitkeep
-
-/graphs/*
-!/graphs/.gitkeep
-
-/output/*
-!/output/.gitkeep
-
 # Contexto local para Claude Code — no se versiona.
-# La documentación del proyecto para humanos vive en README.md, ORGANIZACION.md,
-# PIPELINE_GUIDE.md, GUIA_USO.md y API_REFERENCE.md, que sí están versionados.
+# La documentación del proyecto para humanos vive en README.md, ARQUITECTURA.md
+# y GUIA_USO.md, que sí están versionados.
 /CLAUDE.md
 
 # OS / Editor
@@ -38,3 +21,15 @@ Thumbs.db
 /graphify-out
 
 /SPEECH_INFRAESTRUCTURA_Y_FEATURES.md
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+/data/
+
+# Salidas del proyecto Rust anterior (rama main): si quedaron en disco no se
+# versionan. Se pueden borrar sin problema.
+/target/
+/generated/
+/graphs/
+/output/

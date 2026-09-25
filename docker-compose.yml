@@ -1,6 +1,6 @@
 services:
 
-  # Servidor Rust — expone el pipeline LR(1) en :8080
+  # API del DBMS (FastAPI + ANTLR) en :8080
   api:
     build:
       context: .
@@ -11,8 +11,8 @@ services:
       - ./workspace:/app/workspace
     restart: unless-stopped
 
-  # UI estática — sirve el IDE (frontend/IDE-lite) en :4000: tokens, árbol,
-  # tabla de símbolos, tipos y problemas del pipeline.
+  # UI estática — sirve el IDE (frontend/IDE-lite) en :4000: editor SQL,
+  # tokens, árbol sintáctico y problemas.
   frontend:
     build:
       context: ./frontend/IDE-lite

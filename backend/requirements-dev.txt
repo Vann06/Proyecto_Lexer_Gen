@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest>=8
+httpx>=0.27
+# Solo para regenerar el parser (scripts/gen_parser.*); descarga Java y el jar de ANTLR.
+antlr4-tools>=0.2
