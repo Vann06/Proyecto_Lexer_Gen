@@ -294,6 +294,7 @@ pub struct Symbol {
     pub scope_id: Option<usize>,   // ámbito donde vive (0 = Global)
     pub storage_size: Option<usize>, // frame_size (función) o instance_size (clase)
     pub nesting_level: Option<usize>, // nivel estático de una función (§7.3)
+    pub label: Option<String>,     // etiqueta calificada de una función: contador.sumar, Animal.hablar
 }
 ```
 
@@ -308,6 +309,8 @@ Quién llena qué, y cuándo:
 - `storage` — `storage::allocate_scope` al cerrar cada función o bloque (y al final para el Global); `storage::allocate_classes` para los campos de clases y structs (ver §8).
 - `storage_size` — al cerrar una función (`frame_size`) o en la post-pasada de clases (`instance_size`).
 - `nesting_level` — al abrir el ámbito de una función: 1 si está en el Global o es un método, el de su función encerradora + 1 si está anidada.
+- `label` — también al abrir el ámbito de una función: su nombre calificado por las funciones y clases que la contienen (`contador.sumar`, `Animal.hablar`). Es la etiqueta de la función en el código intermedio.
+- `storage` es `StorageInfo { area, offset, size_bytes }`. `area` dice dónde vive: `Static` (área estática, `G`), `Frame` (el marco de una función, relativo a `$fp`) u `Object` (un campo, relativo a la dirección del objeto).
 
 ### `Type` (`types/mod.rs`)
 
@@ -556,10 +559,14 @@ hijos; la tabla entra en esa misma regla como servicio de consulta.
 | A qué declaración apunta cada identificador | `bindings::Bindings` (campo `bindings`) + `AnalysisResult::resolve`/`symbol_for` | Usos, destinos de asignación y nombres declarados. `resolve` devuelve el `Symbol` final, con `storage` |
 | Cómo llegar a cada variable desde donde se usa (§7.3) | `SymbolRef::access` | `Static` (área estática), `Local` (`offset($fp)`), `NonLocal { hops }` (seguir `hops` enlaces de acceso) o `Field` (por `this`) |
 | Nivel de anidamiento de cada función | `Symbol::nesting_level`, `LayoutReport::functions` | Para armar el enlace de acceso al llamar: desde nivel `nc` a una función de nivel `ng`, seguir `nc - ng + 1` enlaces desde el `$fp` propio |
+| Etiqueta de cada función | `Symbol::label`, `FrameOwner::name` | Única y calificada (`contador.sumar`, `Animal.hablar`); es el nombre de su `TacFunction` |
+| Área de cada símbolo | `StorageInfo::area` | Estática (`G`), marco (`fp`) u objeto (`obj`) |
+| La tabla completa por ámbito | `scopes` | Incluye la foto del Global (la última) y el offset de los campos de cada clase |
+| Área de temporales de cada marco | `FrameOwner::temp_slots`, `LayoutReport::main_temp_slots` | La completa el generador con `intermedio::gen::extend_layout` después de generar: el marco final es el del análisis más `ranuras × 8` |
 | La forma de cada `if`/`while`/`for`/`switch`... | `intermedio::spec::IntermediateSpec` (directivas `%flow`) | `flow_of(node)` y `FlowShape::child(node, rol)`; `None` si la parte no existe |
 | Tipos, firmas y herencia | `symbols::Symbol` (`ty`, `signature`, `parent`, `members`) | Completo |
 | Los ámbitos, incluidos los anónimos | `scopes::ScopeCollector` | Completo, con `id` y `parent_id` para reconstruir qué bloque cae en qué función |
-| Dónde vive cada variable y cuánto pesa cada marco/objeto (cap. 7) | `Symbol.storage`, `Symbol.storage_size` y `storage::LayoutReport` (campo `layout`) | Offsets de parámetros (`$fp+12…`), locales (`$fp-12…`, los de bloques anidados acumulan en el marco de su función), área estática del Global, campos de clase (el hijo empieza donde termina el padre) y vtable |
+| Dónde vive cada variable y cuánto pesa cada marco/objeto (cap. 7) | `Symbol.storage`, `Symbol.storage_size` y `storage::LayoutReport` (campo `layout`) | Offsets de parámetros (`$fp+16…`), locales (`$fp-12…`, los de bloques anidados acumulan en el marco de su función), área estática del Global, campos de clase (el hijo empieza donde termina el padre) y vtable |
 
 Las anotaciones de tipo son el *árbol de análisis anotado* del libro, con una
 diferencia deliberada: los atributos viven en mapas laterales y no dentro del
@@ -578,14 +585,21 @@ y nivel).
 Convención MIPS por defecto (`storage::TargetLayout`), igual para TODAS las
 funciones:
 
-| Offset | Contenido |
-|---|---|
-| `$fp+12…` | Parámetros, en orden de declaración. En un método, `$fp+12` es `this` (el primer parámetro oculto, que pasa el llamador) y los del usuario siguen desde `$fp+16` |
-| `$fp+8` | Enlace de acceso: el `$fp` de la función que encierra estáticamente a esta |
-| `$fp+4` | Valor de retorno |
-| `$fp+0` | Enlace de control (el `$fp` del llamador) |
-| `$fp-4` | `$ra` / estado salvado |
-| `$fp-8…` | Locales, hacia abajo; los de bloques anidados acumulan en el marco de su función |
+| Offset | Contenido | Bytes |
+|---|---|---|
+| `$fp+16…` | Parámetros en orden. En un método, `$fp+16` es `this` (el primer parámetro oculto, que pasa quien llama) y los del usuario siguen desde `$fp+20` | 4 c/u (redondeado a la palabra) |
+| `$fp+12` | Enlace de acceso: el `$fp` de la función que encierra estáticamente a esta | 4 |
+| `$fp+4` | Valor de retorno (cabe hasta un `float`) | 8 |
+| `$fp+0` | Enlace de control: el `$fp` de quien llamó | 4 |
+| `$fp-4` | Dirección de retorno (`$ra`) | 4 |
+| `$fp-8` | Estado guardado | 4 |
+| `$fp-12…` | Locales, hacia abajo; los de bloques anidados acumulan en el marco de su función | según su tipo |
+| debajo de los locales | Temporales, en ranuras de 8 bytes (los agrega el generador) | 8 c/u |
+
+Lo que está **arriba** de `$fp` (parámetros, enlace de acceso, valor de
+retorno, enlace de control) lo arma quien llama. Lo que está **abajo** es el
+marco propio de la función: su tamaño es 8 bytes fijos + locales +
+temporales.
 
 Una función de nivel 1 también reserva el enlace de acceso aunque no lo use:
 una convención de llamada uniforme es más simple que un caso especial. El

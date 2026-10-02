@@ -18,14 +18,14 @@
 //! - Una variable que vive en el registro de activación de OTRA función (una
 //!   función anidada que usa una variable de la que la encierra) se escribe
 //!   por **dirección**, siguiendo los enlaces de acceso de forma explícita:
-//!   `t0 = fp[8]` y luego `t1 = t0[-12]`, con el nombre de la variable como
+//!   `t0 = fp[12]` y luego `t1 = t0[-12]`, con el nombre de la variable como
 //!   comentario al final de la línea (`; total`). Así se ve el registro de
 //!   activación en funcionamiento.
 //! - Los temporales (`t0`, `t1`, …) guardan resultados intermedios.
 //!
 //! Las direcciones usan una base y un desplazamiento en bytes:
 //!
-//! - `fp[-12]`: relativo al marco actual (`$fp`). `fp[8]` es el enlace de
+//! - `fp[-12]`: relativo al marco actual (`$fp`). `fp[12]` es el enlace de
 //!   acceso.
 //! - `G[8]`: el área estática.
 //! - `t3[4]`: memoria apuntada por un temporal (un objeto, una lista, o el
@@ -252,8 +252,10 @@ pub struct TacFunction {
     pub body: Vec<Instr>,
 }
 
-/// Bytes de cada ranura de temporal: lo bastante para un `float`.
-pub const TEMP_SLOT: usize = 8;
+/// Bytes de cada ranura de temporal: lo bastante para un `float`. Es la
+/// misma constante que usa `semantico::storage` para el registro de
+/// activación.
+pub const TEMP_SLOT: usize = crate::semantico::storage::TEMP_SLOT_BYTES;
 
 impl TacFunction {
     pub fn new(name: impl Into<String>, level: usize, frame_size: usize) -> Self {
@@ -487,7 +489,7 @@ mod tests {
             (Instr::Copy { dst: Operand::local("total", -12), src: Operand::Int(5) }, "total = 5"),
             (Instr::Binary { dst: t(0), op: BinOp::Add, left: Operand::global("x", 0), right: t(1) }, "t0 = x + t1"),
             (Instr::Binary { dst: t(0), op: BinOp::AddF, left: t(0), right: Operand::Float(2.5) }, "t0 = t0 +f 2.5"),
-            (Instr::Unary { dst: t(2), op: UnOp::IntToFloat, src: Operand::local("paso", 12) }, "t2 = (float) paso"),
+            (Instr::Unary { dst: t(2), op: UnOp::IntToFloat, src: Operand::local("paso", 16) }, "t2 = (float) paso"),
             (Instr::Unary { dst: t(2), op: UnOp::Neg, src: t(1) }, "t2 = minus t1"),
             (Instr::Copy { dst: Operand::local("x.1", -16), src: t(0) }, "x.1 = t0"),
             (Instr::Label("L0".into()), "L0:"),
@@ -500,7 +502,7 @@ mod tests {
             (Instr::Store { base: t(0), index: t(1), src: Operand::Str("hola".into()) }, "t0[t1] = \"hola\""),
             (Instr::AddrOf { dst: t(0), name: "vt_Perro".into() }, "t0 = &vt_Perro"),
             (Instr::Copy { dst: t(0), src: Operand::mem(Base::Temp(1), -12) }, "t0 = t1[-12]"),
-            (Instr::Copy { dst: t(0), src: Operand::mem(Base::Fp, 8) }, "t0 = fp[8]"),
+            (Instr::Copy { dst: t(0), src: Operand::mem(Base::Fp, 12) }, "t0 = fp[12]"),
             (Instr::Return(None), "return"),
         ];
         for (instr, esperado) in casos {
@@ -514,13 +516,13 @@ mod tests {
         let total = Operand::Mem { base: Base::Temp(0), offset: -12, name: Some("total".into()) };
         let mut f = TacFunction::new("sumar", 2, 16);
         f.body = vec![
-            Instr::Copy { dst: Operand::Temp(0), src: Operand::mem(Base::Fp, 8) },
+            Instr::Copy { dst: Operand::Temp(0), src: Operand::mem(Base::Fp, 12) },
             Instr::Copy { dst: Operand::Temp(1), src: total.clone() },
             Instr::Copy { dst: total, src: Operand::Temp(1) },
         ];
         let texto = f.to_string();
         let lineas: Vec<&str> = texto.lines().collect();
-        assert_eq!(lineas[1].trim_end(), "    t0 = fp[8]", "el enlace de acceso no lleva comentario");
+        assert_eq!(lineas[1].trim_end(), "    t0 = fp[12]", "el enlace de acceso no lleva comentario");
         assert!(lineas[2].starts_with("    t1 = t0[-12]") && lineas[2].ends_with("; total"), "{texto}");
         assert!(lineas[3].starts_with("    t0[-12] = t1") && lineas[3].ends_with("; total"), "{texto}");
     }

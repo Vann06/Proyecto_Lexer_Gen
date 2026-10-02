@@ -134,6 +134,30 @@ pub fn analyze(tree: &ParseNode, spec: &SemanticSpec) -> AnalysisResult {
         .collect();
     analyzer.layout.classes = storage::allocate_classes(&mut classes, &analyzer.target);
 
+    // La foto de cada clase se tomó al cerrar su ámbito, antes de calcular
+    // el layout: se le copia el offset que recibió cada campo, para que la
+    // tabla los muestre (la fuente de verdad sigue siendo `Symbol::members`).
+    for class in analyzer.table.current_scope_mut().symbols().filter(|s| matches!(s.kind, SymbolKind::Class | SymbolKind::Struct)) {
+        let Some(members) = &class.members else { continue };
+        let snapshot = analyzer.scopes.snapshots_mut().iter_mut().find(|snap| {
+            matches!(snap.kind, ScopeKind::Class | ScopeKind::Struct)
+                && snap.parent_id == Some(0)
+                && snap.label.as_deref() == Some(class.name.as_str())
+        });
+        let Some(snapshot) = snapshot else { continue };
+        for field in snapshot.symbols.iter_mut() {
+            if let Some(member) = members.iter().find(|m| m.name == field.name && m.decl_index == field.decl_index) {
+                field.storage = member.storage.clone();
+            }
+        }
+    }
+
+    // El Global nunca se cierra, así que no tenía foto: se registra al final,
+    // ya con el offset de cada global y el layout de cada clase. Así la lista
+    // de ámbitos muestra la tabla completa.
+    let global_scope = analyzer.table.current_scope_mut().clone();
+    analyzer.scopes.record(&global_scope, 0);
+
     AnalysisResult {
         table: analyzer.table,
         errors: analyzer.errors,
@@ -1147,17 +1171,26 @@ impl<'a> Visitor for Analyzer<'a> {
                 // ámbito recién abierto encuentra a la función en el de
                 // afuera, que es donde se declaró.
                 let level = self.function_stack.len();
+                // La etiqueta calificada: el ámbito de la función ya está
+                // abierto (con su nombre como rótulo), así que el camino de
+                // ámbitos con nombre la incluye al final.
+                let mut path = self.table.named_scope_path();
+                if path.last() != Some(&fn_name) {
+                    path.push(fn_name.clone());
+                }
+                let label = path.join(".");
                 if let Some(sym) = self.table.lookup_mut(&fn_name) {
                     sym.nesting_level = Some(level);
+                    sym.label = Some(label.clone());
                 }
-                self.layout.functions.insert(fn_scope_id, FrameOwner { name: fn_name, level });
+                self.layout.functions.insert(fn_scope_id, FrameOwner { name: label, level, temp_slots: None });
             }
 
             if let Some(class_name) = enclosing_class_for_this {
                 // `this` es el PRIMER PARÁMETRO OCULTO del método: el
                 // llamador lo pasa como cualquier argumento. Se declara al
                 // abrir el ámbito, antes que los parámetros del usuario, así
-                // que `storage` le da la primera ranura (`$fp+12`). No entra
+                // que `storage` le da la primera ranura (`$fp+16`). No entra
                 // en la `Signature`: esa se arma con `param_order`, donde
                 // `this` nunca se registra.
                 self.table

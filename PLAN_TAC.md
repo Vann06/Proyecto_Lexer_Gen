@@ -106,7 +106,7 @@ registro de activación):
 |---|---|---|
 | Variable de la función actual (local o parámetro) o global | **Por su nombre** | `total = 0`, `x = 10` |
 | Otra variable distinta con el mismo nombre (p. ej. una local que tapa a una global) | Nombre con sufijo | `x.1` |
-| Variable que vive en **otra** función (una función anidada que usa una variable de la que la encierra) | **Por dirección**, siguiendo el enlace de acceso, con el nombre comentado | `t0 = fp[8]` → `t1 = t0[-12]  ; total` |
+| Variable que vive en **otra** función (una función anidada que usa una variable de la que la encierra) | **Por dirección**, siguiendo el enlace de acceso, con el nombre comentado | `t0 = fp[12]` → `t1 = t0[-12]  ; total` |
 | Resultado intermedio | Temporal | `t0`, `t1`, … |
 | Constante | Literal | `5`, `true`, `"hola"`, `null` |
 | Etiqueta | `L0`, `L1`, … y la de cada función: `f`, `Clase.metodo` | |
@@ -120,7 +120,7 @@ Las direcciones no se pierden: cada operando las guarda por dentro
 (`Operand::Var { name, base, offset }`), el intérprete las usa, y la tabla de
 símbolos extendida las muestra todas (`x` → `G[0]`, `total` → `fp[-12]`…).
 
-Las bases de dirección son `fp` (marco actual; `fp[8]` es el enlace de
+Las bases de dirección son `fp` (marco actual; `fp[12]` es el enlace de
 acceso), `G` (área estática) y un temporal (`t3[4]`: un objeto, una lista o
 el marco de otra función). El nombre único de cada variable lo asigna
 `Generator::var_name` (en `gen/mod.rs`), y hay que usarlo siempre en lugar de
@@ -160,9 +160,9 @@ func contador nivel 1 marco 24
 endfunc
 
 func sumar nivel 2 marco 24
-    t0 = fp[8]
+    t0 = fp[12]
     t1 = t0[-12]                ; total
-    t2 = t0[12]                 ; paso
+    t2 = t0[16]                 ; paso
     t1 = t1 + t2
     t0[-12] = t1                ; total
     t1 = t0[-12]                ; total
@@ -185,15 +185,21 @@ exactos los da el generador.)
 
 ### Registro de activación (MIPS, ya calculado por `storage`)
 
-| Offset | Contenido |
-|---|---|
-| `$fp+12…` | Parámetros en orden. En un método, `$fp+12` es `this` y los del usuario siguen desde `$fp+16` |
-| `$fp+8` | Enlace de acceso (el `$fp` de la función que encierra a esta) |
-| `$fp+4` | Valor de retorno |
-| `$fp+0` | Enlace de control (el `$fp` del llamador) |
-| `$fp-4` | `$ra` / estado guardado |
-| `$fp-8…` | Locales, hacia abajo |
-| debajo de los locales | Temporales (los agrega el generador) |
+| Offset | Contenido | Bytes |
+|---|---|---|
+| `$fp+16…` | Parámetros en orden. En un método, `$fp+16` es `this` (el primer parámetro oculto, que pasa quien llama) y los del usuario siguen desde `$fp+20` | 4 c/u (redondeado a la palabra) |
+| `$fp+12` | Enlace de acceso: el `$fp` de la función que encierra estáticamente a esta | 4 |
+| `$fp+4` | Valor de retorno (cabe hasta un `float`) | 8 |
+| `$fp+0` | Enlace de control: el `$fp` de quien llamó | 4 |
+| `$fp-4` | Dirección de retorno (`$ra`) | 4 |
+| `$fp-8` | Estado guardado | 4 |
+| `$fp-12…` | Locales, hacia abajo; los de bloques anidados acumulan en el marco de su función | según su tipo |
+| debajo de los locales | Temporales, en ranuras de 8 bytes (los agrega el generador) | 8 c/u |
+
+Lo que está **arriba** de `$fp` (parámetros, enlace de acceso, valor de
+retorno, enlace de control) lo arma quien llama. Lo que está **abajo** es el
+marco propio de la función: su tamaño es 8 bytes fijos + locales +
+temporales.
 
 ### Reciclaje de temporales
 - Cada función tiene su `TempPool`.
@@ -273,7 +279,7 @@ exactos los da el generador.)
 - **Expresiones:**
   - literales;
   - identificadores, con la dirección según su `access`: para `NonLocal`
-    se siguen `hops` enlaces desde `fp[8]`;
+    se siguen `hops` enlaces desde `fp[12]`;
   - aritmética, con `(float)` donde `coercion` lo marca;
   - `concat`;
   - comparaciones;
@@ -359,7 +365,8 @@ exactos los da el generador.)
 | 0 — Cimientos (A) | ✅ Lista, con la convención C para escribir variables (§4). `null` es `Type::Null`; `%` es `ArithmeticOperator::Modulo`; las clases reservan el offset 0 para la vtable; `%print`; `find_child_index`/`find_identifier_child` son `pub(crate)`; `intermedio::{tac, temps, gen}` con los archivos de cada fase creados y sus puntos de enganche (`try_gen_*`), que por ahora reportan `C900`. Pruebas en `tests/tac_fase0_tests.rs`. |
 | 1 — Expresiones y control de flujo (A) | ✅ Lista. `gen/expr.rs` (literales, variables según su acceso, aritmética con `(float)`, `concat`, `check_zero`, comparaciones, `&&`/`\|\|`/`!` con cortocircuito, agrupación) y `gen/stmt.rs` (declaraciones con valor por defecto, asignación directa `x = a + b`, `print`, `if`/`else`, `while`, `do-while`, `for`, `foreach`, `switch` con caída entre casos, `break`/`continue`, `try`/`catch`). Pruebas con el TAC exacto en `tests/tac_fase1_tests.rs`. En `rubrica.cps` solo quedan pendientes (C900) construcciones de la Fase 2. |
 | 2 — Funciones, clases y listas (B) | Pendiente — se completan `gen/func.rs`, `gen/objects.rs` y `gen/lists.rs`, ya creados con sus firmas |
-| 3 — Intérprete, tabla extendida, API, CLI, IDE (C) | Pendiente — puede empezar ya: `tac.rs` está fijo |
+| Tabla de símbolos extendida — datos (A) | ✅ Listos. Ranura de retorno de 8 bytes (parámetros desde `$fp+16`, enlace de acceso en `$fp+12`); `StorageInfo::area` (`G`/`fp`/`obj`); `Symbol::label` con la etiqueta calificada de cada función; offsets de los campos y foto del Global en `scopes`; `extend_layout` para que el generador devuelva las ranuras de temporales de cada marco. Pruebas en `tests/intermediate_handoff_tests.rs` y `tests/tac_fase1_tests.rs`. |
+| 3 — Intérprete, tabla extendida, API, CLI, IDE (C) | Pendiente — puede empezar ya: `tac.rs` está fijo y la tabla tiene todos los datos (ver abajo) |
 | 4 — Batería y documentación | Pendiente |
 
 **Cómo engancharse al generador (B):** cada archivo de `gen/` agrega métodos
@@ -375,6 +382,25 @@ al mismo `Generator` en su propio bloque `impl`. El recorrido de
 Para emitir se usan `emit`, `new_temp`, `release` (llamarlo **después** de
 emitir la instrucción que consume el operando), `new_label` y `unsupported`.
 
+**Para B — etiquetas:** cada `TacFunction` se tiene que llamar con la
+etiqueta del símbolo de su función (`Symbol::label`: `contador`,
+`contador.sumar`, `Animal.hablar`), no con el nombre suelto. `extend_layout`
+usa esa etiqueta para devolverle a la tabla los temporales de cada marco.
+
+**Para C — tabla de símbolos extendida:** todos los datos ya están; falta
+mostrarlos (volcado en texto y vista del IDE):
+- Por símbolo, en `scopes` (incluye la foto del Global, la última): `area`
+  (`G`/`fp`/`obj`), `offset`, `size`, `nesting_level`. La etiqueta de cada
+  función está en `Symbol::label` (`table`/`members`).
+- Por marco, en `LayoutReport`: tamaño (8 fijos + locales), dueño
+  (etiqueta y nivel) y, después de llamar a
+  `intermedio::gen::extend_layout(&mut analysis.layout, &program)`, sus
+  ranuras de temporales (`temp_slots`, y `main_temp_slots` para `main`).
+  `storage::dump` ya muestra el desglose.
+- Por clase: tamaño, vtable y offset de cada campo (`LayoutReport::classes`).
+- El formato acordado está en §4 ("Registro de activación") y en el
+  ejemplo de abajo ("Cómo debe verse la tabla de símbolos extendida").
+
 **Lo que dejó la Fase 1 y conviene reusar (B):**
 
 | Utilidad | Dónde | Para qué |
@@ -383,12 +409,92 @@ emitir la instrucción que consume el operando), `new_label` y `unsupported`.
 | `gen_widened(node)` / `widen(node, v)` | `gen/expr.rs` | Lo mismo, aplicando el `(float)` que marcó el análisis (argumentos y `return` ya vienen marcados) |
 | `gen_cond(node, si_verdad, si_falso)` | `gen/expr.rs` | Una condición como saltos |
 | `var_operand(&SymbolRef)` | `gen/mod.rs` | El operando de una variable según su acceso: por nombre, por enlaces de acceso (`NonLocal`) o por `this` (`Field`) |
-| `follow_access_links(hops)` | `gen/mod.rs` | `t = fp[8]`, `t = t[8]`…; sirve también para el `link` de una llamada |
-| `this_operand()` | `gen/mod.rs` | `this` dentro de un método (`fp[12]`). Ojo: un campo usado desde una función **anidada** dentro de un método necesita seguir enlaces hasta el marco del método; hoy `var_operand` asume que se usa directo en el método |
+| `follow_access_links(hops)` | `gen/mod.rs` | `t = fp[12]`, `t = t[12]`…; sirve también para el `link` de una llamada |
+| `this_operand()` | `gen/mod.rs` | `this` dentro de un método (`fp[16]`). Ojo: un campo usado desde una función **anidada** dentro de un método necesita seguir enlaces hasta el marco del método; hoy `var_operand` asume que se usa directo en el método |
 | `assign_to(&SymbolRef, valor)` | `gen/stmt.rs` | Asignar a una variable con su conversión y la asignación directa |
 | `list_slot(tipo_elemento)` y `LIST_HEADER` | `gen/mod.rs` | El formato de lista en el heap, que ya usa `foreach`: `[longitud][e0][e1]…`, elementos redondeados a la palabra |
 | `self.try_depth` | `gen/mod.rs` | Un `return` dentro de un `try` tiene que emitir un `try_end` por cada `try` abierto antes de salir (como hace `break`) |
 | `self.jumps` | `gen/mod.rs` | Al traducir el cuerpo de una función hay que guardarlo y vaciarlo: un `break` no puede saltar fuera de la función |
+
+---
+
+## Cómo debe verse la tabla de símbolos extendida
+
+Ejemplo de referencia para la Fase 3 (C). Los offsets y tamaños son los que
+calcula hoy el análisis para este programa (está en
+`tests/intermediate_handoff_tests.rs`, constante `TABLA`); la cantidad de
+temporales es ilustrativa: la da el generador.
+
+```ts
+let x: integer = 10;
+let nombre: string = "a";
+function contador(paso: integer, b: boolean): integer {
+  let total: integer = 0;
+  function sumar(): integer { total = total + paso; return total; }
+  if (b) { let extra: integer = 1; total = extra; }
+  return sumar();
+}
+class Animal { var edad: integer = 0;     function hablar(): string { return "..."; } }
+class Perro : Animal { var raza: string = ""; function hablar(): string { return "guau"; } }
+```
+
+**1. Símbolos**
+
+| Nombre | Clase | Tipo | Ámbito | Área | Offset | Tamaño | Etiqueta | Nivel |
+|---|---|---|---|---|---|---|---|---|
+| `x` | variable | integer | Global | `G` | `+0` | 4 | — | — |
+| `nombre` | variable | string | Global | `G` | `+4` | 4 | — | — |
+| `contador` | función | integer | Global | — | — | marco 16 + temporales | `contador` | 1 |
+| `paso` | parámetro | integer | contador | `fp` | `+16` | 4 | — | — |
+| `b` | parámetro | boolean | contador | `fp` | `+20` | 1 (ranura de 4) | — | — |
+| `total` | variable | integer | bloque de contador | `fp` | `-16` | 4 | — | — |
+| `extra` | variable | integer | bloque del `if` | `fp` | `-12` | 4 | — | — |
+| `sumar` | función | integer | bloque de contador | — | — | marco 8 + temporales | `contador.sumar` | 2 |
+| `Animal` | clase | — | Global | heap | — | instancia 8 | `vt_Animal` | — |
+| `edad` | campo | integer | Animal | `obj` | `+4` | 4 | — | — |
+| `hablar` | método | string | Animal | — | — | marco 8 | `Animal.hablar` | 1 |
+| `this` | parámetro | Animal | Animal.hablar | `fp` | `+16` | 4 | — | — |
+| `Perro` | clase (hereda de Animal) | — | Global | heap | — | instancia 12 | `vt_Perro` | — |
+| `raza` | campo | string | Perro | `obj` | `+8` | 4 | — | — |
+| `hablar` | método | string | Perro | — | — | marco 8 | `Perro.hablar` | 1 |
+
+(Los locales de un bloque interno reciben offset antes que los del bloque de
+afuera, porque cada bloque se ubica al cerrarse: `extra` → `-12`, `total` →
+`-16`. No se pisan.)
+
+**2. Área estática (`G`) — 8 bytes:** `G+0 x` (4), `G+4 nombre` (4).
+
+**3. Un registro de activación por función** (ejemplo: `contador`)
+
+```
+        ┌──────────────────────────────┐   ← lo arma quien llama
+fp+20   │ b               parámetro    │  4
+fp+16   │ paso            parámetro    │  4
+fp+12   │ enlace de acceso             │  4
+fp+4    │ valor de retorno             │  8
+fp+0    │ enlace de control            │  4
+        ├──────────────────────────────┤   ← marco propio: 8 fijos + locales + temporales
+fp-4    │ dirección de retorno ($ra)   │  4
+fp-8    │ estado guardado              │  4
+fp-12   │ extra           local (if)   │  4
+fp-16   │ total           local        │  4
+fp-24   │ t0              temporal     │  8
+        └──────────────────────────────┘
+```
+
+Los temporales van debajo de los locales, en ranuras de 8 bytes: `tk` en
+`fp - (marco_sin_temporales + 8·(k+1))`.
+
+**4. Objetos y vtables**
+
+```
+Animal (8 bytes)                 Perro (12 bytes)
++0  puntero a vt_Animal          +0  puntero a vt_Perro
++4  edad     integer             +4  edad     integer   (heredado)
+                                 +8  raza     string
+
+vt_Animal: [0] Animal.hablar     vt_Perro:  [0] Perro.hablar   (sobrescribe la misma posición)
+```
 
 ---
 

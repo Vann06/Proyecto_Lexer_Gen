@@ -49,15 +49,42 @@ pub struct Signature {
     pub returns: Type,
 }
 
-/// Dónde vive un símbolo en tiempo de ejecución: offset relativo al marco
-/// de activación (puede ser negativo según la convención) y su tamaño en
-/// bytes. El libro del dragón (cap. 7, "Run-Time Environments") trata esto
-/// como parte central de la tabla de símbolos — lo llena una futura fase de
-/// asignación de almacenamiento, no el walker semántico actual.
+/// Dónde vive un símbolo en tiempo de ejecución: en qué área, a qué
+/// desplazamiento dentro de ella y cuántos bytes ocupa. El libro del dragón
+/// (cap. 7, "Run-Time Environments") trata esto como parte central de la
+/// tabla de símbolos. Lo llena `semantico::storage`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageInfo {
+    pub area: StorageArea,
+    /// Desplazamiento en bytes desde el inicio del área: relativo a `$fp` en
+    /// un marco (positivo para parámetros, negativo para locales), desde el
+    /// inicio del área estática, o desde la dirección del objeto.
     pub offset: isize,
     pub size_bytes: usize,
+}
+
+/// El área de memoria donde vive un símbolo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageArea {
+    /// Área de datos estáticos (`G`): las globales y lo declarado en bloques
+    /// que no están dentro de ninguna función.
+    Static,
+    /// El registro de activación de una función (relativo a `$fp`).
+    Frame,
+    /// Un objeto en el heap: los campos de una clase o struct (relativo a la
+    /// dirección del objeto).
+    Object,
+}
+
+impl StorageArea {
+    /// Cómo se escribe la base de la dirección: `G`, `fp` o `obj`.
+    pub fn base(self) -> &'static str {
+        match self {
+            StorageArea::Static => "G",
+            StorageArea::Frame => "fp",
+            StorageArea::Object => "obj",
+        }
+    }
 }
 
 /// Un símbolo declarado: su nombre, qué clase de símbolo es, dónde se
@@ -123,6 +150,12 @@ pub struct Symbol {
     /// de nivel `ng` se obtiene siguiendo `nc - ng + 1` enlaces desde el
     /// `$fp` propio. `None` para todo lo que no es función.
     pub nesting_level: Option<usize>,
+    /// La etiqueta única de una FUNCIÓN en el código intermedio: su nombre
+    /// calificado por las funciones y clases que la contienen, separadas por
+    /// punto (`contador`, `contador.sumar`, `Animal.hablar`). Así dos métodos
+    /// con el mismo nombre en clases distintas no comparten etiqueta. `None`
+    /// para todo lo que no es función.
+    pub label: Option<String>,
 }
 
 impl Default for Symbol {
@@ -148,6 +181,7 @@ impl Default for Symbol {
             scope_id: None,
             storage_size: None,
             nesting_level: None,
+            label: None,
         }
     }
 }
@@ -504,6 +538,17 @@ impl SymbolTable {
     /// Busca `name` SOLO en el Global, sin importar qué ámbitos estén
     /// abiertos. Al terminar el análisis es lo mismo que `lookup`; se usa
     /// para resolver una referencia cuyo `scope_id` ya se sabe que es 0.
+    /// Los nombres de las funciones, clases y structs abiertas, de afuera
+    /// hacia adentro (los bloques y el Global no tienen nombre). Es la base
+    /// de la etiqueta calificada de una función (`Symbol::label`).
+    pub fn named_scope_path(&self) -> Vec<String> {
+        self.stack
+            .iter_outermost_first()
+            .filter(|s| matches!(s.kind(), ScopeKind::Function | ScopeKind::Class | ScopeKind::Struct))
+            .filter_map(|s| s.label().map(str::to_string))
+            .collect()
+    }
+
     pub fn lookup_global(&self, name: &str) -> Option<&Symbol> {
         self.stack.iter_outermost_first().next().and_then(|global| global.get_own(name))
     }

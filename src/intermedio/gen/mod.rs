@@ -42,7 +42,7 @@ use crate::semantico::errors::Severity;
 use crate::semantico::scopes::ScopeKind;
 use crate::semantico::bindings::Access;
 use crate::semantico::spec::SemanticSpec;
-use crate::semantico::storage::{width_of, TargetLayout, Width};
+use crate::semantico::storage::{width_of, LayoutReport, TargetLayout, Width};
 use crate::semantico::types::Type;
 use crate::sintactico::runtime::parse_tree::ParseNode;
 
@@ -122,6 +122,24 @@ pub fn generate(
     generator.finish()
 }
 
+/// Completa el informe de almacenamiento del análisis con lo que solo se
+/// sabe después de generar: cuántas ranuras de temporal necesitó cada
+/// función (y `main`). Es la vuelta de la generación a la tabla de símbolos
+/// que pide el enunciado ("la tabla de símbolos interactúa con cada fase"):
+/// el marco final de una función es el que calculó el análisis más su área
+/// de temporales.
+///
+/// Cada función se encuentra por su etiqueta (`Symbol::label`), que es el
+/// nombre de su `TacFunction`.
+pub fn extend_layout(layout: &mut LayoutReport, program: &TacProgram) {
+    for func in &program.functions {
+        if let Some(owner) = layout.functions.values_mut().find(|o| o.name == func.name) {
+            owner.temp_slots = Some(func.max_temps);
+        }
+    }
+    layout.main_temp_slots = program.main.as_ref().map(|m| m.max_temps);
+}
+
 /// La función que se está traduciendo: sus instrucciones y sus temporales.
 pub(crate) struct FunctionBuilder {
     pub(crate) func: TacFunction,
@@ -134,8 +152,22 @@ impl FunctionBuilder {
     }
 
     /// Cierra la función: guarda en ella cuántos temporales necesitó.
+    ///
+    /// Las ranuras del marco salen del TAC ya terminado, no del contador del
+    /// `TempPool`: la asignación directa (`retarget_last`) puede eliminar un
+    /// temporal que se llegó a pedir, y ese no necesita lugar. Como el
+    /// repartidor siempre entrega el número libre más bajo, que aparezca
+    /// `tk` implica que hubo `k + 1` vivos a la vez: las ranuras son el
+    /// número más alto que aparece, más uno.
     pub(crate) fn finish(mut self) -> TacFunction {
-        self.func.max_temps = self.temps.max_live();
+        self.func.max_temps = self
+            .func
+            .body
+            .iter()
+            .flat_map(|i| i.operands())
+            .filter_map(Operand::temp)
+            .max()
+            .map_or(0, |t| t + 1);
         self.func.temps_requested = self.temps.requested();
         self.func
     }
@@ -279,7 +311,7 @@ impl<'a> Generator<'a> {
     /// (convención C, ver `tac.rs`):
     ///
     /// - `Static` / `Local`: por nombre (`x`, `total`).
-    /// - `NonLocal { hops }`: sigue `hops` enlaces de acceso desde `fp[8]` y
+    /// - `NonLocal { hops }`: sigue `hops` enlaces de acceso desde `fp[12]` y
     ///   devuelve `tN[offset]`, con el nombre como comentario.
     /// - `Field`: un campo usado sin `this.` dentro de un método: carga
     ///   `this` y devuelve `tN[offset]`.
@@ -312,7 +344,7 @@ impl<'a> Generator<'a> {
 
     /// Sigue `hops` (≥ 1) enlaces de acceso desde el marco actual y devuelve
     /// el temporal que queda apuntando al marco alcanzado:
-    /// `t = fp[8]`, `t = t[8]`, …
+    /// `t = fp[12]`, `t = t[12]`, …
     pub(crate) fn follow_access_links(&mut self, hops: usize) -> Base {
         let link = self.target.access_link;
         let frame = self.new_temp();

@@ -17,8 +17,12 @@
 //! Solo se reciclan temporales, nunca variables: una variable vive en su
 //! propia ranura del marco y puede volver a leerse.
 //!
-//! Hay un `TempPool` por función. Su `max_live` es cuántas ranuras de
-//! temporal necesita el registro de activación (`TacFunction::max_temps`).
+//! Hay un `TempPool` por función. Como siempre se entrega el número libre más
+//! bajo, que exista `tk` implica que hubo `k + 1` temporales vivos a la vez;
+//! por eso las ranuras del registro de activación (`TacFunction::max_temps`)
+//! se calculan del TAC final como el número más alto que aparece, más uno
+//! (ver `FunctionBuilder::finish`). `max_live` cuenta también los temporales
+//! que la asignación directa terminó eliminando.
 
 use std::collections::BTreeSet;
 

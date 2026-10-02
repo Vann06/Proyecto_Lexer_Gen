@@ -10,10 +10,11 @@
 //! Las funciones y las clases son de la Fase 2: estos programas usan solo
 //! código de nivel superior.
 use lexer_generator::api;
-use lexer_generator::intermedio::gen::generate;
+use lexer_generator::intermedio::gen::{extend_layout, generate};
 use lexer_generator::intermedio::spec::IntermediateSpec;
 use lexer_generator::intermedio::tac::TacProgram;
-use lexer_generator::semantico::analyzer::analyze;
+use lexer_generator::semantico::analyzer::{analyze, AnalysisResult};
+use lexer_generator::semantico::storage;
 use lexer_generator::semantico::spec::SemanticSpec;
 use lexer_generator::sintactico::automatas::lalr::merge_by_core;
 use lexer_generator::sintactico::automatas::lr1::LR1Automaton;
@@ -30,6 +31,12 @@ fn read(path: &str) -> String {
 
 /// Lexea, parsea, analiza y genera `source` con Compiscript.
 fn generar(source: &str) -> TacProgram {
+    compilar(source).0
+}
+
+/// Como `generar`, pero devuelve también el análisis (para la tabla de
+/// símbolos extendida).
+fn compilar(source: &str) -> (TacProgram, AnalysisResult) {
     let (_, _, lexer_table) = api::build_lexer_artifacts(&read("workspace/compiscript.yal")).expect("lexer válido");
     let grammar = Grammar::parse_for_lr_from_str(&read("workspace/compiscript.yalp")).expect("gramática válida");
 
@@ -56,7 +63,8 @@ fn generar(source: &str) -> TacProgram {
     let analysis = analyze(&tree, &sspec);
     assert!(analysis.errors.is_empty(), "el programa no debe tener diagnósticos: {:?}", analysis.errors);
     let ispec = IntermediateSpec::from_grammar(&grammar);
-    generate(&tree, &analysis, &sspec, &ispec).unwrap_or_else(|e| panic!("debe generar: {e:?}"))
+    let program = generate(&tree, &analysis, &sspec, &ispec).unwrap_or_else(|e| panic!("debe generar: {e:?}"));
+    (program, analysis)
 }
 
 /// El TAC de `main`, sin los espacios al final de cada línea.
@@ -213,7 +221,7 @@ fn while_do_while_y_for_con_break_y_continue() {
     );
     assert_eq!(
         tac,
-        r#"func main nivel 0 marco 8
+        r#"func main nivel 0 marco 0
     i = 0
 L0:
     if i >= 10 goto L1
@@ -329,7 +337,7 @@ fn try_catch_y_un_break_que_sale_del_try_cierra_su_manejador() {
     );
     assert_eq!(
         tac,
-        r#"func main nivel 0 marco 8
+        r#"func main nivel 0 marco 0
     x = 0
 L0:
     if x >= 3 goto L1
@@ -355,4 +363,22 @@ endfunc"#
 fn una_variable_local_con_el_nombre_de_una_global_lleva_sufijo() {
     let tac = main_tac("let x: integer = 1;\n{ let x: integer = 2; print(x); }\nprint(x);\n");
     assert!(tac.contains("    x = 1\n    x.1 = 2\n    print x.1\n    print x\n"), "{tac}");
+}
+
+#[test]
+fn el_generador_devuelve_sus_temporales_a_la_tabla() {
+    // La generación completa el registro de activación con el área de
+    // temporales, que el análisis no puede saber de antemano.
+    let (program, mut analysis) = compilar(
+        "let a: integer = 1; let b: integer = 2;
+         let x: integer = a * b + a * b;
+",
+    );
+    assert_eq!(analysis.layout.main_temp_slots, None, "antes de generar no se sabe");
+    extend_layout(&mut analysis.layout, &program);
+    // `a * b + a * b`: el primer producto queda vivo mientras se calcula el
+    // segundo → dos ranuras.
+    assert_eq!(analysis.layout.main_temp_slots, Some(2));
+    let texto = storage::dump(&analysis.layout);
+    assert!(texto.contains("marco main (nivel 0): 16 bytes de temporales"), "{texto}");
 }

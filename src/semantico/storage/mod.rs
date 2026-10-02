@@ -18,7 +18,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::scopes::Scope;
-use super::symbols::{StorageInfo, Symbol, SymbolKind};
+use super::symbols::{StorageArea, StorageInfo, Symbol, SymbolKind};
 use super::types::Type;
 
 /// Los anchos y offsets base de la máquina destino. `Default` da MIPS
@@ -35,25 +35,51 @@ pub struct TargetLayout {
     pub int: usize,
     pub float: usize,
     pub bool_: usize,
+    /// Offset del valor de retorno respecto a `$fp`. Ocupa `return_size`
+    /// bytes: lo bastante para el valor más ancho (un `float`, 8 bytes).
+    pub return_value: isize,
+    pub return_size: usize,
     /// Offset del enlace de acceso respecto a `$fp` (§7.3 del libro): el
     /// `$fp` del marco de la función que ENCIERRA estáticamente a esta. Va en
     /// TODOS los marcos, aunque una función de nivel 1 no lo use — una
     /// convención de llamada uniforme es más simple que un caso especial.
     pub access_link: isize,
     /// Offset del PRIMER parámetro respecto a `$fp` (positivo, crece hacia
-    /// arriba). `3*word`: entre `$fp` y los parámetros están el enlace de
-    /// control (`$fp+0`), el valor de retorno (`$fp+word`) y el enlace de
-    /// acceso (`$fp+2*word`).
+    /// arriba). Entre `$fp` y los parámetros están el enlace de control
+    /// (`$fp+0`, 4 bytes), el valor de retorno (`$fp+4`, 8 bytes) y el enlace
+    /// de acceso (`$fp+12`, 4 bytes).
     pub param_base: isize,
     /// Offset del PRIMER local respecto a `$fp` (negativo, crece hacia
-    /// abajo). `-2*word` porque entre `$fp` y los locales está el estado
-    /// salvado / `$ra` (`$fp-word`).
+    /// abajo). `-2*word` porque entre `$fp` y los locales están la dirección
+    /// de retorno (`$ra`, `$fp-4`) y el estado guardado (`$fp-8`).
     pub local_base: isize,
 }
 
 impl Default for TargetLayout {
+    /// El registro de activación, de arriba hacia abajo:
+    ///
+    /// ```text
+    /// $fp+16…  parámetros            (los arma quien llama)
+    /// $fp+12   enlace de acceso      4
+    /// $fp+4    valor de retorno      8
+    /// $fp+0    enlace de control     4
+    /// $fp-4    dirección de retorno  4
+    /// $fp-8    estado guardado       4
+    /// $fp-12…  locales, y debajo los temporales
+    /// ```
     fn default() -> Self {
-        TargetLayout { word: 4, pointer: 4, int: 4, float: 8, bool_: 1, access_link: 8, param_base: 12, local_base: -8 }
+        TargetLayout {
+            word: 4,
+            pointer: 4,
+            int: 4,
+            float: 8,
+            bool_: 1,
+            return_value: 4,
+            return_size: 8,
+            access_link: 12,
+            param_base: 16,
+            local_base: -8,
+        }
     }
 }
 
@@ -208,6 +234,14 @@ impl FrameAllocator {
     /// Total de bytes que hay que reservar: para una función, el área fija
     /// del marco (enlace de control + estado salvado) más todos los locales
     /// acumulados; para el área estática, solo lo acumulado.
+    /// El área donde caen los símbolos que reparte este asignador.
+    pub fn area(&self) -> StorageArea {
+        match self.kind {
+            FrameKind::Function => StorageArea::Frame,
+            FrameKind::Static => StorageArea::Static,
+        }
+    }
+
     pub fn size(&self) -> usize {
         match self.kind {
             FrameKind::Function => self.local_base.unsigned_abs() + self.local_bytes,
@@ -241,7 +275,7 @@ pub fn allocate_scope(scope: &mut Scope, alloc: &mut FrameAllocator) -> LayoutSt
             Width::Known(w) => {
                 let is_param = matches!(sym.kind, SymbolKind::Parameter);
                 let offset = if is_param { alloc.alloc_param(w) } else { alloc.alloc_local(w) };
-                sym.storage = Some(StorageInfo { offset, size_bytes: w });
+                sym.storage = Some(StorageInfo { area: alloc.area(), offset, size_bytes: w });
             }
             Width::Unresolved => {
                 status = LayoutStatus::Incomplete;
@@ -367,7 +401,7 @@ pub fn allocate_classes(classes: &mut [&mut Symbol], target: &TargetLayout) -> C
                             Width::Known(w) => {
                                 let align = natural_align(w, target.word);
                                 offset = align_up(offset, align);
-                                member.storage = Some(StorageInfo { offset: offset as isize, size_bytes: w });
+                                member.storage = Some(StorageInfo { area: StorageArea::Object, offset: offset as isize, size_bytes: w });
                                 offset += w;
                             }
                             Width::Unresolved => own_incomplete = true,
@@ -416,15 +450,28 @@ pub struct LayoutReport {
     /// armar el prólogo y el enlace de acceso. El área estática (id 0) no
     /// aparece: no es de ninguna función.
     pub functions: HashMap<usize, FrameOwner>,
+    /// Ranuras de temporal del código de nivel de programa (`main`, nivel
+    /// 0), que también tiene su registro de activación aunque sus variables
+    /// vivan en el área estática. `None` hasta que el generador lo devuelve.
+    pub main_temp_slots: Option<usize>,
 }
 
 /// La función dueña de un marco de activación.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrameOwner {
+    /// Su etiqueta calificada (ver `Symbol::label`).
     pub name: String,
     /// Ver `Symbol::nesting_level`.
     pub level: usize,
+    /// Ranuras de temporal (de `TEMP_SLOT_BYTES` cada una) que necesitó al
+    /// traducirse a código intermedio. `None` hasta que el generador
+    /// devuelve ese dato (`intermedio::gen::extend_layout`): es la parte del
+    /// registro de activación que no se puede saber antes de generar.
+    pub temp_slots: Option<usize>,
 }
+
+/// Bytes de cada ranura de temporal en un marco: lo bastante para un `float`.
+pub const TEMP_SLOT_BYTES: usize = 8;
 
 impl LayoutReport {
     /// `true` si ningún marco ni ninguna clase quedó incompleto: la condición
@@ -447,12 +494,24 @@ pub fn dump(report: &LayoutReport) -> String {
     for id in frame_ids {
         let size = report.frames[id];
         let marker = if report.incomplete_scopes.contains(id) { " [incompleto]" } else { "" };
-        let owner = match report.functions.get(id) {
-            Some(f) => format!(" {} (nivel {})", f.name, f.level),
-            None if *id == 0 => " estático".to_string(),
-            None => String::new(),
+        let (owner, temps) = match report.functions.get(id) {
+            Some(f) => (format!(" {} (nivel {})", f.name, f.level), f.temp_slots),
+            None if *id == 0 => (" estático".to_string(), None),
+            None => (String::new(), None),
         };
-        out.push_str(&format!("marco #{id}{owner}: {size} bytes{marker}\n"));
+        // Con el dato del generador, el desglose: lo que calculó el análisis
+        // (8 fijos + locales) más el área de temporales.
+        let total = match temps {
+            Some(slots) => {
+                let t = slots * TEMP_SLOT_BYTES;
+                format!("{size} bytes + {t} de temporales = {} bytes", size + t)
+            }
+            None => format!("{size} bytes"),
+        };
+        out.push_str(&format!("marco #{id}{owner}: {total}{marker}\n"));
+    }
+    if let Some(slots) = report.main_temp_slots {
+        out.push_str(&format!("marco main (nivel 0): {} bytes de temporales\n", slots * TEMP_SLOT_BYTES));
     }
     let mut class_names: Vec<&String> = report.classes.sizes.keys().collect();
     class_names.sort();
@@ -526,11 +585,11 @@ mod tests {
         assert_eq!(status, LayoutStatus::Complete);
         assert_eq!(
             scope.get_own("p").unwrap().storage,
-            Some(StorageInfo { offset: 12, size_bytes: 4 })
+            Some(StorageInfo { area: StorageArea::Frame, offset: 16, size_bytes: 4 })
         );
         assert_eq!(
             scope.get_own("x").unwrap().storage,
-            Some(StorageInfo { offset: -12, size_bytes: 4 })
+            Some(StorageInfo { area: StorageArea::Frame, offset: -12, size_bytes: 4 })
         );
     }
 
@@ -758,5 +817,16 @@ mod tests {
         report.incomplete_scopes.insert(0);
         let text = dump(&report);
         assert!(text.contains("marco #0 estático: 40 bytes [incompleto]"), "{text}");
+    }
+
+    #[test]
+    fn dump_desglosa_los_temporales_que_devolvio_el_generador() {
+        let mut report = LayoutReport::default();
+        report.frames.insert(1, 16);
+        report.functions.insert(1, FrameOwner { name: "contador".into(), level: 1, temp_slots: Some(2) });
+        report.main_temp_slots = Some(1);
+        let text = dump(&report);
+        assert!(text.contains("marco #1 contador (nivel 1): 16 bytes + 16 de temporales = 32 bytes"), "{text}");
+        assert!(text.contains("marco main (nivel 0): 8 bytes de temporales"), "{text}");
     }
 }

@@ -92,11 +92,11 @@ fn los_locales_de_una_funcion_reciben_offset_y_la_funcion_su_marco() {
             .and_then(|s| s["offset"].as_i64())
             .unwrap_or_else(|| panic!("{name} debe tener offset: {:#?}", r.scopes))
     };
-    // MIPS por defecto: $fp+0 enlace de control, +4 valor de retorno, +8
-    // enlace de acceso; parámetros desde $fp+12 hacia arriba, locales desde
-    // $fp-8 hacia abajo (ver `storage::TargetLayout`).
-    assert_eq!(offset("a"), 12);
-    assert_eq!(offset("b"), 16);
+    // MIPS por defecto: $fp+0 enlace de control, +4 valor de retorno (8
+    // bytes), +12 enlace de acceso; parámetros desde $fp+16 hacia arriba,
+    // locales desde $fp-12 hacia abajo (ver `storage::TargetLayout`).
+    assert_eq!(offset("a"), 16);
+    assert_eq!(offset("b"), 20);
     assert_eq!(offset("c"), -12);
 
     let id = scope["id"].as_u64().unwrap();
@@ -152,9 +152,9 @@ fn this_es_el_primer_parametro_oculto_de_un_metodo() {
     };
     let this = simbolo_en(&r.scopes, "this", es_ctor_de_figura);
     assert_eq!(this["kind"], "Parameter");
-    assert_eq!(this["offset"], 12, "primera ranura de parámetro");
+    assert_eq!(this["offset"], 16, "primera ranura de parámetro");
     let area = simbolo_en(&r.scopes, "areaInicial", es_ctor_de_figura);
-    assert_eq!(area["offset"], 16, "los parámetros del usuario van después de `this`");
+    assert_eq!(area["offset"], 20, "los parámetros del usuario van después de `this`");
 
     // `this.area = areaInicial;` (línea 5): el `this` se enlaza, en su marco.
     let usos: Vec<&Value> = r.bindings.iter().filter(|b| b["lexeme"] == "this" && b["line"] == 5).collect();
@@ -356,4 +356,56 @@ fn flow_encuentra_el_cuerpo_y_el_manejador_de_un_try() {
     assert_eq!(c.kind(), FlowKind::Catch);
     assert_eq!(texto(c.child(manejador, FlowRole::Var).unwrap()), "e");
     assert_eq!(texto(c.child(manejador, FlowRole::Body).unwrap()), "{ print ( e ) ; }");
+}
+
+// ═══════════════════ Tabla de símbolos extendida (datos) ═══════════════════
+
+/// Programa de la auditoría de la tabla: global, función con parámetros,
+/// local de bloque, función anidada, y clases con herencia y sobrescritura.
+const TABLA: &str = "let x: integer = 10;\n\
+                     let nombre: string = \"a\";\n\
+                     function contador(paso: integer, b: boolean): integer {\n\
+                       let total: integer = 0;\n\
+                       function sumar(): integer { total = total + paso; return total; }\n\
+                       if (b) { let extra: integer = 1; total = extra; }\n\
+                       return sumar();\n\
+                     }\n\
+                     class Animal { var edad: integer = 0; function hablar(): string { return \"...\"; } }\n\
+                     class Perro : Animal { var raza: string = \"\"; function hablar(): string { return \"guau\"; } }\n";
+
+#[test]
+fn cada_funcion_tiene_su_etiqueta_calificada() {
+    let r = compiscript(TABLA);
+    for esperado in [
+        "contador (nivel 1)",
+        "contador.sumar (nivel 2)",
+        "Animal.hablar (nivel 1)",
+        "Perro.hablar (nivel 1)",
+    ] {
+        assert!(r.layout.contains(esperado), "falta `{esperado}`:\n{}", r.layout);
+    }
+}
+
+#[test]
+fn el_global_y_los_campos_muestran_su_area_y_su_offset() {
+    let r = compiscript(TABLA);
+    let global = r.scopes.iter().find(|s| s["kind"] == "Global").expect("el Global tiene su foto");
+    assert!(global["parent_id"].is_null());
+    let sym = |scope: &Value, name: &str| -> (String, i64, u64) {
+        let s = scope["symbols"].as_array().unwrap().iter().find(|s| s["name"] == name).unwrap_or_else(|| panic!("falta {name}"));
+        (s["area"].as_str().unwrap().to_string(), s["offset"].as_i64().unwrap(), s["size"].as_u64().unwrap())
+    };
+    assert_eq!(sym(global, "x"), ("G".to_string(), 0, 4));
+    assert_eq!(sym(global, "nombre"), ("G".to_string(), 4, 4));
+
+    // Campos: offset dentro del objeto, después del puntero a la vtable.
+    let animal = r.scopes.iter().find(|s| s["kind"] == "Class" && s["label"] == "Animal").unwrap();
+    assert_eq!(sym(animal, "edad"), ("obj".to_string(), 4, 4));
+    let perro = r.scopes.iter().find(|s| s["kind"] == "Class" && s["label"] == "Perro").unwrap();
+    assert_eq!(sym(perro, "raza"), ("obj".to_string(), 8, 4));
+
+    // Parámetros y locales: en el marco.
+    let contador = r.scopes.iter().find(|s| s["kind"] == "Function" && s["label"] == "contador").unwrap();
+    assert_eq!(sym(contador, "paso"), ("fp".to_string(), 16, 4));
+    assert_eq!(sym(contador, "b"), ("fp".to_string(), 20, 1));
 }

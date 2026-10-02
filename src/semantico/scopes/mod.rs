@@ -250,9 +250,8 @@ pub struct ScopeSnapshot {
     /// (`Scope::id`) — sobrevive al cierre para que una fase futura pueda
     /// referirse a este ámbito por número en vez de por posición en la lista.
     pub id: usize,
-    /// El `id` del ámbito que lo contenía. `None` solo si este snapshot fuera
-    /// el del Global, lo cual no pasa — el Global nunca se cierra ni se
-    /// registra acá (ver el comentario de `ScopeCollector`). Es el enlace que
+    /// El `id` del ámbito que lo contenía. `None` solo para la foto del
+    /// Global (ver el comentario de `ScopeCollector`). Es el enlace que
     /// faltaba: antes de esto, un bloque anónimo sabía su `depth` pero no A
     /// QUÉ función o clase pertenecía; caminando `parent_id` hacia arriba se
     /// llega al ámbito con nombre que lo contiene.
@@ -285,8 +284,9 @@ pub struct ScopeSnapshot {
 /// rompería el `lookup` con scoping correcto. Guardar copias aparte no corre
 /// ese riesgo.
 ///
-/// El ámbito Global NUNCA aparece acá: no se cierra nunca, así que se consulta
-/// directamente en la tabla al terminar (`SymbolTable::dump`).
+/// El ámbito Global no se cierra nunca: `analyzer::analyze` registra su foto
+/// al final, la última, ya con el offset de cada global y el layout de cada
+/// clase.
 #[derive(Debug, Default)]
 pub struct ScopeCollector {
     snapshots: Vec<ScopeSnapshot>,
@@ -329,6 +329,13 @@ impl ScopeCollector {
         &self.snapshots
     }
 
+    /// Las fotos, para completar datos que se calculan después del cierre:
+    /// el offset de los campos de una clase (`storage::allocate_classes`
+    /// corre al final del análisis, cuando la foto de la clase ya existe).
+    pub fn snapshots_mut(&mut self) -> &mut [ScopeSnapshot] {
+        &mut self.snapshots
+    }
+
     /// Volcado legible, con el MISMO formato de símbolo que
     /// `SymbolTable::dump()` — se reusan sus helpers en vez de inventar otro.
     /// Forma `[{order, kind, label, depth, symbols:[...]}]` -- la que consume
@@ -358,6 +365,7 @@ impl ScopeCollector {
                         "line": sym.line,
                         "col": sym.col,
                         "decl_index": sym.decl_index,
+                        "area": sym.storage.as_ref().map(|st| st.area.base()),
                         "offset": sym.storage.as_ref().map(|st| st.offset),
                         "size": sym.storage.as_ref().map(|st| st.size_bytes),
                         "nesting_level": sym.nesting_level,
