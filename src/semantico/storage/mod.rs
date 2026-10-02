@@ -94,7 +94,7 @@ pub fn width_of(ty: &Type, target: &TargetLayout) -> Width {
         Type::Float => Width::Known(target.float),
         Type::Bool => Width::Known(target.bool_),
         Type::Void => Width::Known(0),
-        Type::Str | Type::Array(_) | Type::Map(_, _) | Type::Set(_) | Type::Named(_) => {
+        Type::Str | Type::Array(_) | Type::Map(_, _) | Type::Set(_) | Type::Named(_) | Type::Null => {
             Width::Known(target.pointer)
         }
         Type::Tuple(items) => {
@@ -324,9 +324,13 @@ fn topological_class_order(classes: &[&mut Symbol]) -> Vec<usize> {
 /// pide el plan. Escribe `Symbol.storage` en cada campo propio (`Variable`)
 /// y `Symbol.storage_size` en la clase misma.
 ///
+/// Una CLASE reserva su primera palabra para el puntero a su vtable
+/// (despacho virtual de métodos); un struct no. Así todo objeto es
+/// `[vtable][campos del padre][campos propios]`.
+///
 /// No valida nada semánticamente: un padre inexistente ya generó `S007`/
 /// `S008` en el analizador; acá solo se decide qué hacer con el layout
-/// cuando eso pasa (base 0, `is_incomplete` en `true`).
+/// cuando eso pasa (base = solo la vtable, `is_incomplete` en `true`).
 pub fn allocate_classes(classes: &mut [&mut Symbol], target: &TargetLayout) -> ClassSizes {
     let order = topological_class_order(classes);
     let mut result = ClassSizes::default();
@@ -335,12 +339,16 @@ pub fn allocate_classes(classes: &mut [&mut Symbol], target: &TargetLayout) -> C
         let class_name = classes[idx].name.clone();
         let parent_name = classes[idx].parent.clone();
 
+        // Una clase reserva su primera palabra para el puntero a la vtable
+        // (despacho virtual de métodos); un struct no tiene métodos y empieza
+        // en 0. Una clase hija hereda esa ranura dentro del tamaño del padre.
+        let header = if classes[idx].kind == SymbolKind::Class { target.pointer } else { 0 };
         let (mut offset, inherited_vtable, parent_incomplete) = match &parent_name {
             Some(p) if result.sizes.contains_key(p) => {
                 (result.sizes[p], result.vtables.get(p).cloned().unwrap_or_default(), result.incomplete.contains(p))
             }
-            Some(_) => (0usize, Vec::new(), true),
-            None => (0usize, Vec::new(), false),
+            Some(_) => (header, Vec::new(), true),
+            None => (header, Vec::new(), false),
         };
 
         let mut own_incomplete = parent_incomplete;
@@ -620,16 +628,20 @@ mod tests {
         let mut classes: Vec<&mut Symbol> = vec![&mut hijo, &mut padre];
         let sizes = allocate_classes(&mut classes, &target);
 
-        assert_eq!(sizes.instance_size("Padre"), Some(4));
-        assert_eq!(sizes.instance_size("Hijo"), Some(8));
+        // Offset 0: puntero a la vtable; 'x' en 4. El hijo hereda esas dos
+        // palabras y agrega 'y' en 8.
+        assert_eq!(sizes.instance_size("Padre"), Some(8));
+        assert_eq!(sizes.instance_size("Hijo"), Some(12));
         assert!(!sizes.is_incomplete("Hijo"));
 
+        let x_offset = padre.members.as_ref().unwrap()[0].storage.as_ref().unwrap().offset;
+        assert_eq!(x_offset, 4, "la palabra 0 es el puntero a la vtable");
         let y_offset = hijo.members.as_ref().unwrap()[0].storage.as_ref().unwrap().offset;
-        assert_eq!(y_offset, 4, "'y' debe empezar donde termina 'x' del padre");
+        assert_eq!(y_offset, 8, "'y' debe empezar donde termina 'x' del padre");
     }
 
     #[test]
-    fn padre_inexistente_marca_incompleto_y_usa_base_cero() {
+    fn padre_inexistente_marca_incompleto_y_empieza_tras_la_vtable() {
         let target = TargetLayout::default();
         let mut huerfana = Symbol {
             name: "Huerfana".to_string(),
@@ -647,7 +659,8 @@ mod tests {
         let mut classes: Vec<&mut Symbol> = vec![&mut huerfana];
         let sizes = allocate_classes(&mut classes, &target);
         assert!(sizes.is_incomplete("Huerfana"));
-        assert_eq!(sizes.instance_size("Huerfana"), Some(4));
+        // Sin padre conocido: vtable (4) + 'z' (4).
+        assert_eq!(sizes.instance_size("Huerfana"), Some(8));
     }
 
     #[test]
@@ -712,9 +725,30 @@ mod tests {
         let vt = sizes.vtable("Hijo").unwrap();
         assert_eq!(vt, &["hablar".to_string(), "correr".to_string()]);
 
-        // Un método no ocupa espacio de instancia: el tamaño de Hijo es 0
-        // (no declaró campos), heredado de un Padre también sin campos.
-        assert_eq!(sizes.instance_size("Hijo"), Some(0));
+        // Un método no ocupa espacio de instancia: Hijo solo tiene el puntero
+        // a la vtable, heredado de un Padre también sin campos.
+        assert_eq!(sizes.instance_size("Hijo"), Some(4));
+    }
+
+    #[test]
+    fn un_struct_no_reserva_lugar_para_vtable() {
+        let target = TargetLayout::default();
+        let mut punto = Symbol {
+            name: "Punto".to_string(),
+            kind: SymbolKind::Struct,
+            members: Some(vec![Symbol {
+                name: "x".to_string(),
+                kind: SymbolKind::Variable,
+                ty: Some(Type::Int),
+                decl_index: 0,
+                ..Symbol::default()
+            }]),
+            ..Symbol::default()
+        };
+        let mut classes: Vec<&mut Symbol> = vec![&mut punto];
+        let sizes = allocate_classes(&mut classes, &target);
+        assert_eq!(sizes.instance_size("Punto"), Some(4));
+        assert_eq!(punto.members.as_ref().unwrap()[0].storage.as_ref().unwrap().offset, 0);
     }
 
     #[test]

@@ -30,6 +30,11 @@ pub enum Type {
     /// indexarla solo se puede tipar cuando el índice es un literal constante:
     /// `t[0]` y `t[1]` pueden devolver tipos distintos.
     Tuple(Vec<Type>),
+    /// El tipo del literal `null`: una referencia que no apunta a nada. Es
+    /// asignable a cualquier tipo referencia (texto, colecciones, clases), y
+    /// una variable inferida desde `null` (`let d = null;`) acepta luego
+    /// cualquier referencia. Ocupa lo mismo que un puntero.
+    Null,
     Unknown,
 }
 
@@ -40,6 +45,12 @@ impl Type {
     /// numérico.
     pub fn is_numeric(&self) -> bool {
         matches!(self, Type::Int | Type::Float)
+    }
+
+    /// Tipos que se manejan por REFERENCIA (un puntero al heap): los que
+    /// pueden valer `null`. Las tuplas no: se copian por valor.
+    pub fn is_reference(&self) -> bool {
+        matches!(self, Type::Str | Type::Named(_) | Type::Array(_) | Type::Map(_, _) | Type::Set(_) | Type::Null)
     }
 }
 
@@ -59,6 +70,7 @@ impl fmt::Display for Type {
                 let partes: Vec<String> = items.iter().map(|t| t.to_string()).collect();
                 write!(f, "tupla<{}>", partes.join(", "))
             }
+            Type::Null => write!(f, "null"),
             Type::Unknown => write!(f, "unknown"),
         }
     }
@@ -70,6 +82,9 @@ pub enum ArithmeticOperator {
     Subtract,
     Multiply,
     Divide,
+    /// `%`: solo entre enteros (no comparte la matriz numérica de los otros
+    /// cuatro, ver `CompatibilityTable::arithmetic`).
+    Modulo,
 }
 
 impl fmt::Display for ArithmeticOperator {
@@ -79,6 +94,7 @@ impl fmt::Display for ArithmeticOperator {
             ArithmeticOperator::Subtract => "-",
             ArithmeticOperator::Multiply => "*",
             ArithmeticOperator::Divide => "/",
+            ArithmeticOperator::Modulo => "%",
         })
     }
 }
@@ -239,6 +255,20 @@ impl CompatibilityTable {
             });
         }
 
+        // Módulo: solo `integer % integer`. No puede usar `ARITHMETIC_RULES`,
+        // que admite `float` en cualquier lado.
+        if operator == ArithmeticOperator::Modulo {
+            return if matches!((left, right), (Type::Int, Type::Int)) {
+                Ok(ArithmeticResolution {
+                    result: Type::Int,
+                    left_coercion: Coercion::Exact,
+                    right_coercion: Coercion::Exact,
+                })
+            } else {
+                Err(TypeError::InvalidArithmetic { operator, left: left.clone(), right: right.clone() })
+            };
+        }
+
         // Concatenacion de textos: `+` sobre dos `string` da `string`.
         //
         // Va ACA y no como una fila mas de `ARITHMETIC_RULES` a proposito: esa
@@ -288,6 +318,14 @@ impl CompatibilityTable {
         // para tapar su parte del problema; la regla vive acá, que es donde el
         // resto de las fases la consultan.
         if matches!(expected, Type::Unknown) || matches!(found, Type::Unknown) {
+            return Ok(Coercion::Exact);
+        }
+
+        // `null` en cualquier referencia, y cualquier referencia en una
+        // variable que se infirió desde `null` (`let d = null; d = new P();`).
+        if (matches!(found, Type::Null) && expected.is_reference())
+            || (matches!(expected, Type::Null) && found.is_reference())
+        {
             return Ok(Coercion::Exact);
         }
 

@@ -117,20 +117,18 @@ fn una_clase_hija_empieza_donde_termina_su_padre() {
            var radio: integer = 0;\n\
          }\n",
     );
-    assert!(r.layout.contains("clase Figura: 4 bytes"), "{}", r.layout);
-    assert!(r.layout.contains("clase Circulo: 8 bytes"), "{}", r.layout);
+    // Cada objeto empieza con el puntero a su vtable (4 bytes).
+    assert!(r.layout.contains("clase Figura: 8 bytes"), "{}", r.layout);
+    assert!(r.layout.contains("clase Circulo: 12 bytes"), "{}", r.layout);
 }
 
 #[test]
-fn en_la_rubrica_solo_el_area_estatica_queda_incompleta() {
-    // `let d = null;` no tiene un tipo del que sacar un ancho: el área
-    // estática queda incompleta —TAC no debe inventarle un tamaño—, pero
-    // todas las funciones y clases se ubican.
+fn la_rubrica_queda_con_todos_sus_registros_completos() {
+    // `let d = null;` ahora es `null` (una referencia): ocupa una palabra y
+    // ningún marco queda incompleto, así que el generador puede correr.
     let r = compiscript(&read("workspace/rubrica.cps"));
     assert!(!r.bindings.is_empty());
-    let incompletos: Vec<&str> = r.layout.lines().filter(|l| l.contains("[incompleto]")).collect();
-    assert_eq!(incompletos.len(), 1, "{}", r.layout);
-    assert!(incompletos[0].starts_with("marco #0 estático:"), "{}", r.layout);
+    assert!(!r.layout.contains("[incompleto]"), "{}", r.layout);
     assert!(r.layout.contains("clase Animal:") && r.layout.contains("clase Perro:"), "{}", r.layout);
 }
 

@@ -1,6 +1,7 @@
 //! Qué necesita saber la fase de código intermedio sobre una gramática
 //! concreta, y que el análisis semántico no le da: la FORMA de cada
-//! construcción de control de flujo (directivas `%flow`).
+//! construcción de control de flujo (directivas `%flow`) y qué producción
+//! imprime (`%print`).
 //!
 //! Igual que `semantico::spec::SemanticSpec`, es lo único específico de una
 //! gramática; el generador consulta esto en vez de nombrar producciones.
@@ -17,13 +18,21 @@ use crate::sintactico::runtime::parse_tree::ParseNode;
 #[derive(Debug, Clone, Default)]
 pub struct IntermediateSpec {
     flows: HashMap<String, FlowDirective>,
+    prints: HashMap<String, usize>,
 }
 
 impl IntermediateSpec {
     pub fn from_grammar(grammar: &Grammar) -> Self {
         IntermediateSpec {
             flows: grammar.flow_directives.iter().map(|d| (d.production.clone(), d.clone())).collect(),
+            prints: grammar.print_directives.iter().cloned().collect(),
         }
+    }
+
+    /// Si `node` es una sentencia de impresión (`%print`), la expresión que
+    /// imprime.
+    pub fn print_value<'n>(&self, node: &'n ParseNode) -> Option<&'n ParseNode> {
+        node.children.get(*self.prints.get(&node.symbol)?)
     }
 
     /// La forma de `node` si su producción es una construcción de control de
@@ -33,7 +42,7 @@ impl IntermediateSpec {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.flows.is_empty()
+        self.flows.is_empty() && self.prints.is_empty()
     }
 }
 
@@ -110,6 +119,21 @@ mod tests {
         let shape = spec.flow_of(&for_node).unwrap();
         assert!(shape.child(&for_node, FlowRole::Init).is_none());
         assert!(shape.child(&for_node, FlowRole::Body).is_some());
+    }
+
+    #[test]
+    fn print_apunta_a_la_expresion_impresa() {
+        let yalp = "%token PRINT LPAREN RPAREN X\n%print print_stmt 2\n%%\nprint_stmt: PRINT LPAREN X RPAREN ;\n";
+        let spec = IntermediateSpec::from_grammar(&Grammar::parse_for_lr_from_str(yalp).unwrap());
+        let nodo = internal("print_stmt", vec![leaf("PRINT"), leaf("LPAREN"), leaf("X"), leaf("RPAREN")]);
+        assert_eq!(spec.print_value(&nodo).map(|n| n.symbol.as_str()), Some("X"));
+        assert!(spec.print_value(&leaf("X")).is_none());
+    }
+
+    #[test]
+    fn un_print_fuera_de_rango_es_un_error_de_la_gramatica() {
+        let yalp = "%token PRINT X\n%print print_stmt 5\n%%\nprint_stmt: PRINT X ;\n";
+        assert!(Grammar::parse_for_lr_from_str(yalp).unwrap_err().contains("solo 2 hijo(s)"));
     }
 
     #[test]

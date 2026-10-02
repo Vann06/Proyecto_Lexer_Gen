@@ -718,6 +718,7 @@ fn arith_operator_from_directive(op: &str) -> Option<ArithmeticOperator> {
         "subtract" => Some(ArithmeticOperator::Subtract),
         "multiply" => Some(ArithmeticOperator::Multiply),
         "divide" => Some(ArithmeticOperator::Divide),
+        "modulo" => Some(ArithmeticOperator::Modulo),
         _ => None,
     }
 }
@@ -760,6 +761,7 @@ fn type_from_directive(kind: &str) -> Type {
         "float" => Type::Float,
         "string" => Type::Str,
         "void" => Type::Void,
+        "null" => Type::Null,
         _ => Type::Unknown,
     }
 }
@@ -847,6 +849,7 @@ mod tests {
             group_directives: Vec::new(),
             flow_directives: Vec::new(),
             fixed_type_directives: Vec::new(),
+            print_directives: Vec::new(),
         }
     }
 

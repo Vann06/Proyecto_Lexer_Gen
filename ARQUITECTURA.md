@@ -153,11 +153,11 @@ análisis semántico en absoluto: la gramática sigue compilando y parseando igu
 |---|---|---|
 | `%type_of` | `%type_of var_decl tipo` | Cuál hijo de esa producción es el nodo de tipo (por símbolo, no por índice). |
 | `%fixed_type` | `%fixed_type catch_param string` | Tipo fijo para las declaraciones de una producción cuyo tipo el fuente no escribe porque la gramática no tiene dónde. En Compiscript, la variable de `catch (err)`: es siempre el mensaje del error atrapado (no hay `throw`), así que es `string`. Nace inicializada. |
-| `%type_token` | `%type_token INT_T integer` | Qué `Type` representa cada terminal de tipo o literal. |
+| `%type_token` | `%type_token INT_T integer` | Qué `Type` representa cada terminal de tipo o literal. `%type_token NULL_KW null` le da al literal `null` el tipo `Null`: una referencia, asignable a `string`, listas y clases. |
 | `%init_of` | `%init_of var_decl expr` | Cuál hijo es el inicializador, para validarlo contra el tipo declarado (o inferir el tipo si no se declaró). |
 | `%immutable` | `%immutable const_decl` | Que esa declaración es inmutable: exige inicializador y rechaza asignaciones posteriores. |
 | `%assign` | `%assign assign_stmt 0 2` | Producción de asignación, con el índice del destino y el del valor. |
-| `%arith` | `%arith PLUS add` | Qué token es cada operador aritmético. |
+| `%arith` | `%arith PLUS add` | Qué token es cada operador aritmético (`add`, `subtract`, `multiply`, `divide`, `modulo`). `modulo` (`%`) solo opera entre enteros. |
 
 **Operadores** (por token, reconocidos por **forma** del nodo — tres hijos con
 el operador en el medio, o dos con el operador adelante — para no tener que
@@ -192,6 +192,7 @@ enumerar `or_expr`/`and_expr`/`equality_expr`/…)
 | `%case` | `%case switch_case 1` | Producción de una rama `case` y el valor con el que compara. La rama `default` se declara como producción aparte porque no lleva valor. |
 | `%foreach` | `%foreach foreach_stmt 2 4` | Producción del bucle, índice de la variable de iteración e índice del iterable. La variable se declara **dentro** del ámbito del bucle, con el tipo de elemento del iterable. |
 | `%flow` | `%flow if if_stmt cond=2 then=4 else=6` | **Para la fase de código intermedio** (no la usa el análisis semántico): tipo de construcción (`if`, `while`, `do_while`, `for`, `foreach`, `switch`, `case`, `default`, `try`, `catch`), producción y un índice por cada parte con nombre (`cond`, `then`, `else`, `body`, `init`, `update`, `var`, `iter`, `disc`, `cases`, `value`, `handler`). Un rol opcional que falta en una alternativa —el `else` de un `if` corto— o que solo deriva ε —un `for_init` vacío— significa que esa parte no existe. A diferencia del resto, un `%flow` mal escrito **es un error de la gramática**: tipo o rol desconocido, rol obligatorio faltante, producción inexistente, o un índice obligatorio que no cabe en alguna alternativa. Vocabulario en `sintactico::gramatica::flow`; consulta en `intermedio::spec`. |
+| `%print` | `%print print_stmt 2` | **Para la fase de código intermedio**: qué producción imprime y cuál de sus hijos es la expresión impresa. Mal escrita (producción inexistente o índice que no cabe en alguna alternativa) es un error de la gramática. |
 
 **Structs y listas**
 
@@ -310,7 +311,12 @@ Quién llena qué, y cuándo:
 
 ### `Type` (`types/mod.rs`)
 
-`Int | Float | Bool | Str | Void | Named(String) | Array(Box<Type>) | Unknown`
+`Int | Float | Bool | Str | Void | Named(String) | Array(Box<Type>) | Map | Set | Tuple | Null | Unknown`
+
+`Null` es el tipo del literal `null`: una referencia que no apunta a nada. Se
+asigna a cualquier tipo referencia (`string`, colecciones, clases), y una
+variable inferida desde `null` (`let d = null;`) acepta después cualquier
+referencia. Ocupa lo mismo que un puntero.
 
 `Unknown` no es "sin tipo": es "todavía no lo sabemos", y las reglas lo tratan
 como comodín silencioso — nunca se reporta un error derivado de un tipo que no
@@ -622,13 +628,22 @@ Cada operación que puede fallar emite un chequeo que, si falla, hace
 aborta el programa si no hay ninguno. Qué operaciones se chequean lo decide el
 generador de TAC, no el análisis.
 
-### Lo que todavía falta
+### El generador
 
-**El tipo de `null`.** `let d = null;` no tiene tipo, así que `d` no recibe
-`storage` y deja su marco incompleto (en `rubrica.cps`, el área estática). Es a
-propósito: no se le inventa un tamaño. Hace falta que el lenguaje defina el
-tipo de `null` —p. ej. un tipo referencia compatible con cualquier clase—
-antes de generar código para él.
+El traspaso está completo. El generador vive en `src/intermedio/` y se
+construye por fases (plan y reparto en `PLAN_TAC.md`):
+
+- `tac.rs`: el lenguaje intermedio.
+- `temps.rs`: los temporales con reciclaje.
+- `gen/`: la traducción, con un archivo por grupo de construcciones.
+
+`gen::generate` solo traduce si el análisis no dejó errores (`C001`) y si
+todos los registros de activación están completos (`C002`). Una construcción
+que todavía no se traduce se reporta como `C900`, con su línea.
+
+Los objetos son `[puntero a vtable][campos del padre][campos propios]`: toda
+clase reserva su primera palabra para la vtable (despacho virtual de
+métodos); un struct no.
 
 ### La restricción de LL(1)
 

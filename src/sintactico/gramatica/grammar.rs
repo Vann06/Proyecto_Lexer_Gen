@@ -272,6 +272,11 @@ pub struct Grammar {
     /// leer la línea, índices contra las producciones al terminar el archivo
     /// (ver `sintactico::gramatica::flow`).
     pub flow_directives: Vec<FlowDirective>,
+    /// `(producción, índice de la expresión a imprimir)`, uno por línea
+    /// `%print` — p.ej. `%print print_stmt 2` para
+    /// `print_stmt: PRINT LPAREN expr RPAREN`. Lo usa la fase de código
+    /// intermedio para emitir `print` sin nombrar la producción.
+    pub print_directives: Vec<(String, usize)>,
 }
 
 impl Grammar {
@@ -409,6 +414,7 @@ impl Grammar {
             group_directives: Vec::new(),
             flow_directives: Vec::new(),
             fixed_type_directives: Vec::new(),
+            print_directives: Vec::new(),
         };
 
         grammar.parse_tokens_section(sections[0])?;
@@ -944,6 +950,18 @@ impl Grammar {
     /// en alguna: esa ausencia es justamente lo que distingue un `if` sin
     /// `else`.
     fn validate_flow_directives(&self) -> Result<(), String> {
+        for (production, index) in &self.print_directives {
+            let Some(p) = self.productions.iter().find(|p| &p.head == production) else {
+                return Err(format!("Error en directiva `%print {production} {index}`: la producción '{production}' no existe."));
+            };
+            if let Some(body) = p.bodies.iter().find(|b| *index >= b.len()) {
+                return Err(format!(
+                    "Error en directiva `%print {production} {index}`: la alternativa `{production}: {}` tiene solo {} hijo(s).",
+                    body_to_string(body),
+                    body.len()
+                ));
+            }
+        }
         for (i, d) in self.flow_directives.iter().enumerate() {
             if self.flow_directives[..i].iter().any(|prev| prev.production == d.production) {
                 return Err(format!("Error en directiva `%flow {} {}`: la producción '{}' ya tiene un %flow.", d.kind, d.production, d.production));
@@ -1080,6 +1098,22 @@ impl Grammar {
                 let mut parts = line[6..].split_whitespace();
                 if let (Some(token), Some(op)) = (parts.next(), parts.next()) {
                     self.unary_directives.push((token.to_string(), op.to_string()));
+                }
+            } else if let Some(rest) = line.strip_prefix("%print") {
+                let mut parts = rest.split_whitespace();
+                let parsed = match (parts.next(), parts.next()) {
+                    (Some(production), Some(index)) => index.parse::<usize>().ok().map(|i| (production.to_string(), i)),
+                    _ => None,
+                };
+                // Igual que `%flow`: mal escrita produciría código que
+                // imprime otra cosa, así que es un error de la gramática.
+                match parsed {
+                    Some(directive) => self.print_directives.push(directive),
+                    None => {
+                        return Err(format!(
+                            "Error en directiva `%print{rest}`: se esperaba `%print <producción> <índice>`."
+                        ))
+                    }
                 }
             } else if let Some(rest) = line.strip_prefix("%flow") {
                 self.flow_directives.push(FlowDirective::parse(rest)?);

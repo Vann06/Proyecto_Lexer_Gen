@@ -74,13 +74,13 @@ IGNORE COMMENT
 
 /* Asignacion a variable suelta, y operadores aritmeticos: con esto el
  * sistema de tipos (src/semantico/types) queda conectado al recorrido, no
- * solo disponible como API. MOD queda fuera a proposito: la tabla de
- * compatibilidad solo cubre + - * / . */
+ * solo disponible como API. MOD (%) solo opera entre enteros. */
 %assign assign_stmt 0 2
 %arith PLUS  add
 %arith MINUS subtract
 %arith TIMES multiply
 %arith DIV   divide
+%arith MOD   modulo
 
 /* Operadores logicos, comparaciones y unarios prefijos (fase de `operators`).
  * Igual que %arith, se declaran por TOKEN: el walker reconoce la expresion por
@@ -108,6 +108,7 @@ IGNORE COMMENT
 %type_token FALSE   bool
 %type_token INT_LIT integer
 %type_token STR_LIT string
+%type_token NULL_KW null
 
 /* ------------------------------------------------------------
  * Fase 16 (clases y objetos): this, acceso a miembros con '.',
@@ -181,6 +182,9 @@ IGNORE COMMENT
 %flow default  default_case  body=2
 %flow try      try_stmt      body=1 handler=2
 %flow catch    catch_clause  var=2 body=4
+
+/* Que produccion imprime, y cual de sus hijos es la expresion impresa. */
+%print print_stmt 2
 
 /* foreach: produccion, indice de la variable e indice del iterable.
  * La variable se declara con el tipo de ELEMENTO del iterable. */

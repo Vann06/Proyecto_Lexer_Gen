@@ -1227,6 +1227,11 @@ impl<'a> Visitor for Analyzer<'a> {
             ) {
                 self.errors.push_semantic(&error);
             }
+            // Como en cualquier declaración, el nombre se enlaza: el código
+            // intermedio necesita saber dónde vive la variable del bucle.
+            if let Some((sym, def_depth, def_kind)) = self.table.lookup_with_scope(&name) {
+                self.bindings.record(var_node, sym, access_from(&self.function_stack, def_depth, def_kind));
+            }
             // Ya se consumió como declaración: sin esto se volvería a visitar
             // como un uso y se reportaría como no declarada. El iterable NO se
             // salta — ese sí es una lectura real que debe marcarse.
@@ -1540,7 +1545,7 @@ fn collect_param_types(node: &ParseNode, spec: &SemanticSpec) -> Vec<Type> {
 /// `BySymbol(s)` busca el primer hijo directo cuyo `symbol` sea `s` — para
 /// producciones con el nodo de tipo en posiciones distintas según la
 /// alternativa (o ausente en algunas), como `var_decl` en Compiscript.
-fn find_child_index(node: &ParseNode, locator: &ChildLocator) -> Option<usize> {
+pub(crate) fn find_child_index(node: &ParseNode, locator: &ChildLocator) -> Option<usize> {
     match locator {
         ChildLocator::Index(i) => node.children.get(*i).map(|_| *i),
         ChildLocator::BySymbol(symbol) => node.children.iter().position(|c| &c.symbol == symbol),
@@ -1552,7 +1557,7 @@ fn find_child_index(node: &ParseNode, locator: &ChildLocator) -> Option<usize> {
 /// cuyo `symbol` sea `identifier_token`. Devuelve también su índice, para que
 /// el llamador pueda excluirlo de la recursión genérica (ya fue consumido
 /// como declaración, no debe procesarse de nuevo como uso).
-fn find_identifier_child<'a>(
+pub(crate) fn find_identifier_child<'a>(
     node: &'a ParseNode,
     identifier_token: &str,
     explicit_index: Option<usize>,
