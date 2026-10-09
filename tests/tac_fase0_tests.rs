@@ -115,7 +115,8 @@ fn la_rubrica_pasa_las_compuertas() {
 }
 
 #[test]
-fn una_construccion_sin_traducir_se_reporta_con_su_linea() {
-    let errs = generar("let x: integer = 1;\nclass C { }\n").unwrap_err();
-    assert!(errs.contains(&("C900".to_string(), 2)), "la clase está en la línea 2: {errs:?}");
+fn una_clase_ya_se_traduce_en_la_fase_2() {
+    // Antes de la Fase 2 una clase era la construcción pendiente (C900); ya
+    // no queda ninguna del lenguaje que el análisis acepte sin traducción.
+    assert!(generar("let x: integer = 1;\nclass C { }\n").is_ok());
 }
