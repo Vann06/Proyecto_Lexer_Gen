@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
-use super::tac::{Base, Operand, TacProgram};
+use super::tac::{Base, BinOp, Instr, Operand, TacProgram, UnOp};
 
 /// Valor que puede almacenar o producir una instrucción TAC.
 #[derive(Debug, Clone, PartialEq)]
@@ -25,6 +25,34 @@ pub enum Value {
     /// Es necesaria para `Operand::Addr` y `Instr::AddrOf`.
     Address(String),
     Null,
+}
+
+impl Value {
+    fn type_name(&self) -> &'static str {
+        match self {
+            Value::Int(_) => "integer",
+            Value::Float(_) => "float",
+            Value::Bool(_) => "boolean",
+            Value::Str(_) => "string",
+            Value::Pointer(_) => "pointer",
+            Value::Address(_) => "address",
+            Value::Null => "null",
+        }
+    }
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::Int(value) => write!(f, "{value}"),
+            Value::Float(value) => write!(f, "{value}"),
+            Value::Bool(value) => write!(f, "{value}"),
+            Value::Str(value) => write!(f, "{value}"),
+            Value::Pointer(value) => write!(f, "ptr({value})"),
+            Value::Address(name) => write!(f, "&{name}"),
+            Value::Null => write!(f, "null"),
+        }
+    }
 }
 
 /// Error producido al ejecutar TAC.
@@ -46,6 +74,15 @@ pub enum RuntimeError {
     /// `tN[offset]` necesita resolver el puntero de `tN`. Eso se habilitará
     /// al implementar heap y marcos completos.
     IndirectMemoryUnavailable { temp: usize, offset: isize },
+    /// La operación recibió valores cuyos tipos no corresponden al operador.
+    InvalidOperands {
+        operation: &'static str,
+        left: &'static str,
+        right: Option<&'static str>,
+    },
+    DivisionByZero,
+    ModuloByZero,
+    ArithmeticOverflow { operation: &'static str },
 }
 
 impl fmt::Display for RuntimeError {
@@ -77,6 +114,24 @@ impl fmt::Display for RuntimeError {
                     f,
                     "no se puede acceder a t{temp}[{offset}] sin memoria indirecta"
                 )
+            }
+            RuntimeError::InvalidOperands {
+                operation,
+                left,
+                right: Some(right),
+            } => write!(
+                f,
+                "operandos incompatibles para {operation}: {left} y {right}"
+            ),
+            RuntimeError::InvalidOperands {
+                operation,
+                left,
+                right: None,
+            } => write!(f, "operando incompatible para {operation}: {left}"),
+            RuntimeError::DivisionByZero => write!(f, "división por cero"),
+            RuntimeError::ModuloByZero => write!(f, "módulo por cero"),
+            RuntimeError::ArithmeticOverflow { operation } => {
+                write!(f, "desbordamiento aritmético en {operation}")
             }
         }
     }
@@ -155,6 +210,75 @@ impl<'a> Vm<'a> {
 
     pub fn frame_value(&self, offset: isize) -> Option<&Value> {
         self.current_frame.get(&offset)
+    }
+
+    /// Ejecuta secuencialmente el cuerpo de `main`.
+    ///
+    /// En esta etapa no hay contador de programa ni flujo de control: una
+    /// etiqueta, salto o llamada se reporta como instrucción no soportada.
+    pub fn run(&mut self) -> Result<VmResult, RuntimeError> {
+        self.temporaries.clear();
+        self.globals.clear();
+        self.current_frame.clear();
+        self.output.clear();
+        self.steps = 0;
+
+        let body = self
+            .program
+            .main
+            .as_ref()
+            .map(|main| main.body.clone())
+            .unwrap_or_default();
+
+        for instruction in &body {
+            self.execute(instruction)?;
+        }
+
+        Ok(VmResult {
+            output: self.output.clone(),
+            steps: self.steps,
+        })
+    }
+
+    fn execute(&mut self, instruction: &Instr) -> Result<(), RuntimeError> {
+        if self.steps >= self.max_steps {
+            return Err(RuntimeError::StepLimitExceeded {
+                limit: self.max_steps,
+            });
+        }
+        self.steps += 1;
+
+        match instruction {
+            Instr::Copy { dst, src } => {
+                let value = self.read_operand(src)?;
+                self.write_operand(dst, value)
+            }
+            Instr::Unary { dst, op, src } => {
+                let value = self.read_operand(src)?;
+                let result = eval_unary(*op, value)?;
+                self.write_operand(dst, result)
+            }
+            Instr::Binary {
+                dst,
+                op,
+                left,
+                right,
+            } => {
+                // Leer ambas fuentes antes de escribir es indispensable cuando
+                // el generador recicla un temporal como destino.
+                let left = self.read_operand(left)?;
+                let right = self.read_operand(right)?;
+                let result = eval_binary(*op, left, right)?;
+                self.write_operand(dst, result)
+            }
+            Instr::Print(operand) => {
+                let value = self.read_operand(operand)?;
+                self.output.push_str(&value.to_string());
+                self.output.push('\n');
+                Ok(())
+            }
+            other => Err(RuntimeError::UnsupportedInstruction(other.to_string())),
+        }
     }
 
     /// Obtiene el valor de un operando.
@@ -250,9 +374,115 @@ impl<'a> Vm<'a> {
     }
 }
 
+fn invalid_unary(op: UnOp, value: &Value) -> RuntimeError {
+    RuntimeError::InvalidOperands {
+        operation: op.symbol(),
+        left: value.type_name(),
+        right: None,
+    }
+}
+
+fn invalid_binary(op: BinOp, left: &Value, right: &Value) -> RuntimeError {
+    RuntimeError::InvalidOperands {
+        operation: op.symbol(),
+        left: left.type_name(),
+        right: Some(right.type_name()),
+    }
+}
+
+fn eval_unary(op: UnOp, value: Value) -> Result<Value, RuntimeError> {
+    match (op, value) {
+        (UnOp::Neg, Value::Int(value)) => value
+            .checked_neg()
+            .map(Value::Int)
+            .ok_or(RuntimeError::ArithmeticOverflow {
+                operation: UnOp::Neg.symbol(),
+            }),
+        (UnOp::NegF, Value::Float(value)) => Ok(Value::Float(-value)),
+        (UnOp::Not, Value::Bool(value)) => Ok(Value::Bool(!value)),
+        (UnOp::IntToFloat, Value::Int(value)) => Ok(Value::Float(value as f64)),
+        (op, value) => Err(invalid_unary(op, &value)),
+    }
+}
+
+fn comparable_equality(left: &Value, right: &Value) -> Option<bool> {
+    match (left, right) {
+        (Value::Int(a), Value::Int(b)) => Some(a == b),
+        (Value::Float(a), Value::Float(b)) => Some(a == b),
+        (Value::Bool(a), Value::Bool(b)) => Some(a == b),
+        (Value::Str(a), Value::Str(b)) => Some(a == b),
+        (Value::Pointer(a), Value::Pointer(b)) => Some(a == b),
+        (Value::Address(a), Value::Address(b)) => Some(a == b),
+        (Value::Null, Value::Null) => Some(true),
+        _ => None,
+    }
+}
+
+fn eval_binary(op: BinOp, left: Value, right: Value) -> Result<Value, RuntimeError> {
+    if matches!(op, BinOp::Eq | BinOp::Ne) {
+        return comparable_equality(&left, &right)
+            .map(|equal| Value::Bool(if op == BinOp::Eq { equal } else { !equal }))
+            .ok_or_else(|| invalid_binary(op, &left, &right));
+    }
+
+    let invalid = || invalid_binary(op, &left, &right);
+    match (op, &left, &right) {
+        (BinOp::Add, Value::Int(a), Value::Int(b)) => a
+            .checked_add(*b)
+            .map(Value::Int)
+            .ok_or(RuntimeError::ArithmeticOverflow { operation: "+" }),
+        (BinOp::Sub, Value::Int(a), Value::Int(b)) => a
+            .checked_sub(*b)
+            .map(Value::Int)
+            .ok_or(RuntimeError::ArithmeticOverflow { operation: "-" }),
+        (BinOp::Mul, Value::Int(a), Value::Int(b)) => a
+            .checked_mul(*b)
+            .map(Value::Int)
+            .ok_or(RuntimeError::ArithmeticOverflow { operation: "*" }),
+        (BinOp::Div, Value::Int(_), Value::Int(0)) => Err(RuntimeError::DivisionByZero),
+        (BinOp::Div, Value::Int(a), Value::Int(b)) => a
+            .checked_div(*b)
+            .map(Value::Int)
+            .ok_or(RuntimeError::ArithmeticOverflow { operation: "/" }),
+        (BinOp::Mod, Value::Int(_), Value::Int(0)) => Err(RuntimeError::ModuloByZero),
+        (BinOp::Mod, Value::Int(a), Value::Int(b)) => a
+            .checked_rem(*b)
+            .map(Value::Int)
+            .ok_or(RuntimeError::ArithmeticOverflow { operation: "%" }),
+        (BinOp::AddF, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
+        (BinOp::SubF, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
+        (BinOp::MulF, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
+        (BinOp::DivF, Value::Float(_), Value::Float(b)) if *b == 0.0 => {
+            Err(RuntimeError::DivisionByZero)
+        }
+        (BinOp::DivF, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
+        (BinOp::Concat, Value::Str(a), Value::Str(b)) => Ok(Value::Str(format!("{a}{b}"))),
+        (BinOp::Lt, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
+        (BinOp::Le, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
+        (BinOp::Gt, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
+        (BinOp::Ge, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
+        (BinOp::Lt, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a < b)),
+        (BinOp::Le, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a <= b)),
+        (BinOp::Gt, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a > b)),
+        (BinOp::Ge, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a >= b)),
+        _ => Err(invalid()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::intermedio::tac::TacFunction;
+
+    fn run_main(body: Vec<Instr>) -> Result<VmResult, RuntimeError> {
+        let mut main = TacFunction::new("main", 0, 0);
+        main.body = body;
+        let program = TacProgram {
+            main: Some(main),
+            ..TacProgram::default()
+        };
+        Vm::new(&program).run()
+    }
 
     #[test]
     fn value_representa_literales_punteros_y_direcciones_tac() {
@@ -350,6 +580,247 @@ mod tests {
         assert_eq!(
             vm.read_operand(&indirect),
             Err(RuntimeError::IndirectMemoryUnavailable { temp: 2, offset: 4 })
+        );
+    }
+
+    #[test]
+    fn ejecuta_copy_y_print_sobre_un_programa_tac_real() {
+        let result = run_main(vec![
+            Instr::Copy {
+                dst: Operand::Temp(0),
+                src: Operand::Int(5),
+            },
+            Instr::Print(Operand::Temp(0)),
+        ])
+        .unwrap();
+
+        assert_eq!(result.output, "5\n");
+        assert_eq!(result.steps, 2);
+    }
+
+    #[test]
+    fn suma_dos_temporales_y_los_imprime() {
+        let result = run_main(vec![
+            Instr::Copy {
+                dst: Operand::Temp(0),
+                src: Operand::Int(2),
+            },
+            Instr::Copy {
+                dst: Operand::Temp(1),
+                src: Operand::Int(3),
+            },
+            Instr::Binary {
+                dst: Operand::Temp(2),
+                op: BinOp::Add,
+                left: Operand::Temp(0),
+                right: Operand::Temp(1),
+            },
+            Instr::Print(Operand::Temp(2)),
+        ])
+        .unwrap();
+
+        assert_eq!(result.output, "5\n");
+    }
+
+    #[test]
+    fn multiplicacion_entera_imprime_seis() {
+        let result = run_main(vec![
+            Instr::Copy {
+                dst: Operand::Temp(0),
+                src: Operand::Int(2),
+            },
+            Instr::Copy {
+                dst: Operand::Temp(1),
+                src: Operand::Int(3),
+            },
+            Instr::Binary {
+                dst: Operand::Temp(2),
+                op: BinOp::Mul,
+                left: Operand::Temp(0),
+                right: Operand::Temp(1),
+            },
+            Instr::Print(Operand::Temp(2)),
+        ])
+        .unwrap();
+
+        assert_eq!(result.output, "6\n");
+    }
+
+    #[test]
+    fn ejecuta_todos_los_operadores_enteros() {
+        let mut body = vec![
+            Instr::Copy {
+                dst: Operand::Temp(0),
+                src: Operand::Int(7),
+            },
+            Instr::Copy {
+                dst: Operand::Temp(1),
+                src: Operand::Int(2),
+            },
+        ];
+        for (temp, op) in [BinOp::Add, BinOp::Sub, BinOp::Mul, BinOp::Div, BinOp::Mod]
+            .into_iter()
+            .enumerate()
+        {
+            let dst = Operand::Temp(temp + 2);
+            body.push(Instr::Binary {
+                dst: dst.clone(),
+                op,
+                left: Operand::Temp(0),
+                right: Operand::Temp(1),
+            });
+            body.push(Instr::Print(dst));
+        }
+
+        let result = run_main(body).unwrap();
+
+        assert_eq!(result.output, "9\n5\n14\n3\n1\n");
+    }
+
+    #[test]
+    fn ejecuta_todos_los_operadores_float() {
+        let mut body = vec![
+            Instr::Copy {
+                dst: Operand::Temp(0),
+                src: Operand::Float(8.0),
+            },
+            Instr::Copy {
+                dst: Operand::Temp(1),
+                src: Operand::Float(2.0),
+            },
+        ];
+        for (temp, op) in [BinOp::AddF, BinOp::SubF, BinOp::MulF, BinOp::DivF]
+            .into_iter()
+            .enumerate()
+        {
+            let dst = Operand::Temp(temp + 2);
+            body.push(Instr::Binary {
+                dst: dst.clone(),
+                op,
+                left: Operand::Temp(0),
+                right: Operand::Temp(1),
+            });
+            body.push(Instr::Print(dst));
+        }
+
+        let result = run_main(body).unwrap();
+
+        assert_eq!(result.output, "10\n6\n16\n4\n");
+    }
+
+    #[test]
+    fn ejecuta_minus_minusf_not_y_conversion_a_float() {
+        let result = run_main(vec![
+            Instr::Unary {
+                dst: Operand::Temp(0),
+                op: UnOp::Neg,
+                src: Operand::Int(5),
+            },
+            Instr::Print(Operand::Temp(0)),
+            Instr::Unary {
+                dst: Operand::Temp(1),
+                op: UnOp::NegF,
+                src: Operand::Float(2.5),
+            },
+            Instr::Print(Operand::Temp(1)),
+            Instr::Unary {
+                dst: Operand::Temp(2),
+                op: UnOp::Not,
+                src: Operand::Bool(true),
+            },
+            Instr::Print(Operand::Temp(2)),
+            Instr::Unary {
+                dst: Operand::Temp(3),
+                op: UnOp::IntToFloat,
+                src: Operand::Int(3),
+            },
+            Instr::Print(Operand::Temp(3)),
+        ])
+        .unwrap();
+
+        assert_eq!(result.output, "-5\n-2.5\nfalse\n3\n");
+    }
+
+    #[test]
+    fn concatena_strings() {
+        let result = run_main(vec![
+            Instr::Binary {
+                dst: Operand::Temp(0),
+                op: BinOp::Concat,
+                left: Operand::Str("hola ".into()),
+                right: Operand::Str("mundo".into()),
+            },
+            Instr::Print(Operand::Temp(0)),
+        ])
+        .unwrap();
+
+        assert_eq!(result.output, "hola mundo\n");
+    }
+
+    #[test]
+    fn ejecuta_todas_las_comparaciones() {
+        let mut body = Vec::new();
+        for (temp, op) in [
+            BinOp::Eq,
+            BinOp::Ne,
+            BinOp::Lt,
+            BinOp::Le,
+            BinOp::Gt,
+            BinOp::Ge,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let dst = Operand::Temp(temp);
+            body.push(Instr::Binary {
+                dst: dst.clone(),
+                op,
+                left: Operand::Int(2),
+                right: Operand::Int(3),
+            });
+            body.push(Instr::Print(dst));
+        }
+
+        let result = run_main(body).unwrap();
+
+        assert_eq!(result.output, "false\ntrue\ntrue\ntrue\nfalse\nfalse\n");
+    }
+
+    #[test]
+    fn division_y_modulo_por_cero_son_errores() {
+        let div = run_main(vec![Instr::Binary {
+            dst: Operand::Temp(0),
+            op: BinOp::Div,
+            left: Operand::Int(5),
+            right: Operand::Int(0),
+        }]);
+        let modulo = run_main(vec![Instr::Binary {
+            dst: Operand::Temp(0),
+            op: BinOp::Mod,
+            left: Operand::Int(5),
+            right: Operand::Int(0),
+        }]);
+
+        assert_eq!(div, Err(RuntimeError::DivisionByZero));
+        assert_eq!(modulo, Err(RuntimeError::ModuloByZero));
+    }
+
+    #[test]
+    fn valores_incompatibles_producen_un_error() {
+        let result = run_main(vec![Instr::Binary {
+            dst: Operand::Temp(0),
+            op: BinOp::Add,
+            left: Operand::Str("x".into()),
+            right: Operand::Int(1),
+        }]);
+
+        assert_eq!(
+            result,
+            Err(RuntimeError::InvalidOperands {
+                operation: "+",
+                left: "string",
+                right: Some("integer"),
+            })
         );
     }
 }
