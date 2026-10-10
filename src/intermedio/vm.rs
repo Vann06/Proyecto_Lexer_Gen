@@ -111,6 +111,18 @@ pub enum RuntimeError {
     InvalidFramePointer { frame: usize },
     /// La etiqueta de función no existe en el programa.
     UnknownFunction { name: String },
+    /// Una dirección simbólica no corresponde a una vtable del programa.
+    UnknownDataAddress { name: String },
+    /// Un acceso a vtable debe caer en una ranura de puntero completa.
+    UnalignedVTableOffset { name: String, offset: isize },
+    /// El slot pedido no existe en la vtable.
+    VTableOutOfBounds {
+        name: String,
+        offset: isize,
+        entries: usize,
+    },
+    /// `callv` requiere la dirección simbólica de una función.
+    ExpectedCallableAddress { found: &'static str },
     /// `call f, n` no coincide con los `param` pendientes.
     PendingArgumentCount { function: String, nargs: usize, pending: usize },
     /// Una llamada que espera resultado terminó sin devolver un valor.
@@ -197,6 +209,24 @@ impl fmt::Display for RuntimeError {
             }
             RuntimeError::UnknownFunction { name } => {
                 write!(f, "la función {name} no existe en el programa TAC")
+            }
+            RuntimeError::UnknownDataAddress { name } => {
+                write!(f, "la dirección &{name} no corresponde a datos del programa")
+            }
+            RuntimeError::UnalignedVTableOffset { name, offset } => write!(
+                f,
+                "el offset {offset} no está alineado a una entrada de la vtable {name}"
+            ),
+            RuntimeError::VTableOutOfBounds {
+                name,
+                offset,
+                entries,
+            } => write!(
+                f,
+                "el offset {offset} queda fuera de la vtable {name}, que tiene {entries} entrada(s)"
+            ),
+            RuntimeError::ExpectedCallableAddress { found } => {
+                write!(f, "callv esperaba una dirección de función, obtuvo {found}")
             }
             RuntimeError::PendingArgumentCount {
                 function,
@@ -310,6 +340,48 @@ impl Heap {
     }
 }
 
+/// Segmento inmutable de datos para las vtables de `TacProgram::data`.
+#[derive(Debug, Default)]
+struct VTables {
+    entries: HashMap<String, Vec<String>>,
+}
+
+impl VTables {
+    fn load_program(&mut self, program: &TacProgram) {
+        self.entries.clear();
+        for item in &program.data {
+            self.entries
+                .insert(item.name.clone(), item.entries.clone());
+        }
+    }
+
+    fn load(&self, name: &str, offset: isize) -> Result<Value, RuntimeError> {
+        let entries = self
+            .entries
+            .get(name)
+            .ok_or_else(|| RuntimeError::UnknownDataAddress {
+                name: name.to_owned(),
+            })?;
+        let width = TargetLayout::default().pointer as isize;
+        if offset < 0 || offset % width != 0 {
+            return Err(RuntimeError::UnalignedVTableOffset {
+                name: name.to_owned(),
+                offset,
+            });
+        }
+        let slot = (offset / width) as usize;
+        entries
+            .get(slot)
+            .cloned()
+            .map(Value::Address)
+            .ok_or_else(|| RuntimeError::VTableOutOfBounds {
+                name: name.to_owned(),
+                offset,
+                entries: entries.len(),
+            })
+    }
+}
+
 /// Registro de activación estructurado.
 ///
 /// `slots` conserva los offsets en bytes del layout MIPS. Los temporales se
@@ -391,6 +463,7 @@ pub struct Vm<'a> {
     /// Pila de registros de activación. El último es el `$fp` actual.
     frames: Vec<Frame>,
     heap: Heap,
+    vtables: VTables,
     output: String,
     steps: usize,
     max_steps: usize,
@@ -411,6 +484,7 @@ impl<'a> Vm<'a> {
             // aun antes de llamar a `run`.
             frames: vec![Frame::default()],
             heap: Heap::default(),
+            vtables: VTables::default(),
             output: String::new(),
             steps: 0,
             max_steps,
@@ -450,6 +524,7 @@ impl<'a> Vm<'a> {
         self.globals.clear();
         self.frames.clear();
         self.heap.clear();
+        self.vtables.load_program(self.program);
         self.output.clear();
         self.steps = 0;
 
@@ -537,43 +612,24 @@ impl<'a> Vm<'a> {
                     pc += 1;
                 }
                 Instr::Call { dst, func, nargs } => {
-                    let called = self
-                        .program
-                        .functions
-                        .iter()
-                        .find(|candidate| candidate.name == *func)
-                        .cloned()
-                        .ok_or_else(|| RuntimeError::UnknownFunction { name: func.clone() })?;
-                    let pending = self.current_frame().pending_params.len();
-                    if pending != *nargs {
-                        return Err(RuntimeError::PendingArgumentCount {
-                            function: func.clone(),
-                            nargs: *nargs,
-                            pending,
-                        });
-                    }
-                    let params = std::mem::take(&mut self.current_frame_mut().pending_params);
-                    let access_link = self.current_frame_mut().pending_link.take();
-                    let caller = self.current_frame_id();
-                    self.frames.push(Frame::for_call(
-                        Some(caller),
-                        Some(pc + 1),
-                        access_link,
-                        params,
-                    ));
-
-                    // La recursión del intérprete representa el enlace de
-                    // control; la pila `frames` conserva el `$fp` observable.
-                    let returned = self.execute_function(&called);
-                    self.frames.pop();
-                    let returned = returned?;
-
-                    if let Some(dst) = dst {
-                        let value = returned.ok_or_else(|| RuntimeError::MissingReturnValue {
-                            function: func.clone(),
-                        })?;
-                        self.write_operand(dst, value)?;
-                    }
+                    self.invoke_call(func, *nargs, dst.as_ref(), pc + 1)?;
+                    pc += 1;
+                }
+                Instr::CallV {
+                    dst,
+                    target,
+                    nargs,
+                } => {
+                    let target = self.read_operand(target)?;
+                    let function = match target {
+                        Value::Address(function) => function,
+                        value => {
+                            return Err(RuntimeError::ExpectedCallableAddress {
+                                found: value.type_name(),
+                            })
+                        }
+                    };
+                    self.invoke_call(&function, *nargs, dst.as_ref(), pc + 1)?;
                     pc += 1;
                 }
                 Instr::Return(value) => {
@@ -614,6 +670,55 @@ impl<'a> Vm<'a> {
         self.frames
             .last_mut()
             .expect("la VM mantiene al menos un marco activo")
+    }
+
+    fn invoke_call(
+        &mut self,
+        function: &str,
+        nargs: usize,
+        dst: Option<&Operand>,
+        return_address: usize,
+    ) -> Result<(), RuntimeError> {
+        let called = self
+            .program
+            .functions
+            .iter()
+            .find(|candidate| candidate.name == function)
+            .cloned()
+            .ok_or_else(|| RuntimeError::UnknownFunction {
+                name: function.to_owned(),
+            })?;
+        let pending = self.current_frame().pending_params.len();
+        if pending != nargs {
+            return Err(RuntimeError::PendingArgumentCount {
+                function: function.to_owned(),
+                nargs,
+                pending,
+            });
+        }
+        let params = std::mem::take(&mut self.current_frame_mut().pending_params);
+        let access_link = self.current_frame_mut().pending_link.take();
+        let caller = self.current_frame_id();
+        self.frames.push(Frame::for_call(
+            Some(caller),
+            Some(return_address),
+            access_link,
+            params,
+        ));
+
+        // La recursión del intérprete representa el enlace de control; la
+        // pila `frames` conserva el `$fp` observable.
+        let returned = self.execute_function(&called);
+        self.frames.pop();
+        let returned = returned?;
+
+        if let Some(dst) = dst {
+            let value = returned.ok_or_else(|| RuntimeError::MissingReturnValue {
+                function: function.to_owned(),
+            })?;
+            self.write_operand(dst, value)?;
+        }
+        Ok(())
     }
 
     fn take_step(&mut self) -> Result<(), RuntimeError> {
@@ -690,14 +795,36 @@ impl<'a> Vm<'a> {
                 self.write_operand(dst, Value::Pointer(pointer))
             }
             Instr::Load { dst, base, index } => {
-                let (pointer, offset) = self.read_heap_address(base, index)?;
-                let value = self.heap.load(pointer, offset)?;
+                let (base, offset) = self.read_memory_address(base, index)?;
+                let value = match base {
+                    Value::Pointer(pointer) => self.heap.load(pointer, offset)?,
+                    Value::FramePointer(frame) => self
+                        .frames
+                        .get(frame)
+                        .ok_or(RuntimeError::InvalidFramePointer { frame })?
+                        .slots
+                        .get(&offset)
+                        .cloned()
+                        .ok_or(RuntimeError::UndefinedFrameSlot { offset })?,
+                    Value::Address(name) => self.vtables.load(&name, offset)?,
+                    value => {
+                        return Err(RuntimeError::ExpectedPointer {
+                            found: value.type_name(),
+                        })
+                    }
+                };
                 self.write_operand(dst, value)
             }
             Instr::Store { base, index, src } => {
                 let (pointer, offset) = self.read_heap_address(base, index)?;
                 let value = self.read_operand(src)?;
                 self.heap.store(pointer, offset, value)
+            }
+            Instr::AddrOf { dst, name } => {
+                if !self.vtables.entries.contains_key(name) {
+                    return Err(RuntimeError::UnknownDataAddress { name: name.clone() });
+                }
+                self.write_operand(dst, Value::Address(name.clone()))
             }
             Instr::CheckBounds { array, index } => {
                 let array = self.read_operand(array)?;
@@ -759,7 +886,7 @@ impl<'a> Vm<'a> {
         base: &Operand,
         index: &Operand,
     ) -> Result<(usize, isize), RuntimeError> {
-        let base = self.read_operand(base)?;
+        let (base, offset) = self.read_memory_address(base, index)?;
         let pointer = match base {
             Value::Pointer(pointer) => pointer,
             value => {
@@ -768,6 +895,15 @@ impl<'a> Vm<'a> {
                 })
             }
         };
+        Ok((pointer, offset))
+    }
+
+    fn read_memory_address(
+        &self,
+        base: &Operand,
+        index: &Operand,
+    ) -> Result<(Value, isize), RuntimeError> {
+        let base = self.read_operand(base)?;
         let index = self.read_operand(index)?;
         let offset = match index {
             Value::Int(offset) => isize::try_from(offset).map_err(|_| {
@@ -781,7 +917,7 @@ impl<'a> Vm<'a> {
                 })
             }
         };
-        Ok((pointer, offset))
+        Ok((base, offset))
     }
 
     /// Obtiene el valor de un operando.
@@ -870,6 +1006,7 @@ impl<'a> Vm<'a> {
                         .get(&offset)
                         .cloned()
                         .ok_or(RuntimeError::UndefinedFrameSlot { offset }),
+                    Value::Address(name) => self.vtables.load(name, offset),
                     value => Err(RuntimeError::ExpectedPointer {
                         found: value.type_name(),
                     }),
@@ -1054,6 +1191,7 @@ fn eval_binary(op: BinOp, left: Value, right: Value) -> Result<Value, RuntimeErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::intermedio::tac::DataItem;
 
     fn program_with_main(body: Vec<Instr>) -> TacProgram {
         let mut main = TacFunction::new("main", 0, 0);
@@ -2009,5 +2147,459 @@ mod tests {
         );
 
         assert_eq!(Vm::new(&program).run().unwrap().output, "40\n");
+    }
+
+    #[test]
+    fn contador_sumar_lee_y_escribe_total_y_paso_del_frame_exterior() {
+        let contador = function(
+            "contador",
+            1,
+            20,
+            vec![
+                Instr::Copy {
+                    dst: Operand::local("total", -12),
+                    src: Operand::Int(0),
+                },
+                Instr::Link(Operand::Var {
+                    name: "fp".into(),
+                    base: Base::Fp,
+                    offset: 0,
+                }),
+                Instr::Call {
+                    dst: Some(Operand::Temp(0)),
+                    func: "contador.sumar".into(),
+                    nargs: 0,
+                },
+                Instr::Return(Some(Operand::Temp(0))),
+            ],
+        );
+        let sumar = function(
+            "contador.sumar",
+            2,
+            24,
+            vec![
+                Instr::Copy {
+                    dst: Operand::Temp(0),
+                    src: Operand::mem(Base::Fp, 12),
+                },
+                Instr::Copy {
+                    dst: Operand::Temp(1),
+                    src: Operand::mem(Base::Fp, 12),
+                },
+                Instr::Binary {
+                    dst: Operand::Temp(2),
+                    op: BinOp::Add,
+                    left: Operand::Mem {
+                        base: Base::Temp(0),
+                        offset: -12,
+                        name: Some("total".into()),
+                    },
+                    right: Operand::Mem {
+                        base: Base::Temp(1),
+                        offset: 16,
+                        name: Some("paso".into()),
+                    },
+                },
+                Instr::Copy {
+                    dst: Operand::Mem {
+                        base: Base::Temp(0),
+                        offset: -12,
+                        name: Some("total".into()),
+                    },
+                    src: Operand::Temp(2),
+                },
+                Instr::Return(Some(Operand::Mem {
+                    base: Base::Temp(0),
+                    offset: -12,
+                    name: Some("total".into()),
+                })),
+            ],
+        );
+        let program = program_with_functions(
+            vec![
+                Instr::Param(Operand::Int(5)),
+                Instr::Call {
+                    dst: Some(Operand::Temp(0)),
+                    func: "contador".into(),
+                    nargs: 1,
+                },
+                Instr::Print(Operand::Temp(0)),
+            ],
+            vec![contador, sumar],
+        );
+
+        assert_eq!(Vm::new(&program).run().unwrap().output, "5\n");
+    }
+
+    #[test]
+    fn dos_enlaces_de_acceso_llegan_al_frame_del_abuelo_lexico() {
+        let outer = function(
+            "outer",
+            1,
+            16,
+            vec![
+                Instr::Copy {
+                    dst: Operand::local("x", -12),
+                    src: Operand::Int(7),
+                },
+                Instr::Link(Operand::Var {
+                    name: "fp".into(),
+                    base: Base::Fp,
+                    offset: 0,
+                }),
+                Instr::Call {
+                    dst: Some(Operand::Temp(0)),
+                    func: "outer.middle".into(),
+                    nargs: 0,
+                },
+                Instr::Return(Some(Operand::Temp(0))),
+            ],
+        );
+        let middle = function(
+            "outer.middle",
+            2,
+            16,
+            vec![
+                Instr::Link(Operand::Var {
+                    name: "fp".into(),
+                    base: Base::Fp,
+                    offset: 0,
+                }),
+                Instr::Call {
+                    dst: Some(Operand::Temp(0)),
+                    func: "outer.middle.inner".into(),
+                    nargs: 0,
+                },
+                Instr::Return(Some(Operand::Temp(0))),
+            ],
+        );
+        let inner = function(
+            "outer.middle.inner",
+            3,
+            16,
+            vec![
+                Instr::Copy {
+                    dst: Operand::Temp(0),
+                    src: Operand::mem(Base::Fp, 12),
+                },
+                Instr::Copy {
+                    dst: Operand::Temp(0),
+                    src: Operand::mem(Base::Temp(0), 12),
+                },
+                Instr::Return(Some(Operand::Mem {
+                    base: Base::Temp(0),
+                    offset: -12,
+                    name: Some("x".into()),
+                })),
+            ],
+        );
+        let program = program_with_functions(
+            vec![
+                Instr::Call {
+                    dst: Some(Operand::Temp(0)),
+                    func: "outer".into(),
+                    nargs: 0,
+                },
+                Instr::Print(Operand::Temp(0)),
+            ],
+            vec![outer, middle, inner],
+        );
+
+        assert_eq!(Vm::new(&program).run().unwrap().output, "7\n");
+    }
+
+    #[test]
+    fn recursion_anidada_conserva_access_link_distinto_del_control_link() {
+        let outer = function(
+            "outer",
+            1,
+            16,
+            vec![
+                Instr::Copy {
+                    dst: Operand::local("total", -12),
+                    src: Operand::Int(0),
+                },
+                Instr::Param(Operand::Int(3)),
+                Instr::Link(Operand::Var {
+                    name: "fp".into(),
+                    base: Base::Fp,
+                    offset: 0,
+                }),
+                Instr::Call {
+                    dst: Some(Operand::Temp(0)),
+                    func: "outer.contar".into(),
+                    nargs: 1,
+                },
+                Instr::Return(Some(Operand::Temp(0))),
+            ],
+        );
+        let nested = function(
+            "outer.contar",
+            2,
+            24,
+            vec![
+                Instr::IfRel {
+                    left: Operand::local("n", 16),
+                    op: BinOp::Le,
+                    right: Operand::Int(0),
+                    label: "fin".into(),
+                },
+                Instr::Copy {
+                    dst: Operand::Temp(0),
+                    src: Operand::mem(Base::Fp, 12),
+                },
+                Instr::Binary {
+                    dst: Operand::Temp(1),
+                    op: BinOp::Add,
+                    left: Operand::Mem {
+                        base: Base::Temp(0),
+                        offset: -12,
+                        name: Some("total".into()),
+                    },
+                    right: Operand::Int(1),
+                },
+                Instr::Copy {
+                    dst: Operand::Mem {
+                        base: Base::Temp(0),
+                        offset: -12,
+                        name: Some("total".into()),
+                    },
+                    src: Operand::Temp(1),
+                },
+                Instr::Binary {
+                    dst: Operand::Temp(1),
+                    op: BinOp::Sub,
+                    left: Operand::local("n", 16),
+                    right: Operand::Int(1),
+                },
+                Instr::Param(Operand::Temp(1)),
+                Instr::Link(Operand::Temp(0)),
+                Instr::Call {
+                    dst: Some(Operand::Temp(1)),
+                    func: "outer.contar".into(),
+                    nargs: 1,
+                },
+                Instr::Return(Some(Operand::Temp(1))),
+                Instr::Label("fin".into()),
+                Instr::Copy {
+                    dst: Operand::Temp(0),
+                    src: Operand::mem(Base::Fp, 12),
+                },
+                Instr::Return(Some(Operand::Mem {
+                    base: Base::Temp(0),
+                    offset: -12,
+                    name: Some("total".into()),
+                })),
+            ],
+        );
+        let program = program_with_functions(
+            vec![
+                Instr::Call {
+                    dst: Some(Operand::Temp(0)),
+                    func: "outer".into(),
+                    nargs: 0,
+                },
+                Instr::Print(Operand::Temp(0)),
+            ],
+            vec![outer, nested],
+        );
+
+        assert_eq!(Vm::new(&program).run().unwrap().output, "3\n");
+    }
+
+    #[test]
+    fn addrof_y_load_representan_una_vtable_inmutable() {
+        let mut program = program_with_main(vec![
+            Instr::AddrOf {
+                dst: Operand::Temp(0),
+                name: "vt_Simple".into(),
+            },
+            Instr::Load {
+                dst: Operand::Temp(1),
+                base: Operand::Temp(0),
+                index: Operand::Int(0),
+            },
+        ]);
+        program.data.push(DataItem {
+            name: "vt_Simple".into(),
+            entries: vec!["Simple.metodo".into()],
+        });
+        let mut vm = Vm::new(&program);
+
+        vm.run().unwrap();
+
+        assert_eq!(vm.temporary(0), Some(&Value::Address("vt_Simple".into())));
+        assert_eq!(
+            vm.temporary(1),
+            Some(&Value::Address("Simple.metodo".into()))
+        );
+    }
+
+    #[test]
+    fn callv_ejecuta_un_metodo_y_recibe_this_como_primer_parametro() {
+        let value_method = function(
+            "Caja.valor",
+            1,
+            16,
+            vec![
+                Instr::Copy {
+                    dst: Operand::Temp(0),
+                    src: Operand::local("this", 16),
+                },
+                Instr::Return(Some(Operand::Mem {
+                    base: Base::Temp(0),
+                    offset: 4,
+                    name: Some("valor".into()),
+                })),
+            ],
+        );
+        let mut program = program_with_functions(
+            vec![
+                Instr::Alloc {
+                    dst: Operand::Temp(0),
+                    size: Operand::Int(8),
+                },
+                Instr::Store {
+                    base: Operand::Temp(0),
+                    index: Operand::Int(0),
+                    src: Operand::Addr("vt_Caja".into()),
+                },
+                Instr::Store {
+                    base: Operand::Temp(0),
+                    index: Operand::Int(4),
+                    src: Operand::Int(17),
+                },
+                Instr::Param(Operand::Temp(0)),
+                Instr::Load {
+                    dst: Operand::Temp(1),
+                    base: Operand::Temp(0),
+                    index: Operand::Int(0),
+                },
+                Instr::Load {
+                    dst: Operand::Temp(1),
+                    base: Operand::Temp(1),
+                    index: Operand::Int(0),
+                },
+                Instr::CallV {
+                    dst: Some(Operand::Temp(2)),
+                    target: Operand::Temp(1),
+                    nargs: 1,
+                },
+                Instr::Print(Operand::Temp(2)),
+            ],
+            vec![value_method],
+        );
+        program.data.push(DataItem {
+            name: "vt_Caja".into(),
+            entries: vec!["Caja.valor".into()],
+        });
+
+        assert_eq!(Vm::new(&program).run().unwrap().output, "17\n");
+    }
+
+    #[test]
+    fn una_vtable_hija_puede_reusar_un_metodo_heredado() {
+        let inherited = function(
+            "Animal.nombre",
+            1,
+            8,
+            vec![Instr::Return(Some(Operand::Str("animal".into())))],
+        );
+        let mut program = program_with_functions(
+            vec![
+                Instr::Alloc {
+                    dst: Operand::Temp(0),
+                    size: Operand::Int(4),
+                },
+                Instr::Store {
+                    base: Operand::Temp(0),
+                    index: Operand::Int(0),
+                    src: Operand::Addr("vt_Perro".into()),
+                },
+                Instr::Param(Operand::Temp(0)),
+                Instr::Load {
+                    dst: Operand::Temp(1),
+                    base: Operand::Temp(0),
+                    index: Operand::Int(0),
+                },
+                Instr::Load {
+                    dst: Operand::Temp(1),
+                    base: Operand::Temp(1),
+                    index: Operand::Int(0),
+                },
+                Instr::CallV {
+                    dst: Some(Operand::Temp(2)),
+                    target: Operand::Temp(1),
+                    nargs: 1,
+                },
+                Instr::Print(Operand::Temp(2)),
+            ],
+            vec![inherited],
+        );
+        program.data.push(DataItem {
+            name: "vt_Perro".into(),
+            entries: vec!["Animal.nombre".into()],
+        });
+
+        assert_eq!(Vm::new(&program).run().unwrap().output, "animal\n");
+    }
+
+    #[test]
+    fn referencia_de_padre_sobre_objeto_hijo_despacha_al_override() {
+        let animal = function(
+            "Animal.hablar",
+            1,
+            8,
+            vec![Instr::Return(Some(Operand::Str("...".into())))],
+        );
+        let dog = function(
+            "Perro.hablar",
+            1,
+            8,
+            vec![Instr::Return(Some(Operand::Str("guau".into())))],
+        );
+        // El código usa el slot 0 definido por el tipo estático Animal, pero
+        // el objeto contiene vt_Perro y esa misma ranura apunta al override.
+        let mut program = program_with_functions(
+            vec![
+                Instr::Alloc {
+                    dst: Operand::Temp(0),
+                    size: Operand::Int(4),
+                },
+                Instr::Store {
+                    base: Operand::Temp(0),
+                    index: Operand::Int(0),
+                    src: Operand::Addr("vt_Perro".into()),
+                },
+                Instr::Param(Operand::Temp(0)),
+                Instr::Load {
+                    dst: Operand::Temp(1),
+                    base: Operand::Temp(0),
+                    index: Operand::Int(0),
+                },
+                Instr::Load {
+                    dst: Operand::Temp(1),
+                    base: Operand::Temp(1),
+                    index: Operand::Int(0),
+                },
+                Instr::CallV {
+                    dst: Some(Operand::Temp(2)),
+                    target: Operand::Temp(1),
+                    nargs: 1,
+                },
+                Instr::Print(Operand::Temp(2)),
+            ],
+            vec![animal, dog],
+        );
+        program.data.push(DataItem {
+            name: "vt_Animal".into(),
+            entries: vec!["Animal.hablar".into()],
+        });
+        program.data.push(DataItem {
+            name: "vt_Perro".into(),
+            entries: vec!["Perro.hablar".into()],
+        });
+
+        assert_eq!(Vm::new(&program).run().unwrap().output, "guau\n");
     }
 }
