@@ -18,3 +18,4 @@ pub mod gen;
 pub mod spec;
 pub mod tac;
 pub mod temps;
+pub mod vm;
