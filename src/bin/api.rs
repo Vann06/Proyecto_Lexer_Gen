@@ -44,6 +44,10 @@ struct PipelineRequest {
     // no romper llamadores viejos que todavía no lo mandan.
     #[serde(default = "default_source_name")]
     source_name: String,
+    /// Ejecutar el TAC generado. Ausente equivale a `false`, preservando el
+    /// contrato de las peticiones anteriores.
+    #[serde(default)]
+    run: bool,
 }
 
 #[derive(Deserialize)]
@@ -131,7 +135,14 @@ async fn parse_tokens(
 async fn run_pipeline(
     Json(req): Json<PipelineRequest>,
 ) -> Result<Json<api::ParseResponse>, (StatusCode, Json<Value>)> {
-    api::build_pipeline_response_named(&req.yal_content, &req.yalp_content, &req.source, &req.mode, &req.source_name)
+    api::build_pipeline_response_named_with_run(
+        &req.yal_content,
+        &req.yalp_content,
+        &req.source,
+        &req.mode,
+        &req.source_name,
+        req.run,
+    )
         .map(Json)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))
 }

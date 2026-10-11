@@ -16,6 +16,8 @@ fn pipeline_reports_lex_error_with_location() {
     assert!(lex_err["line"].as_u64().is_some(), "lex error should include line");
     assert!(lex_err["col"].as_u64().is_some(), "lex error should include col");
     assert!(lex_err["loc"].as_str().unwrap_or("").contains("input.txt"));
+    assert!(resp.tac.is_empty(), "un error léxico no puede producir TAC");
+    assert!(resp.run_output.is_none());
 }
 
 #[test]
@@ -46,6 +48,8 @@ fn pipeline_syntax_error_includes_expected_tokens_in_message() {
     let syn_err = syn_err.unwrap();
     let msg = syn_err["msg"].as_str().unwrap_or("");
     assert!(msg.contains("Esperado:"), "syntax error should include expected tokens");
+    assert!(resp.tac.is_empty(), "un error sintáctico no puede producir TAC");
+    assert!(resp.run_output.is_none());
 }
 
 // A4 — the workspace's default lexer.yal/parser.yalp/input.txt must be mutually

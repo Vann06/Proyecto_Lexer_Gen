@@ -123,6 +123,10 @@ pub enum RuntimeError {
     },
     /// `callv` requiere la dirección simbólica de una función.
     ExpectedCallableAddress { found: &'static str },
+    /// `try_end` no encontró un manejador instalado por el frame actual.
+    HandlerStackUnderflow,
+    /// `exception` solo es válido después de entrar a un `catch`.
+    NoCurrentException,
     /// `call f, n` no coincide con los `param` pendientes.
     PendingArgumentCount { function: String, nargs: usize, pending: usize },
     /// Una llamada que espera resultado terminó sin devolver un valor.
@@ -228,6 +232,12 @@ impl fmt::Display for RuntimeError {
             RuntimeError::ExpectedCallableAddress { found } => {
                 write!(f, "callv esperaba una dirección de función, obtuvo {found}")
             }
+            RuntimeError::HandlerStackUnderflow => {
+                write!(f, "try_end no encontró un manejador activo")
+            }
+            RuntimeError::NoCurrentException => {
+                write!(f, "no hay una excepción activa")
+            }
             RuntimeError::PendingArgumentCount {
                 function,
                 nargs,
@@ -262,6 +272,40 @@ impl fmt::Display for RuntimeError {
 }
 
 impl Error for RuntimeError {}
+
+impl RuntimeError {
+    /// Errores producidos por los datos del programa y, por tanto,
+    /// recuperables por `try/catch`. Los defectos estructurales del TAC y el
+    /// límite de pasos siguen siendo fatales para no ocultar programas
+    /// inválidos ni neutralizar la protección contra ciclos infinitos.
+    fn is_catchable(&self) -> bool {
+        matches!(
+            self,
+            RuntimeError::UndefinedTemporary { .. }
+                | RuntimeError::UndefinedGlobal { .. }
+                | RuntimeError::UndefinedFrameSlot { .. }
+                | RuntimeError::InvalidWriteTarget(_)
+                | RuntimeError::InvalidAllocationSize { .. }
+                | RuntimeError::ExpectedPointer { .. }
+                | RuntimeError::ExpectedIntegerOffset { .. }
+                | RuntimeError::InvalidPointer { .. }
+                | RuntimeError::HeapOutOfBounds { .. }
+                | RuntimeError::UninitializedHeapCell { .. }
+                | RuntimeError::IndexOutOfBounds { .. }
+                | RuntimeError::InvalidListLength { .. }
+                | RuntimeError::ZeroCheckFailed
+                | RuntimeError::ExpectedFramePointer { .. }
+                | RuntimeError::InvalidFramePointer { .. }
+                | RuntimeError::UnknownDataAddress { .. }
+                | RuntimeError::UnalignedVTableOffset { .. }
+                | RuntimeError::VTableOutOfBounds { .. }
+                | RuntimeError::InvalidOperands { .. }
+                | RuntimeError::DivisionByZero
+                | RuntimeError::ModuloByZero
+                | RuntimeError::ArithmeticOverflow { .. }
+        )
+    }
+}
 
 /// Resultado observable de una ejecución terminada.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -395,6 +439,22 @@ struct Frame {
     pending_link: Option<usize>,
 }
 
+/// Destino de un `catch`, ligado al frame que ejecutó `try_begin`.
+///
+/// Guardar el frame es lo que permite distinguir un handler del llamador de
+/// otro instalado dentro de la función llamada cuando un error se propaga.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ExceptionHandler {
+    frame_id: usize,
+    target_pc: usize,
+}
+
+enum StepOutcome {
+    Next,
+    Jump(usize),
+    Return(Option<Value>),
+}
+
 impl Frame {
     fn for_call(
         caller: Option<usize>,
@@ -464,6 +524,8 @@ pub struct Vm<'a> {
     frames: Vec<Frame>,
     heap: Heap,
     vtables: VTables,
+    handlers: Vec<ExceptionHandler>,
+    current_exception: Option<String>,
     output: String,
     steps: usize,
     max_steps: usize,
@@ -485,6 +547,8 @@ impl<'a> Vm<'a> {
             frames: vec![Frame::default()],
             heap: Heap::default(),
             vtables: VTables::default(),
+            handlers: Vec::new(),
+            current_exception: None,
             output: String::new(),
             steps: 0,
             max_steps,
@@ -525,6 +589,8 @@ impl<'a> Vm<'a> {
         self.frames.clear();
         self.heap.clear();
         self.vtables.load_program(self.program);
+        self.handlers.clear();
+        self.current_exception = None;
         self.output.clear();
         self.steps = 0;
 
@@ -546,25 +612,69 @@ impl<'a> Vm<'a> {
         function: &TacFunction,
     ) -> Result<Option<Value>, RuntimeError> {
         let labels = build_label_map(function)?;
+        let handler_base = self.handlers.len();
+        let frame_id = self.current_frame_id();
         let mut pc = 0usize;
 
         while pc < function.body.len() {
             self.take_step()?;
-            match &function.body[pc] {
-                Instr::Label(_) => pc += 1,
-                Instr::Goto(label) => pc = label_target(&labels, label)?,
+            match self.execute_step(&function.body[pc], &labels, pc) {
+                Ok(StepOutcome::Next) => pc += 1,
+                Ok(StepOutcome::Jump(target)) => pc = target,
+                Ok(StepOutcome::Return(value)) => {
+                    self.handlers.truncate(handler_base);
+                    return Ok(value);
+                }
+                Err(error) if error.is_catchable() => {
+                    let handler = self
+                        .handlers
+                        .iter()
+                        .rposition(|handler| handler.frame_id == frame_id)
+                        .map(|index| (index, self.handlers[index]));
+                    if let Some((index, handler)) = handler {
+                        // El handler que recibe el error deja de estar activo;
+                        // si el catch falla, debe verlo el try exterior.
+                        self.handlers.truncate(index);
+                        self.current_exception = Some(error.to_string());
+                        pc = handler.target_pc;
+                    } else {
+                        self.handlers.truncate(handler_base);
+                        return Err(error);
+                    }
+                }
+                Err(error) => {
+                    self.handlers.truncate(handler_base);
+                    return Err(error);
+                }
+            }
+        }
+
+        self.handlers.truncate(handler_base);
+        // `endfunc` implica retorno para procedimientos sin `return`.
+        Ok(None)
+    }
+
+    fn execute_step(
+        &mut self,
+        instruction: &Instr,
+        labels: &HashMap<String, usize>,
+        pc: usize,
+    ) -> Result<StepOutcome, RuntimeError> {
+        match instruction {
+                Instr::Label(_) => Ok(StepOutcome::Next),
+                Instr::Goto(label) => Ok(StepOutcome::Jump(label_target(labels, label)?)),
                 Instr::IfTrue { cond, label } => {
                     if self.read_condition(cond, "if")? {
-                        pc = label_target(&labels, label)?;
+                        Ok(StepOutcome::Jump(label_target(labels, label)?))
                     } else {
-                        pc += 1;
+                        Ok(StepOutcome::Next)
                     }
                 }
                 Instr::IfFalse { cond, label } => {
                     if !self.read_condition(cond, "ifFalse")? {
-                        pc = label_target(&labels, label)?;
+                        Ok(StepOutcome::Jump(label_target(labels, label)?))
                     } else {
-                        pc += 1;
+                        Ok(StepOutcome::Next)
                     }
                 }
                 Instr::IfRel {
@@ -585,15 +695,15 @@ impl<'a> Vm<'a> {
                         });
                     };
                     if matches!(result, Value::Bool(true)) {
-                        pc = label_target(&labels, label)?;
+                        Ok(StepOutcome::Jump(label_target(labels, label)?))
                     } else {
-                        pc += 1;
+                        Ok(StepOutcome::Next)
                     }
                 }
                 Instr::Param(operand) => {
                     let value = self.read_operand(operand)?;
                     self.current_frame_mut().pending_params.push(value);
-                    pc += 1;
+                    Ok(StepOutcome::Next)
                 }
                 Instr::Link(operand) => {
                     let value = self.read_operand(operand)?;
@@ -609,11 +719,11 @@ impl<'a> Vm<'a> {
                         }
                     };
                     self.current_frame_mut().pending_link = Some(frame);
-                    pc += 1;
+                    Ok(StepOutcome::Next)
                 }
                 Instr::Call { dst, func, nargs } => {
                     self.invoke_call(func, *nargs, dst.as_ref(), pc + 1)?;
-                    pc += 1;
+                    Ok(StepOutcome::Next)
                 }
                 Instr::CallV {
                     dst,
@@ -630,7 +740,7 @@ impl<'a> Vm<'a> {
                         }
                     };
                     self.invoke_call(&function, *nargs, dst.as_ref(), pc + 1)?;
-                    pc += 1;
+                    Ok(StepOutcome::Next)
                 }
                 Instr::Return(value) => {
                     let value = value
@@ -643,17 +753,30 @@ impl<'a> Vm<'a> {
                             .slots
                             .insert(return_offset, value.clone());
                     }
-                    return Ok(value);
+                    Ok(StepOutcome::Return(value))
+                }
+                Instr::TryBegin(label) => {
+                    let target_pc = label_target(labels, label)?;
+                    self.handlers.push(ExceptionHandler {
+                        frame_id: self.current_frame_id(),
+                        target_pc,
+                    });
+                    Ok(StepOutcome::Next)
+                }
+                Instr::TryEnd => {
+                    match self.handlers.last() {
+                        Some(handler) if handler.frame_id == self.current_frame_id() => {
+                            self.handlers.pop();
+                            Ok(StepOutcome::Next)
+                        }
+                        _ => Err(RuntimeError::HandlerStackUnderflow),
+                    }
                 }
                 instruction => {
                     self.execute_non_control(instruction)?;
-                    pc += 1;
+                    Ok(StepOutcome::Next)
                 }
             }
-        }
-
-        // `endfunc` implica retorno para procedimientos sin `return`.
-        Ok(None)
     }
 
     fn current_frame_id(&self) -> usize {
@@ -876,6 +999,13 @@ impl<'a> Vm<'a> {
                         right: None,
                     }),
                 }
+            }
+            Instr::GetException(dst) => {
+                let message = self
+                    .current_exception
+                    .clone()
+                    .ok_or(RuntimeError::NoCurrentException)?;
+                self.write_operand(dst, Value::Str(message))
             }
             other => Err(RuntimeError::UnsupportedInstruction(other.to_string())),
         }
@@ -2601,5 +2731,164 @@ mod tests {
         });
 
         assert_eq!(Vm::new(&program).run().unwrap().output, "guau\n");
+    }
+
+    #[test]
+    fn try_catch_intercepta_division_por_cero_y_expone_el_mensaje() {
+        let result = run_main(vec![
+            Instr::TryBegin("catch".into()),
+            Instr::Binary {
+                dst: Operand::Temp(0),
+                op: BinOp::Div,
+                left: Operand::Int(8),
+                right: Operand::Int(0),
+            },
+            Instr::TryEnd,
+            Instr::Goto("end".into()),
+            Instr::Label("catch".into()),
+            Instr::GetException(Operand::Temp(1)),
+            Instr::Print(Operand::Temp(1)),
+            Instr::Label("end".into()),
+        ])
+        .unwrap();
+
+        assert_eq!(result.output, "división por cero\n");
+    }
+
+    #[test]
+    fn try_catch_intercepta_indice_fuera_de_rango() {
+        let result = run_main(vec![
+            Instr::Alloc {
+                dst: Operand::Temp(0),
+                size: Operand::Int(8),
+            },
+            Instr::Store {
+                base: Operand::Temp(0),
+                index: Operand::Int(0),
+                src: Operand::Int(1),
+            },
+            Instr::TryBegin("catch".into()),
+            Instr::CheckBounds {
+                array: Operand::Temp(0),
+                index: Operand::Int(1),
+            },
+            Instr::TryEnd,
+            Instr::Goto("end".into()),
+            Instr::Label("catch".into()),
+            Instr::GetException(Operand::Temp(1)),
+            Instr::Print(Operand::Temp(1)),
+            Instr::Label("end".into()),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            result.output,
+            "índice 1 fuera de rango para una lista de longitud 1\n"
+        );
+    }
+
+    #[test]
+    fn try_anidado_desapila_el_handler_interno_antes_del_catch() {
+        let result = run_main(vec![
+            Instr::TryBegin("outer_catch".into()),
+            Instr::TryBegin("inner_catch".into()),
+            Instr::Binary {
+                dst: Operand::Temp(0),
+                op: BinOp::Div,
+                left: Operand::Int(1),
+                right: Operand::Int(0),
+            },
+            Instr::TryEnd,
+            Instr::Goto("inner_end".into()),
+            Instr::Label("inner_catch".into()),
+            Instr::GetException(Operand::Temp(1)),
+            Instr::Print(Operand::Temp(1)),
+            // El catch interno falla: como su handler ya se consumió, el
+            // error siguiente debe llegar al try exterior.
+            Instr::Binary {
+                dst: Operand::Temp(0),
+                op: BinOp::Mod,
+                left: Operand::Int(1),
+                right: Operand::Int(0),
+            },
+            Instr::Label("inner_end".into()),
+            Instr::TryEnd,
+            Instr::Goto("outer_end".into()),
+            Instr::Label("outer_catch".into()),
+            Instr::GetException(Operand::Temp(2)),
+            Instr::Print(Operand::Temp(2)),
+            Instr::Label("outer_end".into()),
+        ])
+        .unwrap();
+
+        assert_eq!(result.output, "división por cero\nmódulo por cero\n");
+    }
+
+    #[test]
+    fn error_sin_handler_termina_la_ejecucion() {
+        let error = run_main(vec![Instr::Binary {
+            dst: Operand::Temp(0),
+            op: BinOp::Div,
+            left: Operand::Int(1),
+            right: Operand::Int(0),
+        }])
+        .unwrap_err();
+
+        assert_eq!(error, RuntimeError::DivisionByZero);
+    }
+
+    #[test]
+    fn try_end_limpia_el_handler_y_no_captura_errores_posteriores() {
+        let error = run_main(vec![
+            Instr::TryBegin("catch".into()),
+            Instr::TryEnd,
+            Instr::Binary {
+                dst: Operand::Temp(0),
+                op: BinOp::Div,
+                left: Operand::Int(1),
+                right: Operand::Int(0),
+            },
+            Instr::Goto("end".into()),
+            Instr::Label("catch".into()),
+            Instr::Print(Operand::Str("no debe ejecutarse".into())),
+            Instr::Label("end".into()),
+        ])
+        .unwrap_err();
+
+        assert_eq!(error, RuntimeError::DivisionByZero);
+    }
+
+    #[test]
+    fn un_handler_del_caller_captura_un_error_propagado_por_el_callee() {
+        let failing = function(
+            "falla",
+            1,
+            8,
+            vec![Instr::Binary {
+                dst: Operand::Temp(0),
+                op: BinOp::Div,
+                left: Operand::Int(1),
+                right: Operand::Int(0),
+            }],
+        );
+        let program = program_with_functions(
+            vec![
+                Instr::TryBegin("catch".into()),
+                Instr::Call {
+                    dst: None,
+                    func: "falla".into(),
+                    nargs: 0,
+                },
+                Instr::TryEnd,
+                Instr::Goto("end".into()),
+                Instr::Label("catch".into()),
+                Instr::GetException(Operand::Temp(0)),
+                Instr::Print(Operand::Temp(0)),
+                Instr::Label("end".into()),
+            ],
+            vec![failing],
+        );
+
+        assert_eq!(Vm::new(&program).run().unwrap().output, "división por cero\n");
     }
 }
