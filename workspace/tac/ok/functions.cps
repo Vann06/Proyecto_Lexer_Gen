@@ -1,4 +1,4 @@
-// cubre: function, recursion, closure
+// cubre: function, call_return, recursion, closure
 // salida: 5
 // salida: 120
 // salida: 3

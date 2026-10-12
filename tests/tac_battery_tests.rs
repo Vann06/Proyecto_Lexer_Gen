@@ -14,7 +14,10 @@ use std::path::{Path, PathBuf};
 const REQUIRED_COVERAGE: &[&str] = &[
     "arithmetic",
     "precedence",
+    "temporaries",
+    "concat",
     "booleans",
+    "comparisons",
     "short_circuit",
     "if_else",
     "while",
@@ -23,11 +26,15 @@ const REQUIRED_COVERAGE: &[&str] = &[
     "switch",
     "break_continue",
     "function",
+    "call_return",
     "recursion",
     "closure",
     "class",
+    "new_this_method",
+    "inheritance",
     "override_callv",
     "list",
+    "indexing",
     "index_error",
     "division_zero",
     "try_catch",
@@ -51,7 +58,11 @@ fn cps_files(directory: &Path) -> Vec<PathBuf> {
         .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("cps"))
         .collect();
     files.sort();
-    assert!(!files.is_empty(), "no hay casos .cps en '{}'", directory.display());
+    assert!(
+        !files.is_empty(),
+        "no hay casos .cps en '{}'",
+        directory.display()
+    );
     files
 }
 
@@ -82,15 +93,8 @@ fn compile(path: &Path, source: &str, run: bool) -> ParseResponse {
         .file_name()
         .and_then(|name| name.to_str())
         .expect("el fixture debe tener un nombre UTF-8");
-    api::build_pipeline_response_named_with_run(
-        &yal,
-        &yalp,
-        source,
-        "lalr",
-        source_name,
-        run,
-    )
-    .unwrap_or_else(|error| panic!("falló el pipeline para '{}': {error}", path.display()))
+    api::build_pipeline_response_named_with_run(&yal, &yalp, source, "lalr", source_name, run)
+        .unwrap_or_else(|error| panic!("falló el pipeline para '{}': {error}", path.display()))
 }
 
 fn error_codes(response: &ParseResponse) -> Vec<&str> {
@@ -150,6 +154,19 @@ fn todos_los_casos_ok_generan_y_ejecutan() {
             path.display()
         );
 
+        if directives(&source, "cubre")
+            .into_iter()
+            .flat_map(|line| line.split(','))
+            .any(|feature| feature.trim() == "concat")
+        {
+            assert!(
+                response.tac.contains(" concat "),
+                "'{}' cubre concat pero su TAC no usa la instrucción concat:\n{}",
+                path.display(),
+                response.tac
+            );
+        }
+
         let expected_tac_path = path.with_extension("tac");
         if expected_tac_path.exists() {
             compared_tac += 1;
@@ -167,7 +184,11 @@ fn todos_los_casos_ok_generan_y_ejecutan() {
         .copied()
         .filter(|feature| !coverage.contains(*feature))
         .collect();
-    assert!(missing.is_empty(), "faltan casos para: {}", missing.join(", "));
+    assert!(
+        missing.is_empty(),
+        "faltan casos para: {}",
+        missing.join(", ")
+    );
     assert!(
         compared_tac > 0,
         "debe existir al menos un .tac esperado para probar la comparación textual"
@@ -188,12 +209,38 @@ fn todos_los_casos_error_reportan_codigo_y_no_generan_tac() {
         );
 
         let response = compile(&path, &source, true);
-        let actual_codes = error_codes(&response);
+        let actual_errors: Vec<_> = response
+            .problems
+            .iter()
+            .filter(|problem| problem["level"] == "err")
+            .collect();
+        let actual_codes: Vec<_> = actual_errors
+            .iter()
+            .filter_map(|problem| problem["code"].as_str())
+            .collect();
         for expected in expected_codes {
+            let problem = actual_errors
+                .iter()
+                .find(|problem| problem["code"] == expected)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "'{}' debía reportar {expected}; obtuvo {actual_codes:?}",
+                        path.display()
+                    )
+                });
             assert!(
-                actual_codes.contains(&expected),
-                "'{}' debía reportar {expected}; obtuvo {actual_codes:?}",
-                path.display()
+                problem["msg"]
+                    .as_str()
+                    .is_some_and(|msg| !msg.trim().is_empty()),
+                "{expected} debe incluir mensaje: {problem:#?}"
+            );
+            assert!(
+                problem["line"].as_u64().is_some_and(|line| line > 0),
+                "{expected} debe incluir línea: {problem:#?}"
+            );
+            assert!(
+                problem["col"].as_u64().is_some_and(|col| col > 0),
+                "{expected} debe incluir columna: {problem:#?}"
             );
         }
         assert!(
@@ -202,13 +249,30 @@ fn todos_los_casos_error_reportan_codigo_y_no_generan_tac() {
             path.display(),
             response.tac
         );
-        assert!(response.tac_quads.is_null(), "'{}' produjo cuádruplos", path.display());
-        assert!(response.run_output.is_none(), "'{}' llegó a ejecutar la VM", path.display());
+        assert!(
+            response.tac_quads.is_null(),
+            "'{}' produjo cuádruplos",
+            path.display()
+        );
+        assert!(
+            response.symbols_ext.is_null(),
+            "'{}' produjo tabla extendida",
+            path.display()
+        );
+        assert!(
+            response.temps.is_empty(),
+            "'{}' asignó temporales",
+            path.display()
+        );
+        assert!(
+            response.run_output.is_none(),
+            "'{}' llegó a ejecutar la VM",
+            path.display()
+        );
     }
 }
 
 #[test]
-#[ignore = "rubrica.cps hoy genera '+' para dos strings en el catch; debe emitir concat"]
 fn rubrica_completa_compila_y_ejecuta() {
     let path = workspace("rubrica.cps");
     let source = read(&path);

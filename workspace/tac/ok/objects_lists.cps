@@ -1,4 +1,4 @@
-// cubre: class, override_callv, list
+// cubre: concat, class, new_this_method, inheritance, override_callv, list, indexing
 // salida: Toby: guau
 // salida: guau
 // salida: 1

@@ -56,10 +56,9 @@ window.IDE_DATA = {
   // "árbol de análisis anotado" del libro del dragón) cuando hay %ident;
   // esto lo lista en orden de lectura para poder buscar un nodo puntual.
   TYPES: [],
-  // Fase 3 de código intermedio. `RUN_OUTPUT` usa null para distinguir
-  // "todavía no se ejecutó" de un programa que ejecutó sin imprimir nada.
+  // Fase 3 de código intermedio presentada por el IDE. La VM permanece en el
+  // backend para validación interna, pero esta interfaz siempre usa run:false.
   TAC: "",
   SYMBOLS_EXT: null,
   TEMPS: [],
-  RUN_OUTPUT: null,
 };

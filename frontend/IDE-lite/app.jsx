@@ -743,38 +743,42 @@ function ProblemsView({ onJump }){
 }
 
 /* TAC textual devuelto por el pipeline. Usa el mismo resaltador liviano del
-   editor; la salida es la capturada por la VM cuando la petición lleva
-   `run: true`, sin ejecutar nada en el navegador. */
-function TacView({ onExecute, loading }){
+   editor y no ejecuta la VM: el IDE oficial solo compila y presenta CI. */
+function TacView(){
   const tac = D.TAC || "";
-  const hasOutput = D.RUN_OUTPUT !== null && D.RUN_OUTPUT !== undefined;
-  const runtimeError = (D.PROBLEMS || []).some(p => (p.code || "").startsWith("R"));
+
   return (
     <div className="tac-view">
       <div className="tac-toolbar">
         <div className="h-pixel" style={{color:"var(--pink)"}}>
           ▍ CÓDIGO DE TRES DIRECCIONES
-          {tac && <span className="dim" style={{marginLeft:10}}>· {tac.split("\n").length} líneas</span>}
+          {tac && (
+            <span className="dim" style={{marginLeft:10}}>
+              · {tac.split("\n").length} líneas
+            </span>
+          )}
         </div>
-        <button className="runbtn tac-run" onClick={onExecute} disabled={loading}>
-          {loading ? "..." : <><span className="play"/>EJECUTAR</>}
-        </button>
       </div>
 
       {tac
-        ? <pre className="tac-code" dangerouslySetInnerHTML={{__html:tokenize(tac, "tac")}}/>
-        : <div className="dim tac-empty">Presiona ▶ ANALIZAR para generar TAC.</div>}
-
-      <div className="h-pixel tac-output-title">▍ SALIDA DEL PROGRAMA</div>
-      {runtimeError && <div className="tac-runtime-error">La VM reportó un error. Revisa la pestaña PROBLEMAS.</div>}
-      <pre className="tac-output">{hasOutput ? (D.RUN_OUTPUT || "(sin salida)") : "Presiona ▶ EJECUTAR para iniciar la VM."}</pre>
+        ? (
+          <pre
+            className="tac-code"
+            dangerouslySetInnerHTML={{__html:tokenize(tac, "tac")}}
+          />
+        )
+        : (
+          <div className="dim tac-empty">
+            Presiona ▶ ANALIZAR para generar TAC.
+          </div>
+        )
+      }
     </div>
   );
 }
-
 /* ============================== Right results panel ============================== */
 
-function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, resultsSize, onJump, onExecute, loading }){
+function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, resultsSize, onJump }){
   const problemCount = D.PROBLEMS.length;
   const TABS = [
     {id:"tac",      label:"TAC", badge: D.TAC ? D.TAC.split("\n").length : null},
@@ -804,7 +808,7 @@ function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, result
           )}
         </div>
         <div className="rbody">
-          {activeTab==="tac"     && <TacView onExecute={onExecute} loading={loading}/>}
+          {activeTab==="tac"     && <TacView/>}
           {activeTab==="tokens"  && <TokensView/>}
           {activeTab==="tree"    && <ParseTreeView renderKey={renderKey}/>}
           {activeTab==="symbols" && <SymbolTableView/>}
@@ -997,7 +1001,7 @@ function App(){
   // ── ANALIZAR: pipeline completo (.yal + .yalp + fuente) en un solo paso —
   // sin stepper, así que no hace falta separar compilar-gramática de
   // parsear-una-cadena como en el IDE completo. ───────────────────────────
-  const runPipeline = async (execute = false) => {
+  const runPipeline = async () => {
     if (!D.FILES.yal.rawContent.trim() || !D.FILES.yalp.rawContent.trim() || !D.FILES.test.rawContent.trim()) {
       D.PROBLEMS = [{ level:"err", code:"E000", msg:"Cargá .yal, .yalp y el fuente de prueba antes de analizar.", loc:"" }];
       setTab("errors");
@@ -1015,7 +1019,7 @@ function App(){
           source:       D.FILES.test.rawContent,
           source_name:  D.FILES.test.name,
           mode,
-          run: execute,
+          run: false,
         }),
       });
       if (!res.ok) throw new Error(await res.text());
@@ -1029,14 +1033,13 @@ function App(){
       D.TAC             = data.tac || "";
       D.SYMBOLS_EXT     = data.symbols_ext && typeof data.symbols_ext === "object" ? data.symbols_ext : null;
       D.TEMPS           = Array.isArray(data.temps) ? data.temps : [];
-      D.RUN_OUTPUT      = execute && Object.prototype.hasOwnProperty.call(data, "run_output") ? data.run_output : null;
       D.PARSE_ACCEPTED = !!data.accepted;
       D.PARSE_ERROR = data.error || null;
       D.PROBLEMS = data.problems && data.problems.length ? data.problems : [];
 
       bump(n => n + 1);
       const hasErrors = !data.accepted || (data.problems && data.problems.some(p => p.level === "err"));
-      setTab(hasErrors && !data.tac ? "errors" : execute ? "tac" : "tree");
+      setTab(hasErrors && !data.tac ? "errors" : "tac");
       rerender();
     } catch(e) {
       console.error("API /pipeline:", e);
@@ -1050,7 +1053,6 @@ function App(){
       D.TAC = "";
       D.SYMBOLS_EXT = null;
       D.TEMPS = [];
-      D.RUN_OUTPUT = null;
       D.PARSE_ACCEPTED = null;
       D.PARSE_ERROR = msg;
       D.PROBLEMS = [{ level:"err", code:"E001", msg, loc:`pipeline ${mode.toUpperCase()}` }];
@@ -1066,7 +1068,7 @@ function App(){
   useEffect(() => {
     if (prevModeRef.current === mode) return;
     prevModeRef.current = mode;
-    if (D.PARSE_ACCEPTED !== null) runPipeline(false);
+    if (D.PARSE_ACCEPTED !== null) runPipeline();
   }, [mode]);
 
   const RESULTS_WIDTHS = { normal: 460, wide: 760 };
@@ -1117,7 +1119,7 @@ function App(){
         "--col-right": `${layout.right}px`,
       }}
     >
-      <Header activeFile={activeFile} setFile={setFile} onRun={() => runPipeline(false)} onSave={handleSave}
+      <Header activeFile={activeFile} setFile={setFile} onRun={runPipeline} onSave={handleSave}
               loading={loading} mode={mode} setMode={setMode}/>
 
       <div id="files" className="panel" data-screen-label="files">
@@ -1143,8 +1145,7 @@ function App(){
           onToggleSize={cycleResults}
           resultsSize={resultsSize}
           onJump={handleJump}
-          onExecute={() => runPipeline(true)}
-          loading={loading}/>
+        />
       </div>
 
       <StatusBar activeFile={activeFile} mode={mode}/>

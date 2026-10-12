@@ -2,9 +2,9 @@
 
 El IDE web del proyecto: editor con resaltado, sidebar de archivos y un solo
 botón **▶ ANALIZAR** que corre el pipeline completo (`POST /api/pipeline`)
-sobre TODO el archivo de prueba. La pestaña **TAC** agrega **▶ EJECUTAR**,
-que repite la misma petición con `run: true` y muestra la salida capturada
-por la VM. Es lo que levanta `docker-compose.yml` en `:4000`.
+sobre TODO el archivo de prueba con `run: false`. La pestaña **TAC** muestra
+el código intermedio generado; la VM se conserva para validación interna y no
+se expone en esta interfaz. Es lo que levanta `docker-compose.yml` en `:4000`.
 
 Modos de parser: **LALR(1)** y **SLR(1)**. No hay LL(1): en ese modo el
 backend no corre el análisis semántico (la transformación de la gramática
@@ -31,7 +31,7 @@ recalcula ni se reconstruye en el cliente:
 
 | Pestaña | Campo de `/api/pipeline` |
 |---|---|
-| TAC | `tac`; **▶ EJECUTAR** solicita `run: true` y muestra `run_output` |
+| TAC | `tac`, con resaltado ligero de instrucciones, temporales y etiquetas |
 | TOKENS | `token_map` |
 | ÁRBOL SINTÁCTICO | `parse_tree_dot` — sale auto-anotado con el tipo de cada expresión en cuanto hay análisis semántico (el "árbol de análisis anotado" del libro del dragón: mismo campo, el backend decide en `api/pipeline.rs` si lo dibuja plano o anotado según si corrió `analyze()`) |
 | SÍMBOLOS | `symbols_ext` (área, offset, tamaño, etiqueta, nivel y frames) **+** `symbol_table` (estado final) **+** `scopes` (una foto de cada entorno Function/Class/Block al cerrarse) |

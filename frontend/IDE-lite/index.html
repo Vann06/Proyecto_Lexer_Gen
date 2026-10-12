@@ -313,11 +313,10 @@
   }
   table.t th{ background: var(--bg-2); color: var(--pink); font-family:"Press Start 2P","VT323"; font-size:9px; letter-spacing:1px;}
 
-  /* TAC + salida de la VM */
+  /* Código intermedio TAC */
   .tac-view{ min-height:100%; display:flex; flex-direction:column; gap:10px; }
   .tac-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
-  .tac-run{ flex:none; font-size:9px; padding:5px 9px; }
-  .tac-code, .tac-output{
+  .tac-code{
     margin:0; padding:12px;
     border:1px solid var(--line); background:var(--bg-2);
     color:var(--tx); font-family:"VT323",ui-monospace,monospace;
@@ -325,10 +324,7 @@
     white-space:pre; overflow:auto;
   }
   .tac-code{ min-height:220px; flex:1; }
-  .tac-output{ min-height:76px; color:var(--green); }
-  .tac-output-title{ color:var(--pink); margin-top:4px; }
   .tac-empty{ padding:20px; border:1px dashed var(--line); }
-  .tac-runtime-error{ color:var(--red); border:1px solid var(--red); background:rgba(239,68,68,.08); padding:6px 10px; }
 
   /* tokens */
   .tok{
@@ -469,7 +465,7 @@
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@viz-js/viz@3.2.4/lib/viz-standalone.js"></script>
 
-<script type="text/babel" src="./data.jsx?v=4"></script>
-<script type="text/babel" src="./app.jsx?v=9"></script>
+<script type="text/babel" src="./data.jsx?v=5"></script>
+<script type="text/babel" src="./app.jsx?v=10"></script>
 </body>
 </html>

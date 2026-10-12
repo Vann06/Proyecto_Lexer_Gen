@@ -1,4 +1,4 @@
-// cubre: booleans, short_circuit, if_else, while, do_while, for, switch, break_continue
+// cubre: booleans, comparisons, short_circuit, if_else, while, do_while, for, switch, break_continue
 // salida: 1
 // salida: 1
 // salida: 3
