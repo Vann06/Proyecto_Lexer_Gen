@@ -4,9 +4,9 @@
 // tipo de cada expresión en cuanto hay análisis semántico — es el "árbol de
 // análisis anotado" del libro del dragón, ver
 // src/sintactico/runtime/parse_tree.rs), tabla de símbolos (estado final +
-// por entorno, incluidos bloques anónimos), tabla de tipos por nodo y
-// problemas de todas las fases. Todo sale de una sola llamada a
-// `POST /api/pipeline`.
+// por entorno, incluidos bloques anónimos), tabla extendida, TAC ejecutable,
+// tabla de tipos por nodo y problemas de todas las fases. Todo sale de una
+// sola llamada a `POST /api/pipeline`.
 const { useState, useEffect, useRef } = React;
 const D = window.IDE_DATA;
 
@@ -85,6 +85,16 @@ const HL_RULES = {
     { re: /[A-Za-z_][A-Za-z0-9_]*/y, cls: "fn" },
     { re: /[0-9]+/y, cls: "num" },
     { re: /[{}()\[\];,.:=+\-*/%<>!&|?]+/y, cls: "op" },
+  ],
+  tac: [
+    { re: /;[^\n]*/y, cls: "com" },
+    { re: /"(\\.|[^"\\])*"/y, cls: "str" },
+    { re: /\b(func|endfunc|data|goto|if|ifFalse|param|link|call|callv|return|alloc|check_bounds|check_zero|try_begin|try_end|exception|print|concat|minus|minusf)\b/y, cls: "kw" },
+    { re: /\b(true|false|null)\b/y, cls: "term" },
+    { re: /\b(t[0-9]+|fp|G)\b/y, cls: "fn" },
+    { re: /-?[0-9]+(?:\.[0-9]+)?/y, cls: "num" },
+    { re: /[A-Za-z_$][A-Za-z0-9_.$]*(?=:)/y, cls: "nonterm" },
+    { re: /[+\-*/%<>=!&\[\](),:]+/y, cls: "op" },
   ],
   g4: [
     { re: /\/\/[^\n]*/y, cls: "com" },
@@ -386,6 +396,13 @@ const SYMBOL_KIND_COLOR = {
   Function:  "var(--cyan)",
   Parameter: "var(--green)",
   Variable:  "var(--yellow)",
+  clase:     "var(--pink)",
+  struct:    "var(--blue)",
+  función:   "var(--cyan)",
+  método:    "var(--cyan)",
+  parámetro: "var(--green)",
+  variable:  "var(--yellow)",
+  campo:     "var(--coral)",
 };
 const SCOPE_KIND_COLOR = {
   Global:   "var(--magenta)",
@@ -465,6 +482,63 @@ function SymbolTableRows({ rows }){
 
 const SYMBOL_TABLE_HEADERS = ["NOMBRE","TIPO","DATO","MOD.","POS.","CONTENEDOR"];
 
+const valueOrDash = value => value === null || value === undefined || value === "" ? "—" : value;
+
+/* Vista directa de `symbols_ext`: no reconstruye offsets ni tamaños en el
+   navegador. El backend ya consumió LayoutReport y devuelve esta forma
+   estable para símbolos y registros de activación. */
+function ExtendedSymbolsView({ data }){
+  const symbols = Array.isArray(data?.symbols) ? data.symbols : [];
+  const frames = Array.isArray(data?.frames) ? data.frames : [];
+  if (!symbols.length && !frames.length) return null;
+  return (
+    <>
+      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
+        ▍ TABLA EXTENDIDA · {symbols.length} símbolo{symbols.length===1?"":"s"}
+        <span className="dim" style={{marginLeft:10}}>· direcciones calculadas por el backend</span>
+      </div>
+      <table className="t">
+        <thead>
+          <tr><th>NOMBRE</th><th>CLASE</th><th>TIPO</th><th>ÁMBITO</th><th>ÁREA</th><th>OFFSET</th><th>TAMAÑO</th><th>ETIQUETA</th><th>NIVEL</th></tr>
+        </thead>
+        <tbody>
+          {symbols.map((sym, i) => (
+            <tr key={i}>
+              <td style={{color:"var(--yellow)", textAlign:"left"}}>{sym.name}</td>
+              <td style={{color:kindColor(sym.kind, SYMBOL_KIND_COLOR)}}>{sym.kind}</td>
+              <td style={{color:"var(--cyan)"}}>{valueOrDash(sym.ty)}</td>
+              <td className="dim" style={{textAlign:"left"}}>{valueOrDash(sym.scope)}</td>
+              <td style={{color:"var(--green)"}}>{valueOrDash(sym.area)}</td>
+              <td>{valueOrDash(sym.offset)}</td>
+              <td>{valueOrDash(sym.size)}</td>
+              <td className="dim" style={{textAlign:"left"}}>{valueOrDash(sym.label)}</td>
+              <td>{valueOrDash(sym.nesting_level)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div className="h-pixel" style={{color:"var(--pink)", margin:"18px 0 8px"}}>
+        ▍ REGISTROS DE ACTIVACIÓN · {frames.length}
+      </div>
+      <table className="t">
+        <thead><tr><th>FUNCIÓN / OWNER</th><th>NIVEL</th><th>MARCO BASE</th><th>TEMPORALES</th><th>MARCO TOTAL</th></tr></thead>
+        <tbody>
+          {frames.map((frame, i) => (
+            <tr key={i}>
+              <td style={{color:"var(--cyan)", textAlign:"left"}}>{frame.owner}</td>
+              <td>{frame.level}</td>
+              <td>{frame.base_frame_size}</td>
+              <td>{frame.temp_slots}</td>
+              <td style={{color:"var(--green)"}}>{frame.total_frame_size}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
+
 /* Panel de la tabla de símbolos, en dos tablas que NO son redundantes:
 
    1. ESTADO FINAL — SymbolTable::dump(): lo que sobrevive al terminar el
@@ -483,7 +557,9 @@ const SYMBOL_TABLE_HEADERS = ["NOMBRE","TIPO","DATO","MOD.","POS.","CONTENEDOR"]
 function SymbolTableView(){
   const dump = D.SYMBOL_TABLE;
   const scopes = D.SCOPES || [];
-  if (!dump) {
+  const extended = D.SYMBOLS_EXT || null;
+  const hasExtended = (extended?.symbols?.length || 0) + (extended?.frames?.length || 0) > 0;
+  if (!dump && !hasExtended) {
     return (
       <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
         ▍ TABLA DE SÍMBOLOS
@@ -493,69 +569,74 @@ function SymbolTableView(){
       </div>
     );
   }
-  const finalRows = flattenSymbolDump(parseSymbolDump(dump), []);
+  const finalRows = dump ? flattenSymbolDump(parseSymbolDump(dump), []) : [];
   return (
     <div>
-      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
-        ▍ TABLA DE SÍMBOLOS · ESTADO FINAL · {finalRows.length}
-        <span className="dim" style={{marginLeft:10}}>
-          · lo que queda vivo al terminar: el ámbito global y los miembros de
-          funciones y clases
-        </span>
-      </div>
-      <table className="t">
-        <thead><tr>{SYMBOL_TABLE_HEADERS.map(h => <th key={h}>{h}</th>)}</tr></thead>
-        <tbody><SymbolTableRows rows={finalRows}/></tbody>
-      </table>
+      {hasExtended && <ExtendedSymbolsView data={extended}/>}
+      {dump && <>
+        <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
+          ▍ TABLA DE SÍMBOLOS · ESTADO FINAL · {finalRows.length}
+          <span className="dim" style={{marginLeft:10}}>
+            · lo que queda vivo al terminar: el ámbito global y los miembros de
+            funciones y clases
+          </span>
+        </div>
+        <table className="t">
+          <thead><tr>{SYMBOL_TABLE_HEADERS.map(h => <th key={h}>{h}</th>)}</tr></thead>
+          <tbody><SymbolTableRows rows={finalRows}/></tbody>
+        </table>
+      </>}
 
-      <div className="h-pixel" style={{color:"var(--pink)", margin:"18px 0 8px"}}>
-        ▍ TABLA DE SÍMBOLOS · POR ENTORNO (función / clase / bloque) · {scopes.length}
-        <span className="dim" style={{marginLeft:10}}>
-          {scopes.length
-            ? "· cada entorno tal como estaba al cerrarse, en orden de cierre — incluye los bloques anónimos que no sobreviven arriba"
-            : "· este programa no abrió ningún ámbito propio"}
-        </span>
-      </div>
-      <table className="t">
-        <thead>
-          <tr><th>#</th><th>ENTORNO</th><th>APERTURA</th><th>PROF.</th><th>NOMBRE</th><th>TIPO</th><th>DATO</th><th>MOD.</th><th>POS.</th></tr>
-        </thead>
-        <tbody>
-          {scopes.flatMap((sc, i) => {
-            const entorno = `${sc.kind}${sc.label ? `(${sc.label})` : ""}`;
-            const entornoColor = kindColor(sc.kind, SCOPE_KIND_COLOR);
-            const apertura = (sc.line || sc.col) ? `${sc.line}:${sc.col}` : "—";
-            if (!sc.symbols || !sc.symbols.length) {
-              return (
-                <tr key={i}>
-                  <td className="dim">{sc.order}</td>
-                  <td style={{color: entornoColor}}>{entorno}</td>
-                  <td className="dim">{apertura}</td>
-                  <td className="dim">{sc.depth}</td>
-                  <td className="dim" colSpan={5}>(sin declaraciones propias)</td>
+      {dump && <>
+        <div className="h-pixel" style={{color:"var(--pink)", margin:"18px 0 8px"}}>
+          ▍ TABLA DE SÍMBOLOS · POR ENTORNO (función / clase / bloque) · {scopes.length}
+          <span className="dim" style={{marginLeft:10}}>
+            {scopes.length
+              ? "· cada entorno tal como estaba al cerrarse, en orden de cierre — incluye los bloques anónimos que no sobreviven arriba"
+              : "· este programa no abrió ningún ámbito propio"}
+          </span>
+        </div>
+        <table className="t">
+          <thead>
+            <tr><th>#</th><th>ENTORNO</th><th>APERTURA</th><th>PROF.</th><th>NOMBRE</th><th>TIPO</th><th>DATO</th><th>MOD.</th><th>POS.</th></tr>
+          </thead>
+          <tbody>
+            {scopes.flatMap((sc, i) => {
+              const entorno = `${sc.kind}${sc.label ? `(${sc.label})` : ""}`;
+              const entornoColor = kindColor(sc.kind, SCOPE_KIND_COLOR);
+              const apertura = (sc.line || sc.col) ? `${sc.line}:${sc.col}` : "—";
+              if (!sc.symbols || !sc.symbols.length) {
+                return (
+                  <tr key={i}>
+                    <td className="dim">{sc.order}</td>
+                    <td style={{color: entornoColor}}>{entorno}</td>
+                    <td className="dim">{apertura}</td>
+                    <td className="dim">{sc.depth}</td>
+                    <td className="dim" colSpan={5}>(sin declaraciones propias)</td>
+                  </tr>
+                );
+              }
+              return sc.symbols.map((sym, j) => (
+                <tr key={`${i}-${j}`}>
+                  {j === 0 && (
+                    <>
+                      <td className="dim" rowSpan={sc.symbols.length}>{sc.order}</td>
+                      <td style={{color: entornoColor}} rowSpan={sc.symbols.length}>{entorno}</td>
+                      <td className="dim" rowSpan={sc.symbols.length}>{apertura}</td>
+                      <td className="dim" rowSpan={sc.symbols.length}>{sc.depth}</td>
+                    </>
+                  )}
+                  <td style={{color:"var(--yellow)", textAlign:"left"}}>{sym.name}</td>
+                  <td style={{color: kindColor(sym.kind, SYMBOL_KIND_COLOR)}}>{sym.kind}</td>
+                  <td style={{color:"var(--cyan)"}}>{sym.ty || "—"}</td>
+                  <td className="dim">{sym.mutable === false ? "const" : "—"}</td>
+                  <td className="dim">{sym.line}:{sym.col}</td>
                 </tr>
-              );
-            }
-            return sc.symbols.map((sym, j) => (
-              <tr key={`${i}-${j}`}>
-                {j === 0 && (
-                  <>
-                    <td className="dim" rowSpan={sc.symbols.length}>{sc.order}</td>
-                    <td style={{color: entornoColor}} rowSpan={sc.symbols.length}>{entorno}</td>
-                    <td className="dim" rowSpan={sc.symbols.length}>{apertura}</td>
-                    <td className="dim" rowSpan={sc.symbols.length}>{sc.depth}</td>
-                  </>
-                )}
-                <td style={{color:"var(--yellow)", textAlign:"left"}}>{sym.name}</td>
-                <td style={{color: kindColor(sym.kind, SYMBOL_KIND_COLOR)}}>{sym.kind}</td>
-                <td style={{color:"var(--cyan)"}}>{sym.ty || "—"}</td>
-                <td className="dim">{sym.mutable === false ? "const" : "—"}</td>
-                <td className="dim">{sym.line}:{sym.col}</td>
-              </tr>
-            ));
-          })}
-        </tbody>
-      </table>
+              ));
+            })}
+          </tbody>
+        </table>
+      </>}
     </div>
   );
 }
@@ -606,7 +687,7 @@ function TypesView(){
 
 /* Fase de un problema, por el prefijo de su código (ver los `code` que
    emiten `api::pipeline`, `api::sintactico` y `semantico::errors`). */
-const PROBLEM_PHASE = { L:"léxico", P:"sintáctico", S:"semántico", W:"advertencia", E:"IDE", G:"gramática", I:"IDE" };
+const PROBLEM_PHASE = { L:"léxico", P:"sintáctico", S:"semántico", C:"TAC", R:"runtime", W:"advertencia", E:"IDE", G:"gramática", I:"IDE" };
 
 /* TODOS los problemas de la última corrida —errores, advertencias e info, de
    cualquier fase—, ordenados por posición. Antes esta vista filtraba solo
@@ -661,11 +742,42 @@ function ProblemsView({ onJump }){
   );
 }
 
+/* TAC textual devuelto por el pipeline. Usa el mismo resaltador liviano del
+   editor; la salida es la capturada por la VM cuando la petición lleva
+   `run: true`, sin ejecutar nada en el navegador. */
+function TacView({ onExecute, loading }){
+  const tac = D.TAC || "";
+  const hasOutput = D.RUN_OUTPUT !== null && D.RUN_OUTPUT !== undefined;
+  const runtimeError = (D.PROBLEMS || []).some(p => (p.code || "").startsWith("R"));
+  return (
+    <div className="tac-view">
+      <div className="tac-toolbar">
+        <div className="h-pixel" style={{color:"var(--pink)"}}>
+          ▍ CÓDIGO DE TRES DIRECCIONES
+          {tac && <span className="dim" style={{marginLeft:10}}>· {tac.split("\n").length} líneas</span>}
+        </div>
+        <button className="runbtn tac-run" onClick={onExecute} disabled={loading}>
+          {loading ? "..." : <><span className="play"/>EJECUTAR</>}
+        </button>
+      </div>
+
+      {tac
+        ? <pre className="tac-code" dangerouslySetInnerHTML={{__html:tokenize(tac, "tac")}}/>
+        : <div className="dim tac-empty">Presiona ▶ ANALIZAR para generar TAC.</div>}
+
+      <div className="h-pixel tac-output-title">▍ SALIDA DEL PROGRAMA</div>
+      {runtimeError && <div className="tac-runtime-error">La VM reportó un error. Revisa la pestaña PROBLEMAS.</div>}
+      <pre className="tac-output">{hasOutput ? (D.RUN_OUTPUT || "(sin salida)") : "Presiona ▶ EJECUTAR para iniciar la VM."}</pre>
+    </div>
+  );
+}
+
 /* ============================== Right results panel ============================== */
 
-function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, resultsSize, onJump }){
+function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, resultsSize, onJump, onExecute, loading }){
   const problemCount = D.PROBLEMS.length;
   const TABS = [
+    {id:"tac",      label:"TAC", badge: D.TAC ? D.TAC.split("\n").length : null},
     {id:"tokens",   label:"TOKENS", badge: D.TOKENS.length || null},
     {id:"tree",     label:"ÁRBOL SINTÁCTICO"},
     {id:"symbols",  label:"SÍMBOLOS", badge: (D.SCOPES && D.SCOPES.length) || null},
@@ -692,6 +804,7 @@ function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, result
           )}
         </div>
         <div className="rbody">
+          {activeTab==="tac"     && <TacView onExecute={onExecute} loading={loading}/>}
           {activeTab==="tokens"  && <TokensView/>}
           {activeTab==="tree"    && <ParseTreeView renderKey={renderKey}/>}
           {activeTab==="symbols" && <SymbolTableView/>}
@@ -884,7 +997,7 @@ function App(){
   // ── ANALIZAR: pipeline completo (.yal + .yalp + fuente) en un solo paso —
   // sin stepper, así que no hace falta separar compilar-gramática de
   // parsear-una-cadena como en el IDE completo. ───────────────────────────
-  const handleRun = async () => {
+  const runPipeline = async (execute = false) => {
     if (!D.FILES.yal.rawContent.trim() || !D.FILES.yalp.rawContent.trim() || !D.FILES.test.rawContent.trim()) {
       D.PROBLEMS = [{ level:"err", code:"E000", msg:"Cargá .yal, .yalp y el fuente de prueba antes de analizar.", loc:"" }];
       setTab("errors");
@@ -902,6 +1015,7 @@ function App(){
           source:       D.FILES.test.rawContent,
           source_name:  D.FILES.test.name,
           mode,
+          run: execute,
         }),
       });
       if (!res.ok) throw new Error(await res.text());
@@ -912,13 +1026,17 @@ function App(){
       D.SYMBOL_TABLE    = data.symbol_table || "";
       D.SCOPES          = Array.isArray(data.scopes) ? data.scopes : [];
       D.TYPES           = Array.isArray(data.types) ? data.types : [];
+      D.TAC             = data.tac || "";
+      D.SYMBOLS_EXT     = data.symbols_ext && typeof data.symbols_ext === "object" ? data.symbols_ext : null;
+      D.TEMPS           = Array.isArray(data.temps) ? data.temps : [];
+      D.RUN_OUTPUT      = execute && Object.prototype.hasOwnProperty.call(data, "run_output") ? data.run_output : null;
       D.PARSE_ACCEPTED = !!data.accepted;
       D.PARSE_ERROR = data.error || null;
       D.PROBLEMS = data.problems && data.problems.length ? data.problems : [];
 
       bump(n => n + 1);
       const hasErrors = !data.accepted || (data.problems && data.problems.some(p => p.level === "err"));
-      setTab(hasErrors ? "errors" : "tree");
+      setTab(hasErrors && !data.tac ? "errors" : execute ? "tac" : "tree");
       rerender();
     } catch(e) {
       console.error("API /pipeline:", e);
@@ -929,6 +1047,10 @@ function App(){
       D.SYMBOL_TABLE = "";
       D.SCOPES = [];
       D.TYPES = [];
+      D.TAC = "";
+      D.SYMBOLS_EXT = null;
+      D.TEMPS = [];
+      D.RUN_OUTPUT = null;
       D.PARSE_ACCEPTED = null;
       D.PARSE_ERROR = msg;
       D.PROBLEMS = [{ level:"err", code:"E001", msg, loc:`pipeline ${mode.toUpperCase()}` }];
@@ -944,7 +1066,7 @@ function App(){
   useEffect(() => {
     if (prevModeRef.current === mode) return;
     prevModeRef.current = mode;
-    if (D.PARSE_ACCEPTED !== null) handleRun();
+    if (D.PARSE_ACCEPTED !== null) runPipeline(false);
   }, [mode]);
 
   const RESULTS_WIDTHS = { normal: 460, wide: 760 };
@@ -995,7 +1117,7 @@ function App(){
         "--col-right": `${layout.right}px`,
       }}
     >
-      <Header activeFile={activeFile} setFile={setFile} onRun={handleRun} onSave={handleSave}
+      <Header activeFile={activeFile} setFile={setFile} onRun={() => runPipeline(false)} onSave={handleSave}
               loading={loading} mode={mode} setMode={setMode}/>
 
       <div id="files" className="panel" data-screen-label="files">
@@ -1020,7 +1142,9 @@ function App(){
           renderKey={renderKey}
           onToggleSize={cycleResults}
           resultsSize={resultsSize}
-          onJump={handleJump}/>
+          onJump={handleJump}
+          onExecute={() => runPipeline(true)}
+          loading={loading}/>
       </div>
 
       <StatusBar activeFile={activeFile} mode={mode}/>
