@@ -102,7 +102,8 @@
   #app{
     display:grid; gap:10px; padding:10px; height:100vh;
     grid-template-rows: 64px 1fr 28px;
-    grid-template-columns: var(--col-left, 240px) var(--col-handle, 6px) 1fr var(--col-handle, 6px) var(--col-right, 460px);
+    /* el panel derecho nunca empuja la página fuera del viewport (72px = handles + gaps + padding) */
+    grid-template-columns: var(--col-left, 240px) var(--col-handle, 6px) minmax(0, 1fr) var(--col-handle, 6px) min(var(--col-right, 460px), calc(100vw - var(--col-left, 240px) - 72px));
     grid-template-areas:
       "header header header header header"
       "files  vhandle-left editor vhandle-right results"
@@ -112,7 +113,7 @@
 
   /* ---------- header ---------- */
   header{
-    grid-area:header;
+    grid-area:header; min-width:0;
     display:flex; align-items:stretch; gap:0;
     border:2px solid var(--magenta);
     background:var(--bg-panel);
@@ -123,6 +124,7 @@
     display:flex; align-items:flex-end; gap:6px;
     padding: 0 12px;
     margin-left:auto;
+    min-width:0; overflow-x:auto; overflow-y:hidden;
   }
   .ftab{
     display:flex; align-items:center; gap:8px;
@@ -466,6 +468,6 @@
 <script src="https://unpkg.com/@viz-js/viz@3.2.4/lib/viz-standalone.js"></script>
 
 <script type="text/babel" src="./data.jsx?v=5"></script>
-<script type="text/babel" src="./app.jsx?v=10"></script>
+<script type="text/babel" src="./app.jsx?v=12"></script>
 </body>
 </html>

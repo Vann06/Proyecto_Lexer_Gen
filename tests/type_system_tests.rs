@@ -276,7 +276,9 @@ fn const_requires_a_compatible_initializer_and_cannot_be_reassigned() {
         ),
         Err(SemanticError::AssignmentTypeMismatch { .. })
     ));
-    assert!(table.lookup("ENTERO_INVALIDO").is_none());
+    // El valor es inválido pero el nombre queda declarado con su tipo anotado:
+    // así los usos posteriores no dan S002 y una redeclaración sí da S001.
+    assert_eq!(table.lookup("ENTERO_INVALIDO").unwrap().ty, Some(Type::Int));
 
     table
         .declare_typed(

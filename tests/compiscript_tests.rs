@@ -251,3 +251,31 @@ mod arrays {
         assert_eq!(semantic_codes(&resp), vec!["S006"], "problemas: {:#?}", resp.problems);
     }
 }
+
+/// Un inicializador de tipo incorrecto reporta S006 pero el símbolo queda
+/// declarado igual: antes `declare_typed` salía sin declararlo, y cada uso
+/// posterior daba un S002 falso mientras una redeclaración pasaba sin S001.
+#[test]
+fn a_mistyped_initializer_still_declares_the_symbol() {
+    let yal = read("workspace/compiscript.yal");
+    let yalp = read("workspace/compiscript.yalp");
+    let codes = |source: &str| -> Vec<(String, u64)> {
+        api::build_pipeline_response_named(&yal, &yalp, source, "lalr", "s006.cps")
+            .expect("el pipeline no debe fallar internamente")
+            .problems
+            .iter()
+            .map(|p| (p["code"].as_str().unwrap().to_string(), p["line"].as_u64().unwrap()))
+            .collect()
+    };
+
+    assert_eq!(
+        codes("let a: integer = \"hola\";\nprint(a);\na = 3;\n"),
+        vec![("S006".to_string(), 1)],
+        "los usos posteriores no deben dar S002"
+    );
+    assert_eq!(
+        codes("let a: integer = \"hola\";\nlet a: integer = 2;\nprint(a);\n"),
+        vec![("S006".to_string(), 1), ("S001".to_string(), 2)],
+        "la redeclaración debe seguir reportándose"
+    );
+}

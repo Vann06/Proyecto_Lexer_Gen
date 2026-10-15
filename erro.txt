@@ -1,0 +1,24 @@
+Ámbito
+S001 redeclarado
+
+S002 no declarado
+
+
+Tipos / operadores
+S005 const
+
+S006 asignación
+
+S015 aritmética
+
+S028–S031 operadores
+
+
+Funciones / objetos / flujo
+S007–S014
+
+S016–S021
+
+S025–S027
+
+S035–S036

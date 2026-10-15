@@ -345,6 +345,13 @@ function ParseTreeView({ renderKey }) {
         svg.style.height   = "auto";
         containerRef.current.innerHTML = "";
         containerRef.current.appendChild(svg);
+        // Centrar la raíz (primer nodo del DOT): sin esto el árbol abre en una
+        // esquina vacía, y graphviz no la deja en el medio del lienzo.
+        const c = containerRef.current, root = svg.querySelector("g.node");
+        if (root) {
+          const r = root.getBoundingClientRect(), box = c.getBoundingClientRect();
+          c.scrollLeft += r.left + r.width / 2 - (box.left + box.width / 2);
+        }
       } catch(err) {
         containerRef.current.innerHTML = `<div style="color:var(--red);padding:12px">Error al renderizar: ${err}</div>`;
       }
