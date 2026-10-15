@@ -13,7 +13,10 @@ mod pipeline;
 mod sintactico;
 
 pub use codegen::build_codegen_response;
-pub use pipeline::{build_pipeline_response, build_pipeline_response_named};
+pub use pipeline::{
+    build_pipeline_response, build_pipeline_response_named,
+    build_pipeline_response_named_with_run, build_pipeline_response_with_run,
+};
 pub use sintactico::{build_compile_response, build_parse_response};
 // Re-exportada porque tests/semantic_analysis_tests.rs la necesita para
 // construir un árbol real. El pipeline en sí ya no vive acá: es un envoltorio
@@ -97,6 +100,19 @@ pub struct ParseResponse {
     /// activacion (por `scope_id`), del area estatica y de cada clase, con
     /// `[incompleto]` donde algun simbolo no tuvo tipo. Vacio sin analisis.
     pub layout: String,
+    /// Programa TAC en su representación legible. Vacío cuando no fue
+    /// posible generar código intermedio.
+    pub tac: String,
+    /// Programa TAC estructurado por funciones y cuádruplos.
+    pub tac_quads: Value,
+    /// Tabla de símbolos extendida: símbolos, frames y layouts de clases.
+    pub symbols_ext: Value,
+    /// Estadísticas de asignación y reciclaje de temporales por función.
+    pub temps: Vec<Value>,
+    /// Salida capturada por la VM. Solo se serializa cuando la petición pidió
+    /// `run: true` y existió un TAC válido para ejecutar.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_output: Option<String>,
 }
 
 #[derive(Serialize)]

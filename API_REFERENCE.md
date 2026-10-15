@@ -7,6 +7,7 @@ nueva. Formato: `archivo:línea` → firma → para qué sirve.
 - [Léxico](#léxico-srclexico)
 - [Sintáctico](#sintáctico-srcsintactico)
 - [Semántico](#semántico-srcsemantico)
+- [Código intermedio — Fase 2](#código-intermedio--fase-2-srcintermediogen)
 - [Capa API](#capa-api-srcapi)
 - [Binarios](#binarios-srcbin)
 - [Frontend](#frontend-frontendide)
@@ -195,6 +196,32 @@ Tipos: `ParseStep` (`parser_lr.rs:7`), `ParseErrorDetail` (`:14`), `LL1Table`/`L
 Tipos: `AnalysisResult` (`analyzer:11`), `SemanticSpec`/`DeclarationRule`/`ScopeRule` (`spec/mod.rs:9,19,49`), `Symbol`/`SymbolKind`/`Signature`/`StorageInfo`/`SemanticError`/`SymbolTable` (`symbols/mod.rs:61,20,37,48,84,136`), `Scope`/`ScopeKind`/`ScopeStack`/`PopGlobalScope` (`scopes/mod.rs:29,18,82,78`), `Type`/`ArithmeticOperator`/`Coercion`/`ArithmeticResolution`/`TypeError` (`types/mod.rs:12,39,58,66,73`).
 
 ---
+
+## Código intermedio — Fase 2 (`src/intermedio/gen/`)
+
+Métodos de `Generator` (todos `pub(crate)` salvo los marcados). El generador no
+nombra producciones: cada forma se reconoce con `SemanticSpec`.
+
+| Dónde | Firma | Para qué |
+|---|---|---|
+| `gen/func.rs:32` | `in_function(func, hops, body)` | Entra a una función: apila la de afuera, aísla `jumps`/`try_depth`, reserva su lugar en `program.functions` (orden de aparición) y la cierra al salir |
+| `gen/func.rs:51` | `gen_function(node)` | `func`/`endfunc` de una función o método, con la etiqueta de su símbolo |
+| `gen/func.rs:84` | `is_call(node)` | `true` si el nodo es una llamada (`%call`); lo usa `gen_stmt` para no perder las llamadas sin valor |
+| `gen/func.rs:93` | `try_gen_call(node) -> Option<Operand>` | `param`s, `link` y `call`/`callv` de `f(x)`, `obj.m(x)` y `m(x)` sin `this.` |
+| `gen/func.rs:171` | `gen_arguments(args) -> Vec<Operand>` / `emit_params(values)` | Evalúa todos los argumentos (con `(float)`) y luego los emite como `param` seguidos |
+| `gen/func.rs:186` | `try_gen_return(node) -> bool` | `return`, con un `try_end` por cada `try` abierto |
+| `gen/mod.rs:358` | `load_this() -> Operand` | `this` en un temporal, desde el método o desde una función anidada en él (`method_hops`) |
+| `gen/objects.rs:43` | `find_member(clase, nombre) -> Option<(&Symbol, &Symbol)>` | Un miembro buscando por la herencia, y la clase que lo define |
+| `gen/objects.rs:60` | `class_of(node) -> Option<String>` | La clase del tipo estático de una expresión |
+| `gen/objects.rs:80` | `as_value(op)` | Copia a un temporal solo si `op` es una dirección `t[off]` (para usarlo como base de `x[i]`) |
+| `gen/objects.rs:92` | `gen_class(node)` | Métodos, `<Clase>.$init` y la vtable (`vt_<Clase>`) de una clase; un struct no emite nada |
+| `gen/objects.rs:169` | `try_gen_object_expr(node)` | `new`, literal de struct y lectura `obj.campo` |
+| `gen/objects.rs:278` | `gen_method_call(node, clase, método, this, args)` | Llamada virtual: ranura del método en la vtable de la clase estática |
+| `gen/objects.rs:308` | `try_gen_object_assign(node) -> bool` | `obj.campo = valor` |
+| `gen/lists.rs:20` | `try_gen_list_expr(node)` | Literal de lista y acceso `a[i]` con `check_bounds` |
+| `gen/lists.rs:100` | `try_gen_list_assign(node)` | Siempre `false`: la gramática no tiene `a[i] = x` |
+| `gen/objects.rs:26,50,55` *(priv)* | `lineage`, `has_init`, `nearest_init` | La clase y sus ancestros; si declara campos; el `$init` más cercano |
+| `gen/objects.rs:68,194,201` *(priv)* | `into_temp`, `field_slot`, `field_operand` | Dirección `t[offset]` de un campo |
 
 ## Capa API (`src/api/`)
 

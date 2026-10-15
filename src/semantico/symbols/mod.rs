@@ -462,15 +462,18 @@ impl SymbolTable {
                 col,
             });
         }
-        if let Some(found) = &initializer_type {
-            resolve_assignment(&ty, found).map_err(|_| SemanticError::AssignmentTypeMismatch {
+        // El S006 del inicializador se reporta DESPUÉS de declarar: el símbolo
+        // existe con su tipo anotado aunque el valor sea inválido. Si no, cada
+        // uso posterior daría un S002 falso y una redeclaración pasaría sin S001.
+        let mismatch = initializer_type.as_ref().and_then(|found| {
+            resolve_assignment(&ty, found).err().map(|_| SemanticError::AssignmentTypeMismatch {
                 name: name.to_string(),
                 expected: ty.clone(),
                 found: found.clone(),
                 line,
                 col,
-            })?;
-        }
+            })
+        });
 
         self.declare(name, kind, line, col)?;
         let symbol = self
@@ -479,7 +482,7 @@ impl SymbolTable {
         symbol.ty = Some(ty);
         symbol.mutable = mutable;
         symbol.initialized = has_initializer;
-        Ok(())
+        mismatch.map_or(Ok(()), Err)
     }
 
     /// Verifica y registra una asignación: que el destino exista, que sea

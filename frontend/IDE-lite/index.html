@@ -102,7 +102,8 @@
   #app{
     display:grid; gap:10px; padding:10px; height:100vh;
     grid-template-rows: 64px 1fr 28px;
-    grid-template-columns: var(--col-left, 240px) var(--col-handle, 6px) 1fr var(--col-handle, 6px) var(--col-right, 460px);
+    /* el panel derecho nunca empuja la página fuera del viewport (72px = handles + gaps + padding) */
+    grid-template-columns: var(--col-left, 240px) var(--col-handle, 6px) minmax(0, 1fr) var(--col-handle, 6px) min(var(--col-right, 460px), calc(100vw - var(--col-left, 240px) - 72px));
     grid-template-areas:
       "header header header header header"
       "files  vhandle-left editor vhandle-right results"
@@ -112,7 +113,7 @@
 
   /* ---------- header ---------- */
   header{
-    grid-area:header;
+    grid-area:header; min-width:0;
     display:flex; align-items:stretch; gap:0;
     border:2px solid var(--magenta);
     background:var(--bg-panel);
@@ -123,6 +124,7 @@
     display:flex; align-items:flex-end; gap:6px;
     padding: 0 12px;
     margin-left:auto;
+    min-width:0; overflow-x:auto; overflow-y:hidden;
   }
   .ftab{
     display:flex; align-items:center; gap:8px;
@@ -158,6 +160,7 @@
     cursor:pointer;
   }
   .runbtn:hover{ background:rgba(74,222,128,.14); box-shadow:0 0 12px rgba(74,222,128,.35); }
+  .runbtn:disabled{ opacity:.5; cursor:wait; box-shadow:none; }
   .runbtn .play{ width:0;height:0;border-left:8px solid var(--green); border-top:5px solid transparent; border-bottom:5px solid transparent;}
   .stepbtn{
     border-color:var(--cyan); color:var(--cyan); background:rgba(34,211,238,.06);
@@ -312,6 +315,19 @@
   }
   table.t th{ background: var(--bg-2); color: var(--pink); font-family:"Press Start 2P","VT323"; font-size:9px; letter-spacing:1px;}
 
+  /* Código intermedio TAC */
+  .tac-view{ min-height:100%; display:flex; flex-direction:column; gap:10px; }
+  .tac-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .tac-code{
+    margin:0; padding:12px;
+    border:1px solid var(--line); background:var(--bg-2);
+    color:var(--tx); font-family:"VT323",ui-monospace,monospace;
+    font-size:18px; line-height:1.25; tab-size:2;
+    white-space:pre; overflow:auto;
+  }
+  .tac-code{ min-height:220px; flex:1; }
+  .tac-empty{ padding:20px; border:1px dashed var(--line); }
+
   /* tokens */
   .tok{
     display:grid; grid-template-columns: 26px 1fr 60px 50px 50px;
@@ -451,7 +467,7 @@
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@viz-js/viz@3.2.4/lib/viz-standalone.js"></script>
 
-<script type="text/babel" src="./data.jsx?v=3"></script>
-<script type="text/babel" src="./app.jsx?v=8"></script>
+<script type="text/babel" src="./data.jsx?v=5"></script>
+<script type="text/babel" src="./app.jsx?v=12"></script>
 </body>
 </html>

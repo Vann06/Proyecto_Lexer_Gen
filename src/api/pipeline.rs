@@ -2,12 +2,18 @@
 // (léxico) y alimenta ese stream al parser (sintáctico) en una sola pasada,
 // devolviendo un ParseResponse con line/col adjunta para que el frontend
 // resalte la línea fuente en cada paso del trace.
-use crate::sintactico::gramatica::grammar::Grammar;
+use crate::intermedio::gen::{extend_layout, generate};
+use crate::intermedio::spec::IntermediateSpec;
+use crate::intermedio::symtab::ExtendedSymbolTable;
+use crate::intermedio::tac::{TacFunction, TacProgram, TEMP_SLOT};
+use crate::intermedio::vm::Vm;
 use crate::lexico::runtime::indent;
 use crate::lexico::runtime::simulator::{LexResult, Simulator};
 use crate::semantico::analyzer::analyze;
+use crate::semantico::errors::Severity;
 use crate::semantico::spec::SemanticSpec;
 use crate::semantico::storage;
+use crate::sintactico::gramatica::grammar::Grammar;
 use crate::sintactico::runtime::parse_tree::{to_dot, to_dot_annotated};
 use serde_json::{json, Value};
 
@@ -30,7 +36,19 @@ pub fn build_pipeline_response(
     source: &str,
     mode: &str,
 ) -> Result<ParseResponse, String> {
-    build_pipeline_response_named(yal, yalp, source, mode, "input.txt")
+    build_pipeline_response_named_with_run(yal, yalp, source, mode, "input.txt", false)
+}
+
+/// Variante compatible con `build_pipeline_response` que permite solicitar
+/// la ejecución del TAC sin cambiar la firma histórica.
+pub fn build_pipeline_response_with_run(
+    yal: &str,
+    yalp: &str,
+    source: &str,
+    mode: &str,
+    run: bool,
+) -> Result<ParseResponse, String> {
+    build_pipeline_response_named_with_run(yal, yalp, source, mode, "input.txt", run)
 }
 
 /// Igual que `build_pipeline_response`, pero con el nombre real del archivo
@@ -43,6 +61,20 @@ pub fn build_pipeline_response_named(
     source: &str,
     mode: &str,
     source_name: &str,
+) -> Result<ParseResponse, String> {
+    build_pipeline_response_named_with_run(yal, yalp, source, mode, source_name, false)
+}
+
+/// Pipeline completo con ejecución opcional de la VM. El parámetro adicional
+/// vive en una función nueva para que todos los llamadores existentes sigan
+/// compilando y mantengan el comportamiento `run = false`.
+pub fn build_pipeline_response_named_with_run(
+    yal: &str,
+    yalp: &str,
+    source: &str,
+    mode: &str,
+    source_name: &str,
+    run: bool,
 ) -> Result<ParseResponse, String> {
     let lexer_table = build_lexer_table_from_str(yal)?;
 
@@ -216,14 +248,76 @@ pub fn build_pipeline_response_named(
                 let mut annotations = None;
                 if mode != "ll1" {
                     if let Some(spec) = SemanticSpec::from_grammar(&grammar) {
-                        let analysis = analyze(&tree, &spec);
+                        let mut analysis = analyze(&tree, &spec);
                         response.symbol_table = analysis.table.dump();
                         response.closures = analysis.closures.to_json();
                         response.scopes = analysis.scopes.to_json();
                         response.types = analysis.types.to_json(&tree);
                         response.bindings = analysis.bindings.to_json(&tree);
-                        response.layout = storage::dump(&analysis.layout);
+                        let has_semantic_errors = analysis
+                            .errors
+                            .iter()
+                            .any(|diagnostic| diagnostic.severity == Severity::Error);
+                        // Tras W002 el analizador corta el recorrido del bloque
+                        // y, a propósito, no crea bindings/anotaciones para las
+                        // sentencias muertas. Ese árbol parcial sirve para el
+                        // IDE, pero no es una entrada completa del generador.
+                        let has_unanalyzed_dead_code = analysis
+                            .errors
+                            .iter()
+                            .any(|diagnostic| diagnostic.code == "W002");
                         lex_problems.extend(analysis.errors.to_problems(source_name));
+
+                        // Un token inválido puede desaparecer del stream y aun
+                        // dejar un árbol aceptado. Ese árbol sirve para mostrar
+                        // diagnósticos parciales, pero nunca para generar TAC.
+                        let has_frontend_errors = lex_problems.iter().any(|problem| {
+                            problem.get("level").and_then(Value::as_str) == Some("err")
+                        });
+                        if !has_frontend_errors
+                            && !has_semantic_errors
+                            && !has_unanalyzed_dead_code
+                        {
+                            let ispec = IntermediateSpec::from_grammar(&grammar);
+                            match generate(&tree, &analysis, &spec, &ispec) {
+                                Ok(program) => {
+                                    extend_layout(&mut analysis.layout, &program);
+                                    response.tac = program.to_string();
+                                    response.tac_quads = program.to_json();
+                                    response.temps = temp_stats(&program);
+                                    response.symbols_ext =
+                                        ExtendedSymbolTable::build(&analysis, &program).to_json();
+
+                                    if run {
+                                        let mut vm = Vm::new(&program);
+                                        match vm.run() {
+                                            Ok(result) => response.run_output = Some(result.output),
+                                            Err(error) => {
+                                                // Se conserva cualquier salida
+                                                // producida antes del fallo.
+                                                response.run_output = Some(vm.output().to_string());
+                                                lex_problems.push(json!({
+                                                    "level": "err",
+                                                    "code": "R001",
+                                                    "msg": error.to_string(),
+                                                    "loc": source_name,
+                                                }));
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(errors) => {
+                                    lex_problems.extend(
+                                        errors
+                                            .iter()
+                                            .map(|error| error.to_problem(source_name)),
+                                    );
+                                }
+                            }
+                        }
+                        // Si hubo generación, este dump ya incluye las ranuras
+                        // de temporales que `extend_layout` devolvió.
+                        response.layout = storage::dump(&analysis.layout);
                         annotations = Some(analysis.types);
                     }
                 }
@@ -246,4 +340,25 @@ pub fn build_pipeline_response_named(
     response.problems = lex_problems;
     response.token_map = token_map_json;
     Ok(response)
+}
+
+fn temp_stats(program: &TacProgram) -> Vec<Value> {
+    fn row(function: &TacFunction) -> Value {
+        json!({
+            "function": function.name,
+            "requested": function.temps_requested,
+            "max_live": function.max_temps,
+            "slots": function.max_temps,
+            "slot_bytes": TEMP_SLOT,
+            "bytes": function.max_temps * TEMP_SLOT,
+            "reused": function.temps_requested.saturating_sub(function.max_temps),
+        })
+    }
+
+    program
+        .main
+        .iter()
+        .chain(program.functions.iter())
+        .map(row)
+        .collect()
 }

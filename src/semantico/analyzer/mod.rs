@@ -546,6 +546,11 @@ impl<'a> Visitor for Analyzer<'a> {
                     // `widen` del libro: el operando que se amplía queda
                     // marcado para que TAC emita la conversión antes de operar.
                     Ok(res) => {
+                        // Guardar también el tipo RESULTANTE de la operación completa.
+                        // TAC necesita esta anotación para distinguir, por ejemplo,
+                        // suma numérica (+) de concatenación de strings (concat).
+                        self.types.record(node, &res.result);
+
                         self.types.record_coercion(left, res.left_coercion);
                         self.types.record_coercion(right, res.right_coercion);
                     }

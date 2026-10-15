@@ -185,9 +185,6 @@ pub(crate) struct JumpTargets {
 }
 
 /// El estado del recorrido. Cada archivo de `gen/` le agrega métodos.
-// `suspended` lo usa recién la Fase 2 (funciones anidadas): quitar el
-// `allow` cuando esté.
-#[allow(dead_code)]
 pub(crate) struct Generator<'a> {
     pub(crate) analysis: &'a AnalysisResult,
     pub(crate) sspec: &'a SemanticSpec,
@@ -205,6 +202,14 @@ pub(crate) struct Generator<'a> {
     pub(crate) jumps: Vec<JumpTargets>,
     /// Cuántos `try` hay abiertos en la función en curso.
     pub(crate) try_depth: usize,
+    /// La clase cuyo cuerpo se está traduciendo (`objects.rs`): lo que hace
+    /// que una función declarada ahí sea un método.
+    pub(crate) class_ctx: Option<String>,
+    /// Cuántas funciones separan a la función en curso del método que la
+    /// encierra: `Some(0)` dentro del propio método, `Some(1)` en una función
+    /// declarada en él… `None` fuera de todo método. Un campo (o `this`) usado
+    /// desde una función anidada sigue esos enlaces hasta el marco del método.
+    pub(crate) method_hops: Option<usize>,
     /// La máquina destino (anchos, offsets del marco): la misma que usó
     /// `semantico::storage`.
     pub(crate) target: TargetLayout,
@@ -232,6 +237,8 @@ impl<'a> Generator<'a> {
             next_label: 0,
             jumps: Vec::new(),
             try_depth: 0,
+            class_ctx: None,
+            method_hops: None,
             target: TargetLayout::default(),
             var_names: HashMap::new(),
             name_uses: HashMap::new(),
@@ -267,7 +274,12 @@ impl<'a> Generator<'a> {
     /// tal cual; otra variable DISTINTA con el mismo nombre (una local que
     /// tapa a una global, dos funciones con un parámetro `n`…) recibe un
     /// sufijo: `x.1`, `x.2`. La misma declaración siempre da el mismo nombre.
+    /// Excepción: `this` es el primer parámetro de cada método (siempre en la
+    /// misma ranura) y se escribe igual en todos, sin sufijo.
     pub(crate) fn var_name(&mut self, r: &SymbolRef) -> String {
+        if r.name == "this" {
+            return r.name.clone();
+        }
         if let Some(name) = self.var_names.get(&(r.scope_id, r.decl_index)) {
             return name.clone();
         }
@@ -329,9 +341,7 @@ impl<'a> Generator<'a> {
                 Operand::Mem { base: frame, offset, name: Some(name) }
             }
             Access::Field => {
-                let this = self.new_temp();
-                self.emit(Instr::Copy { dst: this.clone(), src: self.this_operand() });
-                let Operand::Temp(t) = this else { unreachable!() };
+                let Operand::Temp(t) = self.load_this() else { unreachable!() };
                 Operand::Mem { base: Base::Temp(t), offset, name: Some(r.name.clone()) }
             }
         })
@@ -340,6 +350,25 @@ impl<'a> Generator<'a> {
     /// `this` dentro de un método: su primer parámetro oculto.
     pub(crate) fn this_operand(&self) -> Operand {
         Operand::local("this", self.target.param_base)
+    }
+
+    /// Carga `this` en un temporal: `t = this` dentro del método, o, desde una
+    /// función anidada en él, sigue los enlaces de acceso hasta el marco del
+    /// método y lee ahí su primer parámetro (`t = fp[12]`, `t = t[16]`).
+    pub(crate) fn load_this(&mut self) -> Operand {
+        match self.method_hops {
+            Some(hops) if hops > 0 => {
+                let Base::Temp(t) = self.follow_access_links(hops) else { unreachable!() };
+                let this = Operand::Temp(t);
+                self.emit(Instr::Copy { dst: this.clone(), src: Operand::mem(Base::Temp(t), self.target.param_base) });
+                this
+            }
+            _ => {
+                let this = self.new_temp();
+                self.emit(Instr::Copy { dst: this.clone(), src: self.this_operand() });
+                this
+            }
+        }
     }
 
     /// Sigue `hops` (≥ 1) enlaces de acceso desde el marco actual y devuelve
@@ -411,7 +440,7 @@ impl<'a> Generator<'a> {
     ///    `objects.rs`), no se traducen en línea.
     /// 2. Una sentencia que reconoce `stmt.rs` (declaración, asignación,
     ///    control de flujo, `print`, `break`/`continue`, `return`…).
-    /// 3. Un nodo tipado es una EXPRESIÓN usada como sentencia: se evalúa (por
+    /// 3. Un nodo tipado (o una llamada) es una EXPRESIÓN usada como sentencia: se evalúa (por
     ///    sus efectos, p.ej. una llamada) y su resultado se descarta.
     /// 4. Cualquier otro nodo (secuencias, bloques, envoltorios como
     ///    `stmt: X SEMI`): se traducen sus hijos en orden. Las hojas sueltas
@@ -425,7 +454,9 @@ impl<'a> Generator<'a> {
         if self.try_gen_statement(node) {
             return;
         }
-        if !node.children.is_empty() && self.analysis.types.get(node).is_some() {
+        // Una llamada que no devuelve valor (`saludar();`) no tiene tipo, pero
+        // igual se evalúa por sus efectos.
+        if !node.children.is_empty() && (self.analysis.types.get(node).is_some() || self.is_call(node)) {
             let value = self.gen_expr(node);
             self.release(&value);
             return;
