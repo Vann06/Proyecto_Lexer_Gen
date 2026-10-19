@@ -11,9 +11,20 @@ y closures, control de flujo, colecciones, duplicados y código muerto — 40
 diagnósticos con línea y columna. Ver
 [ARQUITECTURA.md](ARQUITECTURA.md) para cómo está construida esa fase, incluida
 [la explicación de por qué el analizador sintáctico es propio y no
-ANTLR](ARQUITECTURA.md#por-qué-no-se-usó-antlr). Código intermedio y código
-objetivo siguen en el roadmap — ver
-[ORGANIZACION.md](ORGANIZACION.md#fases-futuras-no-implementadas).
+ANTLR](ARQUITECTURA.md#por-qué-no-se-usó-antlr).
+
+También genera **código intermedio** (Fase 16, Proyecto 2): código de tres
+direcciones (TAC) con reciclaje de temporales, registros de activación con
+enlaces de control y de acceso, funciones anidadas, clases con vtables y
+listas, más un intérprete que lo ejecuta. El lenguaje intermedio, la
+arquitectura y cómo usarlo están en
+[CODIGO_INTERMEDIO.md](CODIGO_INTERMEDIO.md). Código objetivo sigue en el
+roadmap — ver [ORGANIZACION.md](ORGANIZACION.md#fases-futuras-no-implementadas).
+
+```bash
+cargo run --bin cpsc -- workspace/rubrica.cps --run   # TAC, tabla extendida y salida
+cargo test --test tac_battery_tests                   # batería de casos exitosos y fallidos
+```
 
 **¿Buscas los entregables?**
 [ARQUITECTURA.md §0](ARQUITECTURA.md#0-dónde-está-cada-entregable) mapea cada
