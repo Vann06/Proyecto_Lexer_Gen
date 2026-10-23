@@ -2,6 +2,7 @@
 # La documentación del proyecto para humanos vive en README.md y PLAN.md,
 # que sí están versionados.
 /CLAUDE.md
+.claude/
 
 # OS / Editor
 .DS_Store
