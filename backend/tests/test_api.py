@@ -9,6 +9,7 @@ import api.main as main
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(main, "DATA_DIR", tmp_path / "data")
     return TestClient(main.app)
 
 
@@ -32,11 +33,11 @@ def test_workspace_inexistente(client):
 
 
 def test_sql_parse_valido(client):
-    data = client.post("/api/sql/parse", json={"script": "USE a;\nSELECT * FROM t;"}).json()
+    data = client.post("/api/sql/parse", json={"script": "CREATE TABLE t (a INT);\nSELECT * FROM t;"}).json()
     assert data["ok"] and data["problems"] == []
-    assert [s["kind"] for s in data["statements"]] == ["UseDatabase", "Select"]
+    assert [s["kind"] for s in data["statements"]] == ["CreateTable", "Select"]
     assert data["statements"][1]["line"] == 2
-    assert data["tokens"][0]["kind"] == "USE"
+    assert data["tokens"][0]["kind"] == "CREATE"
     assert data["parse_tree_dot"].startswith("digraph")
     assert data["ast_dot"].startswith("digraph AST")
 
@@ -48,6 +49,19 @@ def test_sql_parse_con_errores(client):
     assert data["problems"][0]["code"] == "SYN002"
     assert data["problems"][0]["level"] == "err"
     assert data["parse_tree_dot"]   # el árbol parcial se devuelve igual
+
+
+def test_sql_parse_con_errores_semanticos(client, tmp_path):
+    data = client.post("/api/sql/parse", json={"script": "SELECT nombre\nFROM alumnos;"}).json()
+    assert data["ok"]                       # la sintaxis está bien
+    assert [(p["code"], p["line"], p["col"]) for p in data["problems"]] == [("SEM001", 2, 6)]
+    assert data["ast_dot"]                  # el AST se dibuja igual
+    assert (tmp_path / "data" / "principal" / "metadata.txt").is_file()
+
+
+def test_sql_parse_base_inexistente(client):
+    data = client.post("/api/sql/parse", json={"script": "SELECT 1;", "database": "nada"}).json()
+    assert [p["code"] for p in data["problems"]] == ["EXE000"]
 
 
 def test_grammar(client):

@@ -14,19 +14,23 @@ ejecución, almacenamiento) está en Python. Incluye una API HTTP y un IDE web
 ## Estado
 
 El detalle de cada fase (formatos de archivo, códigos de error, criterio de
-"hecho") está en [`PLAN.md`](PLAN.md).
+"hecho") y el reparto del trabajo entre el equipo están en [`PLAN.md`](PLAN.md).
 
 | Fase | Entregas | Contenido | Estado |
 |---|---|---|---|
 | A | 1–2 | Lexer/parser, errores LEX/SYN, AST, subconsultas (IN, EXISTS, escalares), vistas de tokens, árbol y AST | ✅ |
 | B | 4 (base) | Almacenamiento `metadata.txt` + `.csv`, catálogo y tipos | ✅ |
-| C | 3 | Análisis semántico (`SEMxxx`) | pendiente |
-| D | 4–7 | Ejecución: CREATE/DROP/INSERT, SELECT/WHERE/UPDATE/DELETE, JOIN/agregados/GROUP BY, índices y subconsultas | pendiente |
+| C | 3 | Análisis semántico (`SEMxxx`) | ✅ |
+| D1 | 4 | CREATE/DROP TABLE, INSERT, SELECT simple | pendiente |
+| D2 | 5 | Evaluador de expresiones, WHERE, ORDER BY, UPDATE, DELETE | pendiente |
+| D3 | 6 | INNER JOIN, agregados, GROUP BY, HAVING | pendiente |
+| D4 | 7 | Índices y subconsultas | pendiente |
 | E | 8 | API `/api/sql/run`, IDE (EJECUTAR, RESULTADOS, CATÁLOGO), ejemplos y documentación | pendiente |
 
-Hoy el botón **▶ ANALIZAR** del IDE hace el análisis léxico y sintáctico:
-muestra tokens, el árbol de derivación de ANTLR, el AST y los errores con
-línea y columna. Todavía no ejecuta sentencias.
+Hoy el botón **▶ ANALIZAR** del IDE hace el análisis léxico, sintáctico y
+semántico (contra la base `data/principal/`): muestra tokens, el árbol de
+derivación de ANTLR, el AST y los errores con línea y columna. Todavía no
+ejecuta sentencias.
 
 ## Estructura
 
@@ -41,11 +45,13 @@ backend/
 │   ├── ast_dot.py        # AST → DOT (pestaña AST del IDE)
 │   ├── sqltypes.py       # tipos: validación, compatibilidad, texto del CSV
 │   ├── catalog.py        # esquema en memoria: tablas, restricciones, índices
-│   └── storage.py        # data/<db>/metadata.txt + <tabla>.csv
+│   ├── storage.py        # data/<db>/metadata.txt + <tabla>.csv
+│   └── semantic.py       # análisis semántico contra el catálogo (SEMxxx)
 ├── api/main.py           # FastAPI
 └── tests/                # pytest
 frontend/IDE-lite/        # IDE React (nginx en Docker)
-workspace/                # scripts .sql que ve el IDE (demo.sql, errores_sintaxis.sql)
+workspace/                # scripts .sql que ve el IDE (demo.sql, errores_sintaxis.sql, errores_semanticos.sql)
+data/                     # bases de datos (no versionado; DBMS_DATA para cambiarlo)
 scripts/gen_parser.*      # regenera backend/dbms/parser/ desde SQL.g4
 ```
 
@@ -80,5 +86,5 @@ El CI falla si `backend/dbms/parser/` no coincide con la gramática.
 |---|---|---|
 | `LEX` | léxico | `LEX001` carácter no reconocido, `LEX002` cadena sin cerrar |
 | `SYN` | sintáctico | `SYN001` entrada inesperada, `SYN002` entrada sobrante, `SYN003` falta un token, `SYN004` sentencia no válida |
-| `SEM` | semántico | (fase C) |
+| `SEM` | semántico | `SEM001` tabla inexistente, `SEM003` columna inexistente, `SEM004` referencia ambigua, `SEM006` tipos incompatibles… (tabla completa en [`PLAN.md`](PLAN.md#c-análisis-semántico--)) |
 | `EXE` | ejecución | (fase D) |

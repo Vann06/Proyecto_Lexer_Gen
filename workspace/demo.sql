@@ -1,64 +1,77 @@
--- demo.sql — recorrido por el SQL que soporta el DBMS.
--- ▶ ANALIZAR muestra tokens, árbol sintáctico (ANTLR) y problemas.
+-- demo.sql — recorrido por el SQL que soporta el intérprete.
+-- ▶ ANALIZAR muestra tokens, árbol sintáctico, AST y problemas
+-- (léxicos, sintácticos y semánticos). Este script no debe dar ninguno.
 
-CREATE DATABASE IF NOT EXISTS tienda;
-USE tienda;
+CREATE DATABASE IF NOT EXISTS universidad;
+USE universidad;
 
-CREATE TABLE cliente (
-    id      INT PRIMARY KEY,
-    nombre  VARCHAR(50) NOT NULL,
-    email   VARCHAR(80) UNIQUE,
-    alta    DATE DEFAULT '2024-01-01',
-    activo  BOOLEAN DEFAULT TRUE,
-    CONSTRAINT ck_id CHECK (id > 0)
+-- ── Tablas: los cinco tipos y las restricciones ───────────────────────
+CREATE TABLE estudiantes (
+    id       INT PRIMARY KEY,
+    nombre   VARCHAR(50) NOT NULL,
+    carne    VARCHAR(10) UNIQUE,
+    edad     INT,
+    promedio FLOAT,
+    activo   BOOLEAN,
+    ingreso  DATE,
+    CHECK (edad >= 0)
 );
 
-CREATE TABLE pedido (
-    id          INT,
-    cliente_id  INT NOT NULL,
-    total       FLOAT DEFAULT 0,
-    CONSTRAINT pk_pedido PRIMARY KEY (id),
-    CONSTRAINT fk_cliente FOREIGN KEY (cliente_id) REFERENCES cliente (id),
-    CHECK (total >= 0)
+CREATE TABLE cursos (
+    id       INT PRIMARY KEY,
+    nombre   VARCHAR(50) NOT NULL,
+    creditos INT
 );
 
-CREATE INDEX idx_pedido_cliente ON pedido (cliente_id);
+CREATE TABLE inscripciones (
+    estudiante_id INT,
+    curso_id      INT,
+    nota          FLOAT,
+    aprobado      BOOLEAN,
+    CONSTRAINT pk_insc PRIMARY KEY (estudiante_id, curso_id),
+    CONSTRAINT fk_est  FOREIGN KEY (estudiante_id) REFERENCES estudiantes (id),
+    FOREIGN KEY (curso_id) REFERENCES cursos
+);
 
-INSERT INTO cliente (id, nombre, email) VALUES
-    (1, 'Ana', 'ana@mail.com'),
-    (2, 'Luis', 'luis@mail.com'),
-    (3, 'O''Brien', NULL);
+CREATE INDEX idx_edad ON estudiantes (edad);
 
-INSERT INTO pedido VALUES (10, 1, 250.5), (11, 1, 99.9), (12, 2, 15);
+-- ── INSERT / UPDATE / DELETE ──────────────────────────────────────────
+INSERT INTO estudiantes VALUES
+    (1, 'Ana',      'A001', 20, 88.5, TRUE,  '2023-01-15'),
+    (2, 'Luis',     'A002', 17, 75.0, TRUE,  '2024-01-10'),
+    (3, 'O''Brien', NULL,   22, NULL, FALSE, '2022-07-01');
 
-UPDATE cliente SET activo = FALSE WHERE email IS NULL;
-DELETE FROM pedido WHERE total < 20;
+INSERT INTO cursos (id, nombre, creditos) VALUES (1, 'Compiladores', 5), (2, 'Bases de datos', 4), (3, 'Redes', 3);
 
-SELECT c.nombre, COUNT(*) AS pedidos, SUM(p.total) AS gastado
-FROM cliente c
-LEFT JOIN pedido p ON p.cliente_id = c.id
-WHERE c.activo = TRUE AND c.nombre LIKE 'A%'
+INSERT INTO inscripciones VALUES (1, 1, 91, TRUE), (1, 3, 55.5, FALSE), (2, 3, 80, TRUE), (3, 2, 60, TRUE);
+
+UPDATE estudiantes SET activo = FALSE, promedio = promedio - 1 WHERE ingreso < '2023-01-01';
+DELETE FROM inscripciones WHERE nota IS NULL;
+
+-- ── SELECT, WHERE, ORDER BY (ejemplo del enunciado) ───────────────────
+SELECT nombre
+FROM estudiantes
+WHERE edad >= 18;
+
+SELECT nombre, edad FROM estudiantes WHERE activo = TRUE AND (edad > 18 OR promedio >= 80) ORDER BY edad DESC, nombre;
+
+-- ── JOIN, agregados, GROUP BY, HAVING ─────────────────────────────────
+SELECT c.nombre, COUNT(*) AS inscritos, AVG(i.nota) AS promedio
+FROM cursos c
+INNER JOIN inscripciones i ON i.curso_id = c.id
 GROUP BY c.nombre
 HAVING COUNT(*) >= 1
-ORDER BY gastado DESC
-LIMIT 10;
+ORDER BY promedio DESC;
 
-ALTER TABLE cliente ADD COLUMN telefono VARCHAR(15);
-SHOW TABLES;
-DESCRIBE cliente;
+SELECT MIN(edad), MAX(edad), SUM(promedio) FROM estudiantes;
 
--- ── Subconsultas (ejemplo del enunciado) ──────────────────────────────
-CREATE TABLE estudiantes (id INT PRIMARY KEY, nombre VARCHAR(50) NOT NULL, edad INT, ingreso DATE);
-CREATE TABLE cursos (id INT PRIMARY KEY, nombre VARCHAR(50), creditos INT);
-CREATE TABLE inscripciones (estudiante_id INT, curso_id INT, nota FLOAT, aprobado BOOLEAN);
-
+-- ── Subconsultas ──────────────────────────────────────────────────────
 SELECT nombre
 FROM estudiantes
 WHERE id IN (SELECT estudiante_id
              FROM inscripciones
              WHERE curso_id = 3);
 
--- NOT IN, EXISTS / NOT EXISTS correlacionados y subconsulta escalar
 SELECT nombre FROM estudiantes WHERE id NOT IN (SELECT estudiante_id FROM inscripciones);
 
 SELECT e.nombre FROM estudiantes e
@@ -70,3 +83,8 @@ WHERE NOT EXISTS (SELECT 1 FROM inscripciones i WHERE i.curso_id = c.id);
 SELECT nombre, edad FROM estudiantes
 WHERE edad > (SELECT AVG(edad) FROM estudiantes)
 ORDER BY edad DESC;
+
+-- ── Índices y catálogo ────────────────────────────────────────────────
+DROP INDEX idx_edad;
+SHOW TABLES;
+DESCRIBE estudiantes;

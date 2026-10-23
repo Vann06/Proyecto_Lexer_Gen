@@ -150,16 +150,16 @@ def test_directorio_de_datos(tmp_path):
     assert data.databases() == []
     with pytest.raises(StorageError, match="no existe"):
         data.open("tienda")
-    default = data.open(create=True)                       # crea data/default
-    assert default.name == "default" and default.metadata_path.is_file()
+    default = data.open(create=True)                       # crea data/principal
+    assert default.name == "principal" and default.metadata_path.is_file()
     assert default.load_catalog() == Catalog()
     data.create("tienda")
     with pytest.raises(StorageError, match="ya existe"):
         data.create("tienda")
-    assert data.databases() == ["default", "tienda"]
+    assert data.databases() == ["principal", "tienda"]
     assert data.open("tienda").path == tmp_path / "data" / "tienda"
     data.drop("tienda")
-    assert data.databases() == ["default"]
+    assert data.databases() == ["principal"]
     with pytest.raises(StorageError, match="no existe"):
         data.drop("tienda")
     with pytest.raises(StorageError, match="nombre de archivo"):

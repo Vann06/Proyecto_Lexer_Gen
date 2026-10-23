@@ -3,9 +3,10 @@
 Mismos endpoints de workspace y /health que tenía el servidor Rust anterior
 (el IDE los usa sin cambios), más los de SQL:
 
-    POST /api/sql/parse   {script}  -> tokens, árbol DOT, AST DOT, problemas, sentencias
+    POST /api/sql/parse   {script, database?}  -> tokens, árbol DOT, AST DOT,
+                          problemas (léxicos, sintácticos y semánticos), sentencias
     GET  /api/grammar               -> texto de grammar/SQL.g4 (el IDE lo muestra)
-    (fase 8: /api/sql/run y /api/catalog)
+    (fase E: /api/sql/run y /api/catalog)
 
 Correr desde backend/:  uvicorn api.main:app --port 8080 --reload
 """
@@ -22,9 +23,12 @@ from pydantic import BaseModel
 
 from dbms.ast_dot import ast_to_dot
 from dbms.builder import build
-from dbms.frontend import parse, tokens_to_json, tree_to_dot
+from dbms.frontend import Problem, parse, tokens_to_json, tree_to_dot
+from dbms.semantic import check_script
+from dbms.storage import DEFAULT_DATABASE, DataDir, StorageError
 
 WORKSPACE_DIR = Path(os.environ.get("DBMS_WORKSPACE", Path(__file__).resolve().parents[2] / "workspace"))
+DATA_DIR = Path(os.environ.get("DBMS_DATA", Path(__file__).resolve().parents[2] / "data"))
 ALLOWED_EXTENSIONS = (".sql", ".txt")
 GRAMMAR_FILE = Path(__file__).resolve().parents[1] / "grammar" / "SQL.g4"
 
@@ -79,16 +83,31 @@ def grammar():
 
 class ScriptRequest(BaseModel):
     script: str
+    database: str = DEFAULT_DATABASE
+
+
+def _semantic_problems(stmts, database: str) -> list[Problem]:
+    """Análisis semántico del script contra el catálogo de `database`. Solo
+    lee: no ejecuta nada ni modifica archivos (salvo crear la base principal
+    vacía la primera vez)."""
+    try:
+        data = DataDir(DATA_DIR)
+        db = data.open(database, create=database == DEFAULT_DATABASE)
+        return check_script(stmts, db.load_catalog(), data, database)
+    except StorageError as e:
+        return [Problem("err", "EXE000", f"No se pudo leer la base de datos: {e}")]
 
 
 @app.post("/api/sql/parse")
 def sql_parse(req: ScriptRequest):
-    """Solo análisis léxico y sintáctico: no toca ninguna base de datos."""
+    """Análisis léxico, sintáctico y semántico. No ejecuta sentencias."""
     result = parse(req.script)
     stmts = build(result) if result.ok else []
+    # La semántica necesita el AST: con errores de sintaxis no corre.
+    semantic = _semantic_problems(stmts, req.database) if result.ok else []
     return {
         "ok": result.ok,
-        "problems": [p.to_dict() for p in result.problems],
+        "problems": [p.to_dict() for p in result.problems + semantic],
         "tokens": tokens_to_json(result),
         "parse_tree_dot": tree_to_dot(result),
         # Sin AST si hubo errores de sintaxis (ver dbms.builder.build).

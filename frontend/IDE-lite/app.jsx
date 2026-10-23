@@ -503,14 +503,21 @@ function Header({ activeFile, setFile, onRun, onSave, loading }){
 function StatusBar({ activeFile }){
   const f = D.FILES[activeFile];
   const errors = D.PROBLEMS.filter(p => p.level === "err").length;
+  const semErrors = D.PROBLEMS.filter(p => p.level === "err" && (p.code || "").startsWith("SEM")).length;
+  const n = D.STATEMENTS.length;
   return (
     <div id="status">
       <div className="sg"><span className="grm">SQL · ANTLR 4</span></div>
       {D.PARSE_OK !== null && (
         <div className="sg" style={{color: D.PARSE_OK ? "var(--green)" : "var(--red)"}}>
           {D.PARSE_OK
-            ? `✓ SINTAXIS OK · ${D.STATEMENTS.length} sentencia${D.STATEMENTS.length===1?"":"s"}`
+            ? `✓ SINTAXIS OK · ${n} sentencia${n===1?"":"s"}`
             : `✗ ${errors} error${errors===1?"":"es"}`}
+        </div>
+      )}
+      {D.PARSE_OK && (
+        <div className="sg" style={{color: semErrors ? "var(--red)" : "var(--green)"}}>
+          {semErrors ? `✗ ${semErrors} error${semErrors===1?"":"es"} semántico${semErrors===1?"":"s"}` : "✓ SEMÁNTICA OK"}
         </div>
       )}
       <div className="right">
@@ -654,7 +661,8 @@ function App(){
       // script (problemLine filtra por archivo).
       D.PROBLEMS = (data.problems || []).map(p => ({ ...p, loc: `${f.name}:${p.line}:${p.col}` }));
 
-      setTab(data.ok ? "tree" : "errors");
+      // Con cualquier error (sintáctico o semántico) se abre PROBLEMAS.
+      setTab(D.PROBLEMS.some(p => p.level === "err") ? "errors" : "tree");
       rerender();
     } catch(e) {
       console.error("API /sql/parse:", e);

@@ -1,7 +1,7 @@
 """Almacenamiento en archivos de texto: el único módulo que toca el disco.
 
     data/                       DataDir: una carpeta por base de datos
-    └── default/                Database
+    └── principal/              Database
         ├── metadata.txt        esquema: tablas, columnas, restricciones, índices
         ├── estudiantes.csv     filas de una tabla
         └── ...
@@ -46,7 +46,8 @@ from dbms.catalog import (CHECK, FOREIGN_KEY, PRIMARY_KEY, UNIQUE, Catalog, Colu
                           ConstraintSchema, IndexSchema, TableSchema)
 
 METADATA_FILE = "metadata.txt"
-DEFAULT_DATABASE = "default"
+# No "default": DEFAULT es palabra reservada y `USE default` no parsearía.
+DEFAULT_DATABASE = "principal"
 ROWID = "_rowid"
 
 
@@ -289,7 +290,7 @@ class DataDir:
 
     def open(self, name: str = DEFAULT_DATABASE, create: bool = False) -> Database:
         """Abre una base existente; con `create=True` la crea si falta (así
-        arranca la base `default`)."""
+        arranca la base `principal`)."""
         if not self.exists(name):
             if not create:
                 raise StorageError(f"la base de datos '{name}' no existe")
