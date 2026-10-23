@@ -177,8 +177,12 @@ limitClause   : LIMIT limit=INT_LIT (OFFSET offset=INT_LIT)? ;
 // de una sola regla (y para que el AND de BETWEEN no se confunda con el AND
 // lógico):
 //   expr      — lógica: NOT > AND > OR
-//   predicate — comparaciones, IS NULL, IN, LIKE, BETWEEN
+//   predicate — comparaciones, IS NULL, IN, LIKE, BETWEEN, EXISTS
 //   valueExpr — aritmética: unario > * / % > + - ||
+//
+// Subconsultas: `IN (SELECT ...)`, `EXISTS (SELECT ...)` y la escalar
+// `(SELECT ...)` como valor. NOT EXISTS no tiene alternativa propia: es
+// `NOT expr` sobre existsPred, y el constructor de AST lo pliega.
 
 expr
     : NOT expr                 # notExpr
@@ -190,7 +194,9 @@ expr
 predicate
     : valueExpr op=(EQ | NEQ | LT | LTE | GT | GTE) valueExpr                       # comparePred
     | valueExpr IS NOT? NULL                                                         # isNullPred
+    | valueExpr NOT? IN LPAREN selectStmt RPAREN                                     # inSubqueryPred
     | valueExpr NOT? IN LPAREN valueExpr (COMMA valueExpr)* RPAREN                   # inPred
+    | EXISTS LPAREN selectStmt RPAREN                                                # existsPred
     | valueExpr NOT? LIKE valueExpr                                                  # likePred
     | valueExpr NOT? BETWEEN low=valueExpr AND high=valueExpr                        # betweenPred
     | valueExpr                                                                      # valuePred
@@ -200,6 +206,7 @@ valueExpr
     : op=(MINUS | PLUS) valueExpr                                # unaryExpr
     | valueExpr op=(STAR | SLASH | PERCENT) valueExpr            # mulExpr
     | valueExpr op=(PLUS | MINUS | CONCAT) valueExpr             # addExpr
+    | LPAREN selectStmt RPAREN                                   # subqueryExpr
     | LPAREN expr RPAREN                                         # parenExpr
     | functionCall                                               # funcExpr
     | columnRef                                                  # columnExpr

@@ -269,7 +269,12 @@ class ASTBuilder(SQLVisitor):
     # ───────────── Expresiones: lógica ─────────────
 
     def visitNotExpr(self, ctx):
-        return ast.Unary("NOT", self.visit(ctx.expr()), _pos(ctx))
+        operand = self.visit(ctx.expr())
+        # NOT EXISTS es un predicado propio en SQL, no la negación de uno:
+        # se pliega para que semántica y ejecución vean un solo nodo.
+        if isinstance(operand, ast.Exists):
+            return ast.Exists(operand.select, negated=not operand.negated, pos=_pos(ctx))
+        return ast.Unary("NOT", operand, _pos(ctx))
 
     def visitAndExpr(self, ctx):
         return ast.Binary("AND", self.visit(ctx.expr(0)), self.visit(ctx.expr(1)), _pos(ctx))
@@ -292,6 +297,13 @@ class ASTBuilder(SQLVisitor):
     def visitInPred(self, ctx):
         operand, *items = [self.visit(v) for v in ctx.valueExpr()]
         return ast.InList(operand, items, negated=ctx.NOT() is not None, pos=_pos(ctx))
+
+    def visitInSubqueryPred(self, ctx):
+        return ast.InSubquery(self.visit(ctx.valueExpr()), self.visit(ctx.selectStmt()),
+                              negated=ctx.NOT() is not None, pos=_pos(ctx))
+
+    def visitExistsPred(self, ctx):
+        return ast.Exists(self.visit(ctx.selectStmt()), negated=False, pos=_pos(ctx))
 
     def visitLikePred(self, ctx):
         return ast.Like(self.visit(ctx.valueExpr(0)), self.visit(ctx.valueExpr(1)),
@@ -320,6 +332,9 @@ class ASTBuilder(SQLVisitor):
 
     def visitAddExpr(self, ctx):
         return ast.Binary(ctx.op.text, self.visit(ctx.valueExpr(0)), self.visit(ctx.valueExpr(1)), _pos(ctx))
+
+    def visitSubqueryExpr(self, ctx):
+        return ast.ScalarSubquery(self.visit(ctx.selectStmt()), _pos(ctx))
 
     def visitParenExpr(self, ctx):
         return self.visit(ctx.expr())

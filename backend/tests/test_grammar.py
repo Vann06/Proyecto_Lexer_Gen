@@ -46,6 +46,14 @@ VALID = [
     'SELECT "Mi Columna", `otra` FROM "Tabla"',
     "SELECT date, type FROM t WHERE date > '2024-01-01'",
     "-- comentario\nSELECT /* en línea */ 1",
+    # Subconsultas
+    "SELECT nombre FROM estudiantes WHERE id IN (SELECT estudiante_id FROM inscripciones WHERE curso_id = 3)",
+    "SELECT nombre FROM estudiantes WHERE id NOT IN (SELECT estudiante_id FROM inscripciones)",
+    "SELECT nombre FROM estudiantes e WHERE EXISTS (SELECT * FROM inscripciones i WHERE i.estudiante_id = e.id)",
+    "SELECT nombre FROM estudiantes e WHERE NOT EXISTS (SELECT 1 FROM inscripciones i WHERE i.estudiante_id = e.id)",
+    "SELECT nombre FROM estudiantes WHERE edad > (SELECT AVG(edad) FROM estudiantes)",
+    "SELECT (SELECT MAX(edad) FROM estudiantes) AS mayor",
+    "DELETE FROM t WHERE a IN (SELECT a FROM u WHERE b IN (SELECT b FROM v))",
 ]
 
 
@@ -80,6 +88,17 @@ def test_rechaza_con_codigo_y_posicion(sql, code, line, col):
     assert not result.ok
     first = result.problems[0]
     assert (first.code, first.line, first.col) == (code, line, col), first.to_dict()
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT a FROM t WHERE a IN (SELECT b FROM u;",
+    "SELECT a FROM t WHERE EXISTS SELECT b FROM u;",
+    "SELECT a FROM t WHERE a > (SELECT FROM u);",
+])
+def test_subconsultas_mal_formadas(sql):
+    result = parse(sql)
+    assert not result.ok
+    assert result.problems[0].code.startswith("SYN"), result.problems[0].to_dict()
 
 
 def test_cadena_sin_cerrar_se_reporta_una_sola_vez():

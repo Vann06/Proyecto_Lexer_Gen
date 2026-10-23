@@ -46,3 +46,27 @@ LIMIT 10;
 ALTER TABLE cliente ADD COLUMN telefono VARCHAR(15);
 SHOW TABLES;
 DESCRIBE cliente;
+
+-- ── Subconsultas (ejemplo del enunciado) ──────────────────────────────
+CREATE TABLE estudiantes (id INT PRIMARY KEY, nombre VARCHAR(50) NOT NULL, edad INT, ingreso DATE);
+CREATE TABLE cursos (id INT PRIMARY KEY, nombre VARCHAR(50), creditos INT);
+CREATE TABLE inscripciones (estudiante_id INT, curso_id INT, nota FLOAT, aprobado BOOLEAN);
+
+SELECT nombre
+FROM estudiantes
+WHERE id IN (SELECT estudiante_id
+             FROM inscripciones
+             WHERE curso_id = 3);
+
+-- NOT IN, EXISTS / NOT EXISTS correlacionados y subconsulta escalar
+SELECT nombre FROM estudiantes WHERE id NOT IN (SELECT estudiante_id FROM inscripciones);
+
+SELECT e.nombre FROM estudiantes e
+WHERE EXISTS (SELECT * FROM inscripciones i WHERE i.estudiante_id = e.id AND i.aprobado = TRUE);
+
+SELECT c.nombre FROM cursos c
+WHERE NOT EXISTS (SELECT 1 FROM inscripciones i WHERE i.curso_id = c.id);
+
+SELECT nombre, edad FROM estudiantes
+WHERE edad > (SELECT AVG(edad) FROM estudiantes)
+ORDER BY edad DESC;

@@ -110,6 +110,49 @@ def test_predicados():
     assert neq.op == "<>"
 
 
+def test_in_subconsulta():
+    w = one("SELECT nombre FROM estudiantes WHERE id IN "
+            "(SELECT estudiante_id FROM inscripciones WHERE curso_id = 3)").where
+    assert isinstance(w, ast.InSubquery) and not w.negated
+    assert w.operand.column == "id"
+    assert w.select.from_table.name == "inscripciones"
+    assert w.select.items[0].expr.column == "estudiante_id"
+    assert w.select.where.right.value == 3
+    assert one("SELECT 1 FROM t WHERE a NOT IN (SELECT b FROM u)").where.negated
+
+
+def test_in_con_lista_sigue_siendo_inlist():
+    assert isinstance(one("SELECT 1 FROM t WHERE a IN ((1), 2)").where, ast.InList)
+
+
+def test_exists_y_not_exists():
+    e = one("SELECT 1 FROM t WHERE EXISTS (SELECT * FROM u WHERE u.id = t.id)").where
+    assert isinstance(e, ast.Exists) and not e.negated
+    assert e.select.where.right == ast.ColumnRef("t", "id", e.select.where.right.pos)
+    ne = one("SELECT 1 FROM t WHERE NOT EXISTS (SELECT * FROM u)").where
+    assert isinstance(ne, ast.Exists) and ne.negated
+    assert ne.pos == ast.Pos(1, 23)          # la posición del NOT
+    # Doble negación: vuelve a ser EXISTS.
+    assert not one("SELECT 1 FROM t WHERE NOT NOT EXISTS (SELECT * FROM u)").where.negated
+
+
+def test_subconsulta_escalar():
+    w = one("SELECT nombre FROM estudiantes WHERE edad > (SELECT AVG(edad) FROM estudiantes)").where
+    assert w.op == ">"
+    assert isinstance(w.right, ast.ScalarSubquery)
+    assert w.right.select.items[0].expr.name == "AVG"
+    item = one("SELECT (SELECT MAX(edad) FROM e) AS mayor").items[0]
+    assert isinstance(item.expr, ast.ScalarSubquery) and item.alias == "mayor"
+    # Un paréntesis con una expresión normal no es subconsulta.
+    assert isinstance(one("SELECT (1 + 2)").items[0].expr, ast.Binary)
+
+
+def test_subconsultas_anidadas():
+    w = one("DELETE FROM t WHERE a IN (SELECT a FROM u WHERE b IN (SELECT b FROM v))").where
+    inner = w.select.where
+    assert isinstance(inner, ast.InSubquery) and inner.select.from_table.name == "v"
+
+
 def test_select_completo():
     s = one("SELECT DISTINCT c.*, COUNT(*) AS n, SUM(DISTINCT p.total) FROM cliente AS c "
             "LEFT JOIN pedido p ON p.cid = c.id CROSS JOIN z "

@@ -99,7 +99,30 @@ class FuncCall:
     pos: Pos
 
 
-Expr = Union[Literal, ColumnRef, Unary, Binary, IsNull, InList, Like, Between, FuncCall]
+@dataclass
+class ScalarSubquery:
+    """`(SELECT ...)` usado como valor: debe dar una columna y a lo sumo un registro."""
+    select: Select
+    pos: Pos
+
+
+@dataclass
+class InSubquery:
+    operand: Expr
+    select: Select
+    negated: bool              # NOT IN
+    pos: Pos
+
+
+@dataclass
+class Exists:
+    select: Select
+    negated: bool              # NOT EXISTS
+    pos: Pos
+
+
+Expr = Union[Literal, ColumnRef, Unary, Binary, IsNull, InList, Like, Between, FuncCall,
+             ScalarSubquery, InSubquery, Exists]
 
 
 # ───────────────────────────── Tipos y restricciones ─────────────────────────────

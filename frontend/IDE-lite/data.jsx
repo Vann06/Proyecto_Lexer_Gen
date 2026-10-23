@@ -28,6 +28,8 @@ window.IDE_DATA = {
   PARSE_OK: null,
   // Árbol de derivación de ANTLR en DOT — campo `parse_tree_dot`
   PARSE_TREE_DOT: "",
+  // AST (dbms.ast) en DOT — campo `ast_dot`; vacío si hubo errores de sintaxis
+  AST_DOT: "",
   // [{kind, sql, line, col}] — sentencias reconocidas (vacío si hubo errores)
   STATEMENTS: [],
 };

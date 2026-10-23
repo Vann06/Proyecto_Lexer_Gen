@@ -1,8 +1,8 @@
 /* eslint-disable */
 // IDE-lite del DBMS: editor SQL con resaltado + sidebar de archivos + las
-// vistas del análisis: flujo de tokens, árbol de derivación de ANTLR y
+// vistas del análisis: flujo de tokens, árbol de derivación de ANTLR, AST y
 // problemas léxicos/sintácticos. Todo sale de `POST /api/sql/parse`.
-// (Fase 9: pestañas RESULTADOS y CATÁLOGO cuando exista /api/sql/run.)
+// (Fase E: pestañas RESULTADOS y CATÁLOGO cuando exista /api/sql/run.)
 const { useState, useEffect, useRef } = React;
 const D = window.IDE_DATA;
 
@@ -290,19 +290,21 @@ function TokensView(){
   );
 }
 
-/* El árbol viene del backend YA renderizado a DOT (D.PARSE_TREE_DOT, campo
-   `parse_tree_dot` de /api/sql/parse): el árbol de derivación que construyó
-   el parser de ANTLR, con cada nodo etiquetado "regla · alternativa". Con
-   errores de sintaxis se dibuja igual el árbol parcial que dejó la
-   recuperación de errores de ANTLR (nodos de error en rojo). */
-function ParseTreeView({ renderKey }) {
+/* Los dos árboles vienen del backend YA renderizados a DOT (campos de
+   /api/sql/parse):
+   - ÁRBOL SINTÁCTICO (`parse_tree_dot`): el árbol de derivación que construyó
+     el parser de ANTLR, con cada nodo etiquetado "regla · alternativa". Con
+     errores de sintaxis se dibuja igual el árbol parcial que dejó la
+     recuperación de errores de ANTLR (nodos de error en rojo).
+   - AST (`ast_dot`): los nodos de dbms.ast, con aristas rotuladas por campo.
+     Solo existe si no hubo errores de sintaxis. */
+function DotView({ dot, title, subtitle, filename, emptyMsg, renderKey }) {
   const containerRef = useRef();
 
   useEffect(() => {
-    const dot = D.PARSE_TREE_DOT;
     if (!dot) {
       if (containerRef.current)
-        containerRef.current.innerHTML = '<div class="dim" style="padding:12px;font-size:17px">Presiona ▶ ANALIZAR para ver el árbol</div>';
+        containerRef.current.innerHTML = `<div class="dim" style="padding:12px;font-size:17px">${emptyMsg}</div>`;
       return;
     }
     if (!window.Viz) {
@@ -324,7 +326,7 @@ function ParseTreeView({ renderKey }) {
       if (containerRef.current)
         containerRef.current.innerHTML = `<div style="color:var(--red);padding:12px">${err}</div>`;
     });
-  }, [renderKey]);
+  }, [renderKey, dot]);
 
   const downloadPng = () => {
     const svg = containerRef.current?.querySelector("svg");
@@ -338,7 +340,7 @@ function ParseTreeView({ renderKey }) {
       canvas.getContext("2d").drawImage(img, 0, 0);
       const a = document.createElement("a");
       a.href = canvas.toDataURL("image/png");
-      a.download = "arbol.png";
+      a.download = filename;
       a.click();
     };
     img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(data)));
@@ -347,9 +349,9 @@ function ParseTreeView({ renderKey }) {
   return (
     <div className="dfa-wrap">
       <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8, display:"flex", alignItems:"center", gap:10}}>
-        ▍ ÁRBOL SINTÁCTICO
-        <span className="dim" style={{fontFamily:"VT323", fontSize:16}}>· árbol de derivación de ANTLR (regla · alternativa)</span>
-        {D.PARSE_TREE_DOT && (
+        ▍ {title}
+        <span className="dim" style={{fontFamily:"VT323", fontSize:16}}>· {subtitle}</span>
+        {dot && (
           <button className="cbtn icon cyan" style={{fontSize:12, padding:"2px 8px"}} onClick={downloadPng}>↓ PNG</button>
         )}
       </div>
@@ -419,6 +421,7 @@ function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, result
   const TABS = [
     {id:"tokens",   label:"TOKENS", badge: D.TOKENS.length || null},
     {id:"tree",     label:"ÁRBOL SINTÁCTICO"},
+    {id:"ast",      label:"AST"},
     {id:"errors",   label:"PROBLEMAS", badge: problemCount || null},
   ];
 
@@ -442,7 +445,14 @@ function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, result
         </div>
         <div className="rbody">
           {activeTab==="tokens"  && <TokensView/>}
-          {activeTab==="tree"    && <ParseTreeView renderKey={renderKey}/>}
+          {activeTab==="tree"    && <DotView key="tree" dot={D.PARSE_TREE_DOT} renderKey={renderKey}
+                                             title="ÁRBOL SINTÁCTICO" subtitle="árbol de derivación de ANTLR (regla · alternativa)"
+                                             filename="arbol.png" emptyMsg="Presiona ▶ ANALIZAR para ver el árbol"/>}
+          {activeTab==="ast"     && <DotView key="ast" dot={D.AST_DOT} renderKey={renderKey}
+                                             title="AST" subtitle="nodos de dbms.ast · aristas = campo del nodo"
+                                             filename="ast.png"
+                                             emptyMsg={D.PARSE_OK === false ? "Sin AST: el script tiene errores de sintaxis (ver PROBLEMAS)"
+                                                                            : "Presiona ▶ ANALIZAR para ver el AST"}/>}
           {activeTab==="errors"  && <ProblemsView onJump={onJump}/>}
         </div>
       </div>
@@ -637,6 +647,7 @@ function App(){
 
       D.TOKENS = (data.tokens || []).map((t, i) => ({ i: i+1, k: t.kind, lx: t.lexeme, l: t.line, c: t.col }));
       D.PARSE_TREE_DOT = data.parse_tree_dot || "";
+      D.AST_DOT = data.ast_dot || "";
       D.STATEMENTS = data.statements || [];
       D.PARSE_OK = !!data.ok;
       // `loc` con el nombre del archivo: así el editor marca las líneas del
@@ -649,6 +660,7 @@ function App(){
       console.error("API /sql/parse:", e);
       D.TOKENS = [];
       D.PARSE_TREE_DOT = "";
+      D.AST_DOT = "";
       D.STATEMENTS = [];
       D.PARSE_OK = null;
       D.PROBLEMS = [{ level:"err", code:"IDE001", msg:`No se pudo contactar la API: ${e}`, loc:"" }];

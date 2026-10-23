@@ -344,8 +344,18 @@ class SQLVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
+    # Visit a parse tree produced by SQLParser#inSubqueryPred.
+    def visitInSubqueryPred(self, ctx:SQLParser.InSubqueryPredContext):
+        return self.visitChildren(ctx)
+
+
     # Visit a parse tree produced by SQLParser#inPred.
     def visitInPred(self, ctx:SQLParser.InPredContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by SQLParser#existsPred.
+    def visitExistsPred(self, ctx:SQLParser.ExistsPredContext):
         return self.visitChildren(ctx)
 
 
@@ -391,6 +401,11 @@ class SQLVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by SQLParser#mulExpr.
     def visitMulExpr(self, ctx:SQLParser.MulExprContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by SQLParser#subqueryExpr.
+    def visitSubqueryExpr(self, ctx:SQLParser.SubqueryExprContext):
         return self.visitChildren(ctx)
 
 

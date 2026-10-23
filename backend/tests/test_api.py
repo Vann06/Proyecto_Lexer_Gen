@@ -38,11 +38,13 @@ def test_sql_parse_valido(client):
     assert data["statements"][1]["line"] == 2
     assert data["tokens"][0]["kind"] == "USE"
     assert data["parse_tree_dot"].startswith("digraph")
+    assert data["ast_dot"].startswith("digraph AST")
 
 
 def test_sql_parse_con_errores(client):
     data = client.post("/api/sql/parse", json={"script": "SELECT FROM t;"}).json()
     assert not data["ok"] and data["statements"] == []
+    assert data["ast_dot"] == ""
     assert data["problems"][0]["code"] == "SYN002"
     assert data["problems"][0]["level"] == "err"
     assert data["parse_tree_dot"]   # el árbol parcial se devuelve igual

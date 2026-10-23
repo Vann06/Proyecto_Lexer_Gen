@@ -3,7 +3,7 @@
 Mismos endpoints de workspace y /health que tenía el servidor Rust anterior
 (el IDE los usa sin cambios), más los de SQL:
 
-    POST /api/sql/parse   {script}  -> tokens, árbol DOT, problemas, sentencias
+    POST /api/sql/parse   {script}  -> tokens, árbol DOT, AST DOT, problemas, sentencias
     GET  /api/grammar               -> texto de grammar/SQL.g4 (el IDE lo muestra)
     (fase 8: /api/sql/run y /api/catalog)
 
@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
+from dbms.ast_dot import ast_to_dot
 from dbms.builder import build
 from dbms.frontend import parse, tokens_to_json, tree_to_dot
 
@@ -84,14 +85,14 @@ class ScriptRequest(BaseModel):
 def sql_parse(req: ScriptRequest):
     """Solo análisis léxico y sintáctico: no toca ninguna base de datos."""
     result = parse(req.script)
-    statements = []
-    if result.ok:
-        statements = [{"kind": s.kind, "sql": s.sql, "line": s.pos.line, "col": s.pos.col}
-                      for s in build(result)]
+    stmts = build(result) if result.ok else []
     return {
         "ok": result.ok,
         "problems": [p.to_dict() for p in result.problems],
         "tokens": tokens_to_json(result),
         "parse_tree_dot": tree_to_dot(result),
-        "statements": statements,
+        # Sin AST si hubo errores de sintaxis (ver dbms.builder.build).
+        "ast_dot": ast_to_dot(stmts) if result.ok else "",
+        "statements": [{"kind": s.kind, "sql": s.sql, "line": s.pos.line, "col": s.pos.col}
+                       for s in stmts],
     }
