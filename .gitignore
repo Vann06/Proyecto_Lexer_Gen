@@ -34,3 +34,6 @@ __pycache__/
 /generated/
 /graphs/
 /output/
+
+# Entorno local para verificar el motor SQL.
+/tmp/motor-venv/
