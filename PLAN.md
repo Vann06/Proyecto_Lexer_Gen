@@ -9,8 +9,8 @@ existente**. Cada fase cierra una o más entregas del curso.
 | A | 1–2 | Lexer/parser ANTLR, errores LEX/SYN, AST, subconsultas, vistas de tokens, árbol y AST | ✅ |
 | B | 4 (base) | Almacenamiento en archivos, catálogo y tipos | ✅ |
 | C | 3 | Análisis semántico (`SEMxxx`) | ✅ |
-| D1 | 4 | CREATE/DROP TABLE, INSERT, SELECT simple | pendiente |
-| D2 | 5 | Evaluador de expresiones, WHERE, ORDER BY, UPDATE, DELETE | pendiente |
+| D1 | 4 | CREATE/DROP TABLE, INSERT, SELECT simple | ✅ |
+| D2 | 5 | Evaluador de expresiones, WHERE, ORDER BY, UPDATE, DELETE | ✅ |
 | D3 | 6 | INNER JOIN, agregados, GROUP BY, HAVING | pendiente |
 | D4 | 7 | Índices y subconsultas | pendiente |
 | E | 8 | API de ejecución, IDE (EJECUTAR, RESULTADOS, CATÁLOGO), ejemplos y documentación | pendiente |
@@ -142,7 +142,7 @@ Archivos, para que cada persona trabaje en los suyos sin pisarse:
 | `dbms/index.py` | archivos `.idx`, búsqueda, mantenimiento | D4 |
 | `dbms/subquery.py` | ejecución de subconsultas con el contexto de la fila externa | D4 |
 
-### D1. CREATE, DROP, INSERT y SELECT simple (entrega 4) — 🟢 ligera
+### D1. CREATE, DROP, INSERT y SELECT simple (entrega 4) — ✅
 
 - `CREATE TABLE` (con `IF NOT EXISTS`): `table_from_ast` → catálogo → `.csv` vacío.
 - `DROP TABLE` (con `IF EXISTS`): borra el `.csv`, sus índices y la entrada del catálogo.
@@ -152,7 +152,7 @@ Archivos, para que cada persona trabaje en los suyos sin pisarse:
 - Definir `Result` aquí: lo usan D2–D4 y la fase E.
 - **Hecho cuando**: crear, insertar y consultar de punta a punta en `tmp_path`, revisando también los archivos.
 
-### D2. Evaluador, WHERE, ORDER BY, UPDATE y DELETE (entrega 5) — 🟡 media
+### D2. Evaluador, WHERE, ORDER BY, UPDATE y DELETE (entrega 5) — ✅
 
 - `eval.py`: literales, columnas (`col` y `t.col`), aritmética, `||`, comparaciones, AND/OR/NOT, IS NULL, IN (lista).
   **Lógica de tres valores**: `NULL = 1` es desconocido; WHERE solo deja pasar verdadero.

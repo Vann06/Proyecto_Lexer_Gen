@@ -21,8 +21,8 @@ El detalle de cada fase (formatos de archivo, códigos de error, criterio de
 | A | 1–2 | Lexer/parser, errores LEX/SYN, AST, subconsultas (IN, EXISTS, escalares), vistas de tokens, árbol y AST | ✅ |
 | B | 4 (base) | Almacenamiento `metadata.txt` + `.csv`, catálogo y tipos | ✅ |
 | C | 3 | Análisis semántico (`SEMxxx`) | ✅ |
-| D1 | 4 | CREATE/DROP TABLE, INSERT, SELECT simple | pendiente |
-| D2 | 5 | Evaluador de expresiones, WHERE, ORDER BY, UPDATE, DELETE | pendiente |
+| D1 | 4 | CREATE/DROP TABLE, INSERT, SELECT simple | ✅ |
+| D2 | 5 | Evaluador de expresiones, WHERE, ORDER BY, UPDATE, DELETE | ✅ |
 | D3 | 6 | INNER JOIN, agregados, GROUP BY, HAVING | pendiente |
 | D4 | 7 | Índices y subconsultas | pendiente |
 | E | 8 | API `/api/sql/run`, IDE (EJECUTAR, RESULTADOS, CATÁLOGO), ejemplos y documentación | pendiente |
@@ -30,7 +30,8 @@ El detalle de cada fase (formatos de archivo, códigos de error, criterio de
 Hoy el botón **▶ ANALIZAR** del IDE hace el análisis léxico, sintáctico y
 semántico (contra la base `data/principal/`): muestra tokens, el árbol de
 derivación de ANTLR, el AST y los errores con línea y columna. Todavía no
-ejecuta sentencias.
+ejecuta sentencias desde la interfaz. El motor D1/D2 está disponible mediante
+`dbms.executor.execute`; la integración del botón EJECUTAR pertenece a E.
 
 ## Estructura
 
