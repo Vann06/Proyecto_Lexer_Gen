@@ -1,14 +1,15 @@
-"""Despacho D1/D2. El llamador debe ejecutar semantic.check antes.
+"""Despacho D1/D2/índices. El llamador debe ejecutar semantic.check antes.
 
 Las mutaciones se calculan y validan completas en memoria antes de escribir.
 No ofrece transacciones concurrentes ni recuperación frente a apagados.
 """
 from dbms import ast, sqltypes
-from dbms.catalog import PRIMARY_KEY, UNIQUE, table_from_ast
+from dbms.catalog import PRIMARY_KEY, UNIQUE, IndexSchema, table_from_ast
 from dbms.eval import Environment, evaluate
+from dbms import index
 from dbms.result import ExecutionError, Result
 from dbms.select import select
-from dbms.storage import Row
+from dbms.storage import Row, _atomic_write
 
 
 def _validate(table, rows, catalog):
@@ -19,6 +20,7 @@ def _validate(table, rows, catalog):
                 raise ExecutionError("EXE002", f"NULL en columna NOT NULL '{table.name}.{col.name}'")
             row.values[col.name] = value
     unique = [(k.name, k.columns) for k in table.constraints if k.kind in (PRIMARY_KEY, UNIQUE)]
+    unique += [(i.name, i.columns) for i in catalog.indexes_on(table.name) if i.unique]
     for name, cols in unique:
         seen = set()
         for row in rows:
@@ -56,16 +58,51 @@ def _execute(s, db, env, join_rows, group):
             return Result(message=f"La tabla '{s.name}' ya existe")
         table = table_from_ast(s, catalog)
         catalog.add_table(table)
+        for k in table.constraints:
+            if k.kind in (PRIMARY_KEY, UNIQUE):
+                name, suffix = k.name, 2
+                while name in catalog.indexes:
+                    name, suffix = f"{k.name}_{suffix}", suffix + 1
+                catalog.add_index(IndexSchema(name, table.name, k.columns, unique=True, implicit=True))
+        # Valida nombres de archivo antes de crear nada.
+        for idx in catalog.indexes_on(table.name):
+            index.index_path(db, idx.name)
         db.create_table_file(table)
+        index.rebuild(db, catalog, table, [])
         db.save_catalog(catalog)
         return Result(message=f"Tabla '{s.name}' creada")
     if isinstance(s, ast.DropTable):
         if s.name not in catalog.tables and s.if_exists:
             return Result(message=f"La tabla '{s.name}' no existe")
-        catalog.drop_table(s.name)
+        table = catalog.table(s.name)
+        dropped = catalog.drop_table(s.name)
         db.drop_table_file(s.name)
+        for idx in dropped:
+            index.index_path(db, idx.name).unlink(missing_ok=True)
+        index.positions_path(db, table).unlink(missing_ok=True)
         db.save_catalog(catalog)
         return Result(message=f"Tabla '{s.name}' eliminada")
+    if isinstance(s, ast.CreateIndex):
+        if s.name in catalog.indexes and s.if_not_exists:
+            return Result(message=f"El índice '{s.name}' ya existe")
+        idx = IndexSchema(s.name, s.table, s.columns, s.unique)
+        catalog.add_index(idx)
+        table = catalog.table(s.table)
+        rows = db.read_rows(table)
+        text = index.build_text(idx, rows)  # UNIQUE antes de modificar archivos
+        _atomic_write(index.index_path(db, idx.name), text)
+        index.write_positions(db, table)
+        db.save_catalog(catalog)
+        return Result(message=f"Índice '{s.name}' creado")
+    if isinstance(s, ast.DropIndex):
+        if s.name not in catalog.indexes and s.if_exists:
+            return Result(message=f"El índice '{s.name}' no existe")
+        idx = catalog.drop_index(s.name)
+        index.index_path(db, idx.name).unlink(missing_ok=True)
+        if not catalog.indexes_on(idx.table):
+            index.positions_path(db, catalog.table(idx.table)).unlink(missing_ok=True)
+        db.save_catalog(catalog)
+        return Result(message=f"Índice '{s.name}' eliminado")
     if isinstance(s, (ast.Insert, ast.Update, ast.Delete)):
         table = catalog.table(s.table)
         rows = db.read_rows(table)
@@ -81,11 +118,12 @@ def _execute(s, db, env, join_rows, group):
                 table.next_rowid += 1
                 count += 1
         else:
-            plan = "recorrido completo"
+            ids, plan = index.candidates(db, catalog, table, s.where)
             updated = []
             for row in rows:
                 row_env = env.push({table.name: row.values})
-                matches = s.where is None or evaluate(s.where, row_env) is True
+                matches = (ids is None or row.rowid in ids) and (
+                    s.where is None or evaluate(s.where, row_env) is True)
                 if matches:
                     count += 1
                     if isinstance(s, ast.Delete):
@@ -97,6 +135,7 @@ def _execute(s, db, env, join_rows, group):
             rows = updated
         _validate(table, rows, catalog)
         db.write_rows(table, rows)
+        index.rebuild(db, catalog, table, rows)
         db.save_catalog(catalog)
         return Result(message=f"{count} filas afectadas", plan=plan)
     if isinstance(s, ast.ShowTables):

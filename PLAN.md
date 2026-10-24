@@ -12,7 +12,7 @@ existente**. Cada fase cierra una o más entregas del curso.
 | D1 | 4 | CREATE/DROP TABLE, INSERT, SELECT simple | ✅ |
 | D2 | 5 | Evaluador de expresiones, WHERE, ORDER BY, UPDATE, DELETE | ✅ |
 | D3 | 6 | INNER JOIN, agregados, GROUP BY, HAVING | pendiente |
-| D4 | 7 | Índices y subconsultas | pendiente |
+| D4 | 7 | Índices y subconsultas | índices ✅; subconsultas pendientes |
 | E | 8 | API de ejecución, IDE (EJECUTAR, RESULTADOS, CATÁLOGO), ejemplos y documentación | pendiente |
 
 B va antes que C porque la semántica valida contra el catálogo. D va de lo
@@ -172,6 +172,9 @@ Archivos, para que cada persona trabaje en los suyos sin pisarse:
 ### D4. Índices y subconsultas (entrega 7) — 🔴 pesada
 
 **Índices**
+Implementados y probados por Persona 2. Formato preciso, acceso directo al CSV,
+contratos de extensiones y límites: [docs/motor.md](docs/motor.md).
+
 - `CREATE INDEX` construye `<idx>.idx` (`valor|rowid,rowid,…` ordenado); `DROP INDEX` lo borra.
 - En WHERE, una conjunción `col = literal` o un rango (`<`, `<=`, `>`, `>=`) sobre una columna indexada se resuelve con búsqueda binaria en el índice y solo se leen esas filas. `Result.plan` dice `"índice idx_edad"` o `"recorrido completo"` para poder demostrarlo.
 - INSERT, UPDATE y DELETE mantienen todos los índices de la tabla.

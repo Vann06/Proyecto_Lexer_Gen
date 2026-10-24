@@ -24,14 +24,15 @@ El detalle de cada fase (formatos de archivo, códigos de error, criterio de
 | D1 | 4 | CREATE/DROP TABLE, INSERT, SELECT simple | ✅ |
 | D2 | 5 | Evaluador de expresiones, WHERE, ORDER BY, UPDATE, DELETE | ✅ |
 | D3 | 6 | INNER JOIN, agregados, GROUP BY, HAVING | pendiente |
-| D4 | 7 | Índices y subconsultas | pendiente |
+| D4 | 7 | Índices y subconsultas | índices ✅; subconsultas pendientes |
 | E | 8 | API `/api/sql/run`, IDE (EJECUTAR, RESULTADOS, CATÁLOGO), ejemplos y documentación | pendiente |
 
 Hoy el botón **▶ ANALIZAR** del IDE hace el análisis léxico, sintáctico y
 semántico (contra la base `data/principal/`): muestra tokens, el árbol de
 derivación de ANTLR, el AST y los errores con línea y columna. Todavía no
-ejecuta sentencias desde la interfaz. El motor D1/D2 está disponible mediante
-`dbms.executor.execute`; la integración del botón EJECUTAR pertenece a E.
+ejecuta sentencias desde la interfaz. El motor ya ejecuta D1, D2 e índices
+mediante `dbms.executor.execute`; su integración con el botón EJECUTAR
+corresponde a la fase E. Ver [guía del motor y pruebas](docs/motor.md).
 
 ## Estructura
 
@@ -47,7 +48,12 @@ backend/
 │   ├── sqltypes.py       # tipos: validación, compatibilidad, texto del CSV
 │   ├── catalog.py        # esquema en memoria: tablas, restricciones, índices
 │   ├── storage.py        # data/<db>/metadata.txt + <tabla>.csv
-│   └── semantic.py       # análisis semántico contra el catálogo (SEMxxx)
+│   ├── semantic.py       # análisis semántico contra el catálogo (SEMxxx)
+│   ├── result.py         # Result y ExecutionError (EXExxx)
+│   ├── executor.py       # CREATE/DROP, INSERT, UPDATE, DELETE e índices
+│   ├── eval.py           # expresiones, NULL y pila de ámbitos
+│   ├── select.py         # selección, orden y proyección; extensiones de D3
+│   └── index.py          # índices .idx y acceso directo al CSV con .csv.pos
 ├── api/main.py           # FastAPI
 └── tests/                # pytest
 frontend/IDE-lite/        # IDE React (nginx en Docker)
@@ -88,4 +94,4 @@ El CI falla si `backend/dbms/parser/` no coincide con la gramática.
 | `LEX` | léxico | `LEX001` carácter no reconocido, `LEX002` cadena sin cerrar |
 | `SYN` | sintáctico | `SYN001` entrada inesperada, `SYN002` entrada sobrante, `SYN003` falta un token, `SYN004` sentencia no válida |
 | `SEM` | semántico | `SEM001` tabla inexistente, `SEM003` columna inexistente, `SEM004` referencia ambigua, `SEM006` tipos incompatibles… (tabla completa en [`PLAN.md`](PLAN.md#c-análisis-semántico--)) |
-| `EXE` | ejecución | (fase D) |
+| `EXE` | ejecución | `EXE001` duplicados, `EXE002` NOT NULL, `EXE003` escalar con varias filas, `EXE004` evaluación/tipos, `EXE005` ámbito, `EXE006` ancho de subconsulta, `EXE099` extensión pendiente |

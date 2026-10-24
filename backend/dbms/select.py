@@ -5,6 +5,7 @@ from importlib import import_module
 
 from dbms import ast
 from dbms.eval import Environment, evaluate
+from dbms.index import scan
 from dbms.result import ExecutionError, Result
 
 
@@ -39,7 +40,8 @@ def select(stmt, db, env=None, *, join_rows=None, group=None):
     if stmt.from_table:
         ref = stmt.from_table
         table = catalog.table(ref.name)
-        rows = db.read_rows(table)
+        # Un filtro sin calificar puede pertenecer a otra tabla en un JOIN.
+        rows, plan = scan(db, catalog, table, None if stmt.joins else stmt.where, ref.ref_name)
         envs = [outer.push({ref.ref_name: row.values}) for row in rows]
     else:
         envs = [outer.push({})]
