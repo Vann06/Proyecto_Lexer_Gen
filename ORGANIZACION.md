@@ -563,11 +563,12 @@ queda sin traducir el operador ternario.
 
 ### Fase 16. Código intermedio
 
-**Ubicación:** `src/intermedio/` (esqueleto creado, sin lógica)
-
-Código de tres direcciones (TAC) / cuádruplos, a partir de la salida de
-`semantico`. Sin forma fija asumida más allá de la estructura genérica de
-TAC — depende de qué construya la Fase 15 para la gramática dada.
+**Ubicación:** `src/intermedio/` — **implementada.** Ya no es una fase
+futura: código de tres direcciones (TAC) / cuádruplos a partir de la salida
+de `semantico`, con reciclaje de temporales, registros de activación,
+funciones anidadas, clases, listas, tabla de símbolos extendida e
+intérprete. Ver [CODIGO_INTERMEDIO.md](CODIGO_INTERMEDIO.md) y
+[PLAN_TAC.md](PLAN_TAC.md).
 
 ---
 
