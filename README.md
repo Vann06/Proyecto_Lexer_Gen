@@ -23,8 +23,8 @@ El detalle de cada fase (formatos de archivo, códigos de error, criterio de
 | C | 3 | Análisis semántico (`SEMxxx`) | ✅ |
 | D1 | 4 | CREATE/DROP TABLE, INSERT, SELECT simple | ✅ |
 | D2 | 5 | Evaluador de expresiones, WHERE, ORDER BY, UPDATE, DELETE | ✅ |
-| D3 | 6 | INNER JOIN, agregados, GROUP BY, HAVING | pendiente |
-| D4 | 7 | Índices y subconsultas | índices ✅; subconsultas pendientes |
+| D3 | 6 | INNER JOIN, agregados, GROUP BY, HAVING | ✅ |
+| D4 | 7 | Índices y subconsultas | ✅ |
 | E | 8 | API `/api/sql/run`, IDE (EJECUTAR, RESULTADOS, CATÁLOGO), ejemplos y documentación | API e IDE ✅; ejemplos y docs pendientes |
 
 **▶ ANALIZAR** hace el análisis léxico, sintáctico y semántico (sin
@@ -32,8 +32,8 @@ ejecutar): tokens, árbol de derivación, AST y errores con línea y columna.
 **▶ EJECUTAR** (`POST /api/sql/run`) ejecuta el script sentencia por sentencia
 sobre la base activa y se detiene en el primer error: la pestaña RESULTADOS
 muestra cada resultado y su plan, y CATÁLOGO (`GET /api/catalog`) las tablas,
-columnas, restricciones e índices. Lo que el motor aún no soporta (JOIN,
-agregados, subconsultas) se reporta como `EXE099`. Ver [guía del motor y pruebas](docs/motor.md).
+columnas, restricciones e índices. `workspace/demo.sql` recorre todo el SQL
+del enunciado y se ejecuta completo. Ver [guía del motor y pruebas](docs/motor.md).
 
 ## Estructura
 
@@ -53,7 +53,10 @@ backend/
 │   ├── result.py         # Result y ExecutionError (EXExxx)
 │   ├── executor.py       # CREATE/DROP, INSERT, UPDATE, DELETE e índices
 │   ├── eval.py           # expresiones, NULL y pila de ámbitos
-│   ├── select.py         # selección, orden y proyección; extensiones de D3
+│   ├── select.py         # tubería del SELECT: FROM → WHERE → GROUP → ORDER → proyección
+│   ├── join.py           # INNER JOIN (bucles anidados)
+│   ├── aggregate.py      # COUNT/SUM/AVG/MIN/MAX, GROUP BY
+│   ├── subquery.py       # ejecución y caché de subconsultas
 │   └── index.py          # índices .idx y acceso directo al CSV con .csv.pos
 ├── api/main.py           # FastAPI
 └── tests/                # pytest
@@ -95,4 +98,4 @@ El CI falla si `backend/dbms/parser/` no coincide con la gramática.
 | `LEX` | léxico | `LEX001` carácter no reconocido, `LEX002` cadena sin cerrar |
 | `SYN` | sintáctico | `SYN001` entrada inesperada, `SYN002` entrada sobrante, `SYN003` falta un token, `SYN004` sentencia no válida |
 | `SEM` | semántico | `SEM001` tabla inexistente, `SEM003` columna inexistente, `SEM004` referencia ambigua, `SEM006` tipos incompatibles… (tabla completa en [`PLAN.md`](PLAN.md#c-análisis-semántico--)) |
-| `EXE` | ejecución | `EXE001` duplicados, `EXE002` NOT NULL, `EXE003` escalar con varias filas, `EXE004` evaluación/tipos, `EXE005` ámbito, `EXE006` ancho de subconsulta, `EXE099` extensión pendiente |
+| `EXE` | ejecución | `EXE001` duplicados, `EXE002` NOT NULL, `EXE003` escalar con varias filas, `EXE004` evaluación/tipos, `EXE005` ámbito, `EXE006` ancho de subconsulta, `EXE099` no soportado |

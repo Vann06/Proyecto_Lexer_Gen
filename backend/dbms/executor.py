@@ -6,7 +6,7 @@ No ofrece transacciones concurrentes ni recuperación frente a apagados.
 from dbms import ast, sqltypes
 from dbms.catalog import PRIMARY_KEY, UNIQUE, IndexSchema, table_from_ast
 from dbms.eval import Environment, evaluate
-from dbms import index
+from dbms import index, subquery
 from dbms.result import ExecutionError, Result
 from dbms.select import select
 from dbms.storage import Row, _atomic_write
@@ -40,7 +40,10 @@ def execute(stmt, db, *, env=None, join_rows=None, group=None):
     pos = stmt.pos if isinstance(stmt, ast.Statement) else None
     body = stmt.body if isinstance(stmt, ast.Statement) else stmt
     try:
-        return _execute(body, db, env or Environment(), join_rows, group)
+        # El runner de subconsultas (D4) es nuevo por sentencia: su caché
+        # nunca ve datos anteriores a esta ejecución.
+        env = env or Environment(subquery_runner=subquery.runner(db))
+        return _execute(body, db, env, join_rows, group)
     except ExecutionError as exc:
         if exc.pos is None:
             exc.pos = pos

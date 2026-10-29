@@ -11,8 +11,8 @@ existente**. Cada fase cierra una o más entregas del curso.
 | C | 3 | Análisis semántico (`SEMxxx`) | ✅ |
 | D1 | 4 | CREATE/DROP TABLE, INSERT, SELECT simple | ✅ |
 | D2 | 5 | Evaluador de expresiones, WHERE, ORDER BY, UPDATE, DELETE | ✅ |
-| D3 | 6 | INNER JOIN, agregados, GROUP BY, HAVING | pendiente |
-| D4 | 7 | Índices y subconsultas | índices ✅; subconsultas pendientes |
+| D3 | 6 | INNER JOIN, agregados, GROUP BY, HAVING | ✅ |
+| D4 | 7 | Índices y subconsultas | ✅ |
 | E | 8 | API de ejecución, IDE (EJECUTAR, RESULTADOS, CATÁLOGO), ejemplos y documentación | pendiente |
 
 B va antes que C porque la semántica valida contra el catálogo. D va de lo
@@ -161,7 +161,12 @@ Archivos, para que cada persona trabaje en los suyos sin pisarse:
 - `ORDER BY` con varias claves, ASC/DESC, por alias o por expresión; NULL al final.
 - **Hecho cuando**: `SELECT nombre FROM estudiantes WHERE edad >= 18;` (el ejemplo del enunciado) y UPDATE/DELETE revisando el `.csv`.
 
-### D3. INNER JOIN, agregados, GROUP BY y HAVING (entrega 6) — 🔴 pesada
+### D3. INNER JOIN, agregados, GROUP BY y HAVING (entrega 6) — ✅
+
+`dbms/join.py` (`rows`: bucles anidados, las tablas unidas comparten el
+ámbito local) y `dbms/aggregate.py` (`group`: un entorno por grupo con
+`aggregate_runner`). Se enchufan a los puntos de extensión que ya tenía
+`select.py`. Pruebas: `tests/test_join.py`, `tests/test_aggregate.py`.
 
 - INNER JOIN por bucles anidados; nombres calificados y alias (`e.id`, `i.estudiante_id`).
 - COUNT/SUM/AVG/MIN/MAX: `COUNT(*)` vs `COUNT(col)` (no cuenta NULL), `DISTINCT`, NULL ignorado en el resto.
@@ -169,7 +174,7 @@ Archivos, para que cada persona trabaje en los suyos sin pisarse:
 - HAVING y ORDER BY pueden usar agregados (`HAVING COUNT(*) > 1`, `ORDER BY SUM(nota) DESC`).
 - **Hecho cuando**: consultas de estudiantes × inscripciones × cursos con conteos y promedios por curso.
 
-### D4. Índices y subconsultas (entrega 7) — 🔴 pesada
+### D4. Índices y subconsultas (entrega 7) — ✅
 
 **Índices**
 Implementados y probados por Persona 2. Formato preciso, acceso directo al CSV,
@@ -180,6 +185,12 @@ contratos de extensiones y límites: [docs/motor.md](docs/motor.md).
 - INSERT, UPDATE y DELETE mantienen todos los índices de la tabla.
 
 **Subconsultas**
+`dbms/subquery.py`: el `subquery_runner` que `executor.execute` instala en
+cada sentencia. Ejecuta el SELECT interno con el entorno de la fila externa
+(así funciona la correlación) y cachea las no correlacionadas dentro de la
+sentencia. La lógica de IN/EXISTS/escalar ya estaba en `eval.py`.
+Pruebas: `tests/test_subquery.py`.
+
 - IN / NOT IN (cuidado: `x NOT IN (…)` con un NULL en la subconsulta nunca es verdadero).
 - EXISTS / NOT EXISTS correlacionados: se reevalúan por cada fila externa; las no correlacionadas se calculan una vez.
 - Escalar: NULL si no devuelve filas; `EXE003` si devuelve más de una.
@@ -251,7 +262,11 @@ Dependencias a vigilar:
 
 ### Forma de trabajo con git
 
-- Una rama por persona desde `SQL`: `sql/semantica`, `sql/motor`, `sql/integracion`.
+- Una rama por persona desde `SQL`: `SQL-semantica`, `SQL-motor`, `SQL-integracion`.
+  **Nunca usar el prefijo `sql/`** mientras exista la rama `SQL`: en Windows y
+  macOS el sistema de archivos no distingue mayúsculas, y `git pull` falla con
+  "some local refs could not be updated" porque no puede crear la carpeta
+  `sql/` al lado del archivo `SQL`.
 - PRs pequeños hacia `SQL`, uno por sub-fase o parte de ella, con sus tests. `python -m pytest` debe pasar antes de integrar.
 - Cada quien edita sus archivos. Para tocar un archivo de otra persona (por ejemplo, agregar un caso al despacho de `executor.py`), se avisa o se hace en su PR.
 - `PLAN.md` y la tabla de estado del README se actualizan al terminar cada sub-fase.

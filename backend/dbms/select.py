@@ -29,7 +29,7 @@ def _has_aggregate(node):
 
 
 def select(stmt, db, env=None, *, join_rows=None, group=None):
-    """Extensiones: join_rows(stmt, db, envs), group(stmt, envs) -> iterable[Environment].
+    """Extensiones: join_rows(stmt, db, envs), group(stmt, envs, outer) -> iterable[Environment].
 
     group instala aggregate_runner en cada entorno; los callbacks de subconsulta
     se heredan al agregar ámbitos. La proyección y ORDER BY usan el mismo entorno.
@@ -53,7 +53,9 @@ def select(stmt, db, env=None, *, join_rows=None, group=None):
     if stmt.group_by or stmt.having or _has_aggregate(stmt.items) or _has_aggregate(stmt.order_by):
         if group is None:
             group = _extension("aggregate", "group")
-        envs = list(group(stmt, envs))
+        # `outer`: el grupo vacío de un agregado global no tiene fila propia
+        # y necesita las filas externas y el runner de subconsultas.
+        envs = list(group(stmt, envs, outer))
     if stmt.having:
         envs = [e for e in envs if evaluate(stmt.having, e) is True]
 

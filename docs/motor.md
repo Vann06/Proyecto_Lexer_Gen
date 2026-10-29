@@ -3,8 +3,9 @@
 Implementación de D1, D2 y la parte de índices de D4 en la rama SQL.
 El enunciado exige interpretar SQL con archivos propios, sin un DBMS externo;
 esta implementación usa el AST y almacenamiento del proyecto, sin SQLite ni
-otro motor. JOIN, agregados, ejecución de subconsultas y API/IDE siguen siendo
-entregas de las otras personas. No se declara completa la entrega 7 ni la 8.
+otro motor. JOIN, agregados y subconsultas se agregaron después sobre los
+contratos de este documento (`join.py`, `aggregate.py`, `subquery.py`; ver la
+tabla de abajo).
 
 ## Requisitos y evidencia
 
@@ -18,6 +19,10 @@ entregas de las otras personas. No se declara completa la entrega 7 ni la 8.
 | D4: CREATE/DROP INDEX | índices persistidos, ordenados por valor tipado, búsqueda binaria | `test_index.py` |
 | D4: acceso por índice | igualdad/rangos y conjunciones, lectura por posiciones del CSV | pruebas que prohíben `Database.read_rows` en consultas indexadas |
 | D4: mantenimiento | reconstrucción de todos los índices afectados y posiciones | comparación con recorrido completo después de mutaciones y reapertura |
+| D3: INNER JOIN | `join.rows`: bucles anidados, ámbito local compartido | `test_join.py` |
+| D3: agregados y GROUP BY | `aggregate.group`: grupos, NULL, grupo vacío global, HAVING/ORDER BY | `test_aggregate.py` |
+| D4: subconsultas | `subquery.runner`: correlación por entorno, caché de no correlacionadas | `test_subquery.py` |
+| Todo, por la API | criterios "hecho cuando" de PLAN.md y `demo.sql` completo | `test_aceptacion.py` |
 
 También se incluyen LIKE, BETWEEN, DISTINCT, LIMIT/OFFSET, SHOW TABLES y
 DESCRIBE/SHOW COLUMNS. Se prueban fechas, booleanos, floats, claves compuestas,
@@ -62,15 +67,18 @@ que ya fue validado; no sustituye `semantic.check`.
 - `Environment.scopes`: lista del ámbito local al externo; cada ámbito es
   `{alias_o_tabla: {columna: valor}}`. `push(scope)` crea un entorno hijo y
   conserva los callbacks. Un alias local oculta el alias externo.
-- Persona 1 instala `Environment(subquery_runner=callback)`; el callback
-  recibe `(select_ast, environment_actual)` y devuelve `Result`. El evaluador
-  maneja IN/NOT IN, EXISTS y cardinalidad escalar, pero no ejecuta ni cachea
-  subconsultas por sí solo. La Persona 1 implementa ese recorrido y la caché.
-- Persona 3 implementa `dbms.join.rows(stmt, db, envs)` y
-  `dbms.aggregate.group(stmt, envs)`, que devuelven entornos. `join.rows`
-  combina las tablas en el mismo ámbito local y aplica ON. `aggregate.group`
-  instala `aggregate_runner(func_call, env)` en cada entorno de grupo y debe
-  producir el grupo vacío cuando corresponda a un agregado global.
+- `execute` instala `Environment(subquery_runner=subquery.runner(db))` cuando
+  no recibe un entorno; el callback recibe `(select_ast, environment_actual)` y
+  devuelve `Result`. El evaluador maneja IN/NOT IN, EXISTS y cardinalidad
+  escalar; `subquery.py` ejecuta el SELECT interno y cachea las subconsultas
+  no correlacionadas (un runner nuevo por sentencia, así la caché no ve datos
+  viejos).
+- `dbms.join.rows(stmt, db, envs)` y `dbms.aggregate.group(stmt, envs, outer)`
+  devuelven entornos. `join.rows` combina las tablas en el mismo ámbito local y
+  aplica ON. `aggregate.group` instala `aggregate_runner(func_call, env)` en
+  cada entorno de grupo y produce el grupo vacío de un agregado global usando
+  `outer` (el entorno de la consulta), así una escalar correlacionada como
+  `(SELECT COUNT(*) … WHERE i.estudiante_id = e.id)` da 0 y no falla.
   Los módulos se cargan al necesitarse; también pueden inyectarse mediante
   `execute(..., join_rows=..., group=...)`.
 - Orden de etapas: FROM/JOIN → WHERE → GROUP → HAVING → proyección/DISTINCT →
@@ -121,7 +129,7 @@ Los rowids borrados no se reutilizan. DROP TABLE elimina CSV, posiciones,
 | EXE004 | error aritmético o valor incompatible en ejecución |
 | EXE005 | columna no disponible o ambigua en el entorno |
 | EXE006 | subconsulta con cantidad de columnas inválida (callback) |
-| EXE099 | sentencia o extensión aún no implementada |
+| EXE099 | sentencia o extensión no soportada (p. ej. si falta `join.py`) |
 
 La división INT/INT trunca hacia cero para respetar el tipo que infiere la
 semántica existente; con FLOAT devuelve FLOAT. WHERE acepta únicamente TRUE.
@@ -137,8 +145,10 @@ CHECK permanecen almacenados pero no se aplican, según el alcance de PLAN.md.
 ## Pruebas
 
 Verificación del 24 de octubre de 2026: **302 pruebas aprobadas** (73 nuevas
-del motor y 229 existentes), sin fallos. La suite emite una advertencia de
-deprecación de Starlette sobre su integración con httpx; no afecta el resultado.
+del motor y 229 existentes), sin fallos. Con D3, subconsultas y las pruebas
+de aceptación (29 de octubre): **376 pruebas aprobadas**. La suite emite una
+advertencia de deprecación de Starlette sobre su integración con httpx; no
+afecta el resultado.
 
 ```sh
 cd backend
@@ -153,5 +163,8 @@ En el entorno local preparado para esta tarea, desde `backend`:
 
 Las pruebas usan bases temporales y no modifican `data/`. La comparación
 aleatoria es reproducible (semilla fija); incluye 25 predicados por estado de
-la tabla, antes y después de UPDATE/DELETE. Los tests de extensiones usan
-callbacks mínimos para comprobar los contratos sin implementar D3/D4 ajenos.
+la tabla, antes y después de UPDATE/DELETE. Los tests de extensiones de
+`test_select.py`/`test_eval.py` usan callbacks mínimos para comprobar los
+contratos por separado; `test_join.py`, `test_aggregate.py` y
+`test_subquery.py` prueban las implementaciones reales sobre los datos de
+`tests/universidad.py`.
