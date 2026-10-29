@@ -32,4 +32,11 @@ window.IDE_DATA = {
   AST_DOT: "",
   // [{kind, sql, line, col}] — sentencias reconocidas (vacío si hubo errores)
   STATEMENTS: [],
+  // Base activa: la manda /api/sql/run (cambia con USE) y la usa /api/catalog
+  DATABASE: "principal",
+  // null = todavía no se ejecutó; si no, `statements` de /api/sql/run:
+  // [{kind, sql, line, col, problems, result: {columns, rows, message, plan} | null}]
+  RESULTS: null,
+  // Respuesta de GET /api/catalog: {database, databases, tables, indexes}
+  CATALOG: null,
 };

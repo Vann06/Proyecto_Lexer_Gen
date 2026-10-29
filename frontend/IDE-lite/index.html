@@ -163,6 +163,23 @@
     border-color:var(--cyan); color:var(--cyan); background:rgba(34,211,238,.06);
   }
   .stepbtn .play{ border-left-color: var(--cyan);}
+  .execbtn{ border-color:var(--pink); color:var(--pink); background:rgba(244,114,182,.06); }
+  .execbtn:hover{ background:rgba(244,114,182,.14); box-shadow:0 0 12px rgba(244,114,182,.35); }
+  .execbtn .play{ border-left-color: var(--pink);}
+  /* ---------- RESULTADOS / CATÁLOGO ---------- */
+  .stmt-card{ border:1px solid var(--line); background:var(--bg-2); padding:8px 10px; margin-bottom:10px; font-size:17px; }
+  .stmt-card.failed{ border-color:var(--red); }
+  .stmt-head{ display:flex; gap:10px; align-items:baseline; }
+  .stmt-head.clickable{ cursor:pointer; }
+  .stmt-head .k{ color:var(--cyan); }
+  .stmt-head .plan{ margin-left:auto; color:var(--yellow); }
+  .stmt-sql{ color:var(--tx-dim); white-space:pre-wrap; margin:4px 0 6px; }
+  .stmt-msg{ color:var(--green); }
+  .dtable-wrap{ overflow-x:auto; margin:4px 0; }
+  .dtable{ border-collapse:collapse; font-size:17px; }
+  .dtable th, .dtable td{ border:1px solid var(--line); padding:2px 8px; text-align:left; white-space:nowrap; }
+  .dtable th{ color:var(--pink); background:var(--bg-panel); }
+  .dtable td.null{ color:var(--tx-mute); font-style:italic; }
   /* ---------- mode selector ---------- */
   .modegrp{
     display:flex; align-items:center; gap:0;
@@ -450,7 +467,7 @@
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@viz-js/viz@3.2.4/lib/viz-standalone.js"></script>
 
-<script type="text/babel" src="./data.jsx?v=4"></script>
-<script type="text/babel" src="./app.jsx?v=9"></script>
+<script type="text/babel" src="./data.jsx?v=5"></script>
+<script type="text/babel" src="./app.jsx?v=10"></script>
 </body>
 </html>

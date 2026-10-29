@@ -67,3 +67,60 @@ def test_sql_parse_base_inexistente(client):
 def test_grammar(client):
     text = client.get("/api/grammar").text
     assert text.lstrip().startswith("//") and "grammar SQL;" in text
+
+
+SCRIPT = """CREATE TABLE estudiantes (id INT PRIMARY KEY, nombre VARCHAR(30), edad INT);
+INSERT INTO estudiantes VALUES (1, 'Ana', 19), (2, 'Luis', 17);
+SELECT nombre FROM estudiantes WHERE edad >= 18;"""
+
+
+def test_sql_run_ejecuta_y_persiste(client, tmp_path):
+    data = client.post("/api/sql/run", json={"script": SCRIPT}).json()
+    assert data["ok"] and data["problems"] == []
+    assert [s["kind"] for s in data["statements"]] == ["CreateTable", "Insert", "Select"]
+    assert data["statements"][1]["result"]["message"] == "2 filas afectadas"
+    assert data["statements"][2]["result"]["rows"] == [["Ana"]]
+    assert (tmp_path / "data" / "principal" / "estudiantes.csv").is_file()
+
+
+def test_sql_run_se_detiene_en_el_primer_error(client):
+    script = "CREATE TABLE t (a INT PRIMARY KEY);\nINSERT INTO t VALUES (1), (1);\nSELECT * FROM t;"
+    data = client.post("/api/sql/run", json={"script": script}).json()
+    assert not data["ok"]
+    assert len(data["statements"]) == 2                     # SELECT no se ejecutó
+    assert data["statements"][1]["result"] is None
+    assert [(p["code"], p["line"]) for p in data["problems"]] == [("EXE001", 2)]
+
+
+def test_sql_run_error_semantico_no_ejecuta(client):
+    data = client.post("/api/sql/run", json={"script": "SELECT x FROM nada;"}).json()
+    assert [p["code"] for p in data["problems"]] == ["SEM001"]
+    assert data["statements"][0]["result"] is None
+
+
+def test_sql_run_error_de_sintaxis(client):
+    data = client.post("/api/sql/run", json={"script": "SELECT FROM t;"}).json()
+    assert not data["ok"] and data["statements"] == []
+    assert data["problems"][0]["code"].startswith("SYN")
+
+
+def test_sql_run_bases_de_datos(client):
+    script = "CREATE DATABASE tienda;\nUSE tienda;\nCREATE TABLE c (id INT);\nSHOW DATABASES;"
+    data = client.post("/api/sql/run", json={"script": script}).json()
+    assert data["ok"] and data["database"] == "tienda"
+    assert data["statements"][3]["result"]["rows"] == [["principal"], ["tienda"]]
+    assert [t["name"] for t in client.get("/api/catalog?database=tienda").json()["tables"]] == ["c"]
+
+
+def test_catalog(client):
+    client.post("/api/sql/run", json={"script": SCRIPT + "\nCREATE INDEX idx_edad ON estudiantes (edad);"})
+    data = client.get("/api/catalog").json()
+    assert data["database"] == "principal" and data["databases"] == ["principal"]
+    [t] = data["tables"]
+    assert t["name"] == "estudiantes" and t["rows"] == 2
+    assert [c["name"] for c in t["columns"]] == ["id", "nombre", "edad"]
+    assert {i["name"] for i in data["indexes"]} >= {"idx_edad"}
+
+
+def test_catalog_base_inexistente(client):
+    assert client.get("/api/catalog?database=nada").status_code == 404

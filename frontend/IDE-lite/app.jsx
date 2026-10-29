@@ -414,6 +414,91 @@ function ProblemsView({ onJump }){
   );
 }
 
+/* Una tabla de datos (resultado de un SELECT o columnas del catálogo).
+   NULL se distingue de la cadena vacía. */
+function DataTable({ columns, rows }){
+  return (
+    <div className="dtable-wrap">
+      <table className="dtable">
+        <thead><tr>{columns.map((c,i)=><th key={i}>{c}</th>)}</tr></thead>
+        <tbody>
+          {rows.map((r,i)=>
+            <tr key={i}>{r.map((v,j)=>
+              <td key={j} className={v===null?"null":""}>{v===null ? "NULL" : String(v)}</td>)}
+            </tr>)}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* Una tarjeta por sentencia ejecutada (campo `statements` de /api/sql/run).
+   La ejecución se detiene en la primera con error: esa queda en rojo. */
+function ExecResultsView({ onJump }){
+  if (D.RESULTS === null)
+    return <div className="dim" style={{padding:16}}>Presiona ▶ EJECUTAR para correr el script</div>;
+  return (
+    <div>
+      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
+        ▍ RESULTADOS · {D.RESULTS.length} sentencia{D.RESULTS.length===1?"":"s"} · base {D.DATABASE}
+      </div>
+      {!D.RESULTS.length && <div className="dim" style={{padding:16}}>no se ejecutó ninguna sentencia (ver PROBLEMAS)</div>}
+      {D.RESULTS.map((s,i)=>{
+        const r = s.result;
+        return (
+          <div key={i} className={"stmt-card" + (r ? "" : " failed")}>
+            <div className="stmt-head clickable" onClick={() => onJump(s)} title="Ir a la línea en el editor">
+              <span className="k">{s.kind}</span>
+              <span className="dim">línea {s.line}</span>
+              {r && r.plan && <span className="plan">plan: {r.plan}</span>}
+            </div>
+            <div className="stmt-sql">{s.sql}</div>
+            {r && r.columns.length > 0 && <>
+              <DataTable columns={r.columns} rows={r.rows}/>
+              <div className="dim">{r.rows.length} fila{r.rows.length===1?"":"s"}</div>
+            </>}
+            {r && r.message && <div className="stmt-msg">✓ {r.message}</div>}
+            {s.problems.map((p,j)=>
+              <div key={j} className={p.level}>{p.code} · {p.msg}</div>)}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* Esquema de la base activa (GET /api/catalog): tablas con columnas,
+   restricciones y cantidad de filas, e índices. */
+function CatalogView(){
+  const c = D.CATALOG;
+  if (!c) return <div className="dim" style={{padding:16}}>catálogo no disponible (¿la API está corriendo?)</div>;
+  return (
+    <div>
+      <div className="h-pixel" style={{color:"var(--pink)", marginBottom:8}}>
+        ▍ CATÁLOGO · base {c.database}
+        <span className="dim" style={{fontFamily:"VT323", fontSize:16}}> · bases: {c.databases.join(", ")}</span>
+      </div>
+      {!c.tables.length && <div className="dim" style={{padding:16}}>la base no tiene tablas</div>}
+      {c.tables.map(t=>
+        <div key={t.name} className="stmt-card">
+          <div className="stmt-head"><span className="k">{t.name}</span><span className="dim">{t.rows} fila{t.rows===1?"":"s"}</span></div>
+          <DataTable columns={["columna","tipo","not null"]}
+                     rows={t.columns.map(col=>[col.name, col.type, col.not_null ? "✓" : ""])}/>
+          {t.constraints.map(k=>
+            <div key={k.name} className="dim">
+              {k.kind} {k.name} ({k.columns.join(", ")}){k.ref_table ? ` → ${k.ref_table}(${k.ref_columns.join(", ")})` : ""}{k.check ? ` ${k.check}` : ""}
+            </div>)}
+        </div>
+      )}
+      {c.indexes.length > 0 && <>
+        <div className="h-pixel" style={{color:"var(--pink)", margin:"12px 0 8px"}}>▍ ÍNDICES</div>
+        <DataTable columns={["índice","tabla","columnas","único","implícito"]}
+                   rows={c.indexes.map(i=>[i.name, i.table, i.columns.join(", "), i.unique ? "✓" : "", i.implicit ? "✓" : ""])}/>
+      </>}
+    </div>
+  );
+}
+
 /* ============================== Right results panel ============================== */
 
 function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, resultsSize, onJump }){
@@ -423,6 +508,8 @@ function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, result
     {id:"tree",     label:"ÁRBOL SINTÁCTICO"},
     {id:"ast",      label:"AST"},
     {id:"errors",   label:"PROBLEMAS", badge: problemCount || null},
+    {id:"results",  label:"RESULTADOS", badge: D.RESULTS ? D.RESULTS.length : null},
+    {id:"catalog",  label:"CATÁLOGO"},
   ];
 
   return (
@@ -454,6 +541,8 @@ function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, result
                                              emptyMsg={D.PARSE_OK === false ? "Sin AST: el script tiene errores de sintaxis (ver PROBLEMAS)"
                                                                             : "Presiona ▶ ANALIZAR para ver el AST"}/>}
           {activeTab==="errors"  && <ProblemsView onJump={onJump}/>}
+          {activeTab==="results" && <ExecResultsView onJump={onJump}/>}
+          {activeTab==="catalog" && <CatalogView/>}
         </div>
       </div>
     </>
@@ -462,7 +551,7 @@ function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, result
 
 /* ============================== Header ============================== */
 
-function Header({ activeFile, setFile, onRun, onSave, loading }){
+function Header({ activeFile, setFile, onRun, onExec, onSave, loading }){
   const tabs = ["sql","g4"];
   return (
     <header data-screen-label="IDE">
@@ -482,8 +571,12 @@ function Header({ activeFile, setFile, onRun, onSave, loading }){
       </div>
       <div className="actions">
         <button className="runbtn" onClick={onRun} disabled={loading} style={{opacity:loading?.5:1}}
-                title="Análisis léxico y sintáctico del script (todavía no ejecuta nada)">
+                title="Análisis léxico, sintáctico y semántico del script (no ejecuta nada)">
           {loading ? "..." : <><span className="play"/>ANALIZAR</>}
+        </button>
+        <button className="runbtn execbtn" onClick={onExec} disabled={loading} style={{opacity:loading?.5:1}}
+                title="Ejecuta el script sentencia por sentencia; se detiene en el primer error">
+          {loading ? "..." : <><span className="play"/>EJECUTAR</>}
         </button>
         <button className="runbtn stepbtn" onClick={onSave} title="Guardar el script en el workspace">
           SAVE
@@ -595,7 +688,15 @@ function App(){
     setContentVersion(v => v + 1);
   };
 
-  useEffect(() => { fetchWorkspace(true); fetchGrammar(); }, []);
+  const fetchCatalog = async () => {
+    try {
+      const res = await fetch(`${API}/api/catalog?database=${encodeURIComponent(D.DATABASE)}`);
+      D.CATALOG = res.ok ? await res.json() : null;
+    } catch(e) { D.CATALOG = null; }
+    rerender();
+  };
+
+  useEffect(() => { fetchWorkspace(true); fetchGrammar(); fetchCatalog(); }, []);
 
   const handleEdit = () => { rerender(); };
 
@@ -679,6 +780,36 @@ function App(){
     }
   };
 
+  // ── EJECUTAR: semántica + ejecución sentencia por sentencia (/api/sql/run).
+  // Escribe en la base: después se refresca el catálogo. ─────────────────
+  const handleExec = async () => {
+    const f = D.FILES.sql;
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/api/sql/run`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ script: f.rawContent, database: D.DATABASE }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      D.RESULTS = data.statements || [];
+      D.DATABASE = data.database || D.DATABASE;
+      D.PROBLEMS = (data.problems || []).map(p => ({ ...p, loc: `${f.name}:${p.line}:${p.col}` }));
+      // Con errores de sintaxis no se ejecutó nada: se ve mejor en PROBLEMAS.
+      setTab(D.RESULTS.length ? "results" : "errors");
+      await fetchCatalog();
+    } catch(e) {
+      console.error("API /sql/run:", e);
+      D.RESULTS = null;
+      D.PROBLEMS = [{ level:"err", code:"IDE001", msg:`No se pudo contactar la API: ${e}`, loc:"" }];
+      setTab("errors");
+      rerender();
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const RESULTS_WIDTHS = { normal: 460, wide: 760 };
   const cycleResults = () => setResultsSize(s => s==="normal"?"wide":"normal");
 
@@ -727,7 +858,7 @@ function App(){
         "--col-right": `${layout.right}px`,
       }}
     >
-      <Header activeFile={activeFile} setFile={setFile} onRun={handleRun} onSave={handleSave}
+      <Header activeFile={activeFile} setFile={setFile} onRun={handleRun} onExec={handleExec} onSave={handleSave}
               loading={loading}/>
 
       <div id="files" className="panel" data-screen-label="files">

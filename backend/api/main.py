@@ -5,8 +5,11 @@ Mismos endpoints de workspace y /health que tenía el servidor Rust anterior
 
     POST /api/sql/parse   {script, database?}  -> tokens, árbol DOT, AST DOT,
                           problemas (léxicos, sintácticos y semánticos), sentencias
+    POST /api/sql/run     {script, database?}  -> por sentencia: problemas y
+                          resultado; se detiene en la primera con error
+    GET  /api/catalog?database=  -> bases, tablas (columnas, restricciones,
+                          filas) e índices de una base
     GET  /api/grammar               -> texto de grammar/SQL.g4 (el IDE lo muestra)
-    (fase E: /api/sql/run y /api/catalog)
 
 Correr desde backend/:  uvicorn api.main:app --port 8080 --reload
 """
@@ -21,10 +24,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
+from dbms import ast
 from dbms.ast_dot import ast_to_dot
 from dbms.builder import build
+from dbms.executor import execute
 from dbms.frontend import Problem, parse, tokens_to_json, tree_to_dot
-from dbms.semantic import check_script
+from dbms.result import ExecutionError, Result
+from dbms.semantic import Analyzer, check_script
 from dbms.storage import DEFAULT_DATABASE, DataDir, StorageError
 
 WORKSPACE_DIR = Path(os.environ.get("DBMS_WORKSPACE", Path(__file__).resolve().parents[2] / "workspace"))
@@ -115,3 +121,83 @@ def sql_parse(req: ScriptRequest):
         "statements": [{"kind": s.kind, "sql": s.sql, "line": s.pos.line, "col": s.pos.col}
                        for s in stmts],
     }
+
+
+def _run_database_stmt(s, data: DataDir, current: str) -> tuple[Result, str]:
+    """Sentencias sobre bases de datos: las resuelve la API porque necesitan
+    el DataDir, no una sola base. Devuelve el resultado y la base activa."""
+    if isinstance(s, ast.CreateDatabase):
+        if data.exists(s.name):
+            return Result(message=f"La base de datos '{s.name}' ya existe"), current
+        data.create(s.name)
+        return Result(message=f"Base de datos '{s.name}' creada"), current
+    if isinstance(s, ast.DropDatabase):
+        if not data.exists(s.name):
+            return Result(message=f"La base de datos '{s.name}' no existe"), current
+        data.drop(s.name)
+        # Si se borró la base activa se vuelve a la principal.
+        return Result(message=f"Base de datos '{s.name}' eliminada"), DEFAULT_DATABASE if s.name == current else current
+    if isinstance(s, ast.UseDatabase):
+        return Result(message=f"Usando la base de datos '{s.name}'"), s.name
+    return Result(["base"], [[n] for n in data.databases()]), current   # ShowDatabases
+
+
+_DATABASE_STMTS = (ast.CreateDatabase, ast.DropDatabase, ast.UseDatabase, ast.ShowDatabases)
+
+
+@app.post("/api/sql/run")
+def sql_run(req: ScriptRequest):
+    """Ejecuta el script sentencia por sentencia: semántica contra el catálogo
+    actual (ya con los efectos de las anteriores) y luego ejecución. Se
+    detiene en la primera sentencia con error; las anteriores quedan hechas."""
+    parsed = parse(req.script)
+    if not parsed.ok:
+        return {"ok": False, "database": req.database,
+                "problems": [p.to_dict() for p in parsed.problems], "statements": []}
+
+    data, current = DataDir(DATA_DIR), req.database
+    problems, statements = list(parsed.problems), []
+    for stmt in build(parsed):
+        entry = {"kind": stmt.kind, "sql": stmt.sql, "line": stmt.pos.line, "col": stmt.pos.col,
+                 "problems": [], "result": None}
+        statements.append(entry)
+        try:
+            db = data.open(current, create=current == DEFAULT_DATABASE)
+            found = Analyzer(db.load_catalog(), data, current).check(stmt)
+            if not any(p.level == "err" for p in found):
+                if isinstance(stmt.body, _DATABASE_STMTS):
+                    result, current = _run_database_stmt(stmt.body, data, current)
+                else:
+                    result = execute(stmt, db)
+                entry["result"] = result.to_dict()
+        except ExecutionError as e:
+            found = [e.to_problem()]
+        except StorageError as e:
+            found = [Problem("err", "EXE000", f"Error de almacenamiento: {e}", stmt.pos.line, stmt.pos.col)]
+        entry["problems"] = [p.to_dict() for p in found]
+        problems += found
+        if entry["result"] is None:
+            break
+    return {"ok": not any(p.level == "err" for p in problems), "database": current,
+            "problems": [p.to_dict() for p in problems], "statements": statements}
+
+
+@app.get("/api/catalog")
+def catalog(database: str = DEFAULT_DATABASE):
+    data = DataDir(DATA_DIR)
+    try:
+        db = data.open(database, create=database == DEFAULT_DATABASE)
+        cat = db.load_catalog()
+        tables = [{
+            "name": t.name,
+            "columns": [{"name": c.name, "type": str(c.type), "not_null": c.not_null} for c in t.columns],
+            "constraints": [{"kind": k.kind, "name": k.name, "columns": k.columns,
+                             "ref_table": k.ref_table, "ref_columns": k.ref_columns, "check": k.check}
+                            for k in t.constraints],
+            "rows": len(db.read_rows(t)),
+        } for t in cat.tables.values()]
+    except StorageError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"database": database, "databases": data.databases(), "tables": tables,
+            "indexes": [{"name": i.name, "table": i.table, "columns": i.columns,
+                         "unique": i.unique, "implicit": i.implicit} for i in cat.indexes.values()]}

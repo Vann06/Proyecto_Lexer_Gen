@@ -187,7 +187,7 @@ contratos de extensiones y límites: [docs/motor.md](docs/motor.md).
 
 - **Toda la fase D**: tests de punta a punta por sentencia sobre una base en `tmp_path`, comparando filas y archivos resultantes.
 
-## E. Integración
+## E. Integración — API e IDE ✅ (faltan ejemplos y docs)
 
 - API: `POST /api/sql/run {script, database}` → por sentencia: problemas, resultado, plan; `GET /api/catalog`.
 - IDE: botón **▶ EJECUTAR** (además de ANALIZAR), pestañas **RESULTADOS** (tabla por sentencia) y **CATÁLOGO** (tablas, columnas, tipos, índices); errores SEM/EXE en PROBLEMAS.

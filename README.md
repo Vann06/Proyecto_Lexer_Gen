@@ -25,14 +25,15 @@ El detalle de cada fase (formatos de archivo, códigos de error, criterio de
 | D2 | 5 | Evaluador de expresiones, WHERE, ORDER BY, UPDATE, DELETE | ✅ |
 | D3 | 6 | INNER JOIN, agregados, GROUP BY, HAVING | pendiente |
 | D4 | 7 | Índices y subconsultas | índices ✅; subconsultas pendientes |
-| E | 8 | API `/api/sql/run`, IDE (EJECUTAR, RESULTADOS, CATÁLOGO), ejemplos y documentación | pendiente |
+| E | 8 | API `/api/sql/run`, IDE (EJECUTAR, RESULTADOS, CATÁLOGO), ejemplos y documentación | API e IDE ✅; ejemplos y docs pendientes |
 
-Hoy el botón **▶ ANALIZAR** del IDE hace el análisis léxico, sintáctico y
-semántico (contra la base `data/principal/`): muestra tokens, el árbol de
-derivación de ANTLR, el AST y los errores con línea y columna. Todavía no
-ejecuta sentencias desde la interfaz. El motor ya ejecuta D1, D2 e índices
-mediante `dbms.executor.execute`; su integración con el botón EJECUTAR
-corresponde a la fase E. Ver [guía del motor y pruebas](docs/motor.md).
+**▶ ANALIZAR** hace el análisis léxico, sintáctico y semántico (sin
+ejecutar): tokens, árbol de derivación, AST y errores con línea y columna.
+**▶ EJECUTAR** (`POST /api/sql/run`) ejecuta el script sentencia por sentencia
+sobre la base activa y se detiene en el primer error: la pestaña RESULTADOS
+muestra cada resultado y su plan, y CATÁLOGO (`GET /api/catalog`) las tablas,
+columnas, restricciones e índices. Lo que el motor aún no soporta (JOIN,
+agregados, subconsultas) se reporta como `EXE099`. Ver [guía del motor y pruebas](docs/motor.md).
 
 ## Estructura
 
