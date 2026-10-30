@@ -58,23 +58,27 @@ def _references_outside(sel, catalog, visible) -> bool:
     visible = [scope, *visible]
     aliases = {i.alias for i in sel.items if isinstance(i, ast.ExprItem) and i.alias}
 
-    def resolves(col: ast.ColumnRef) -> bool:
+    def resolves(col: ast.ColumnRef, allow_alias=False) -> bool:
         if col.table is not None:
             return any(col.table in s for s in visible)
-        return col.column in aliases or any(col.column in cols for s in visible for cols in s.values())
+        return (allow_alias and col.column in aliases) or any(
+            col.column in cols for s in visible for cols in s.values())
 
-    def walk(node) -> bool:
+    def walk(node, allow_alias=False) -> bool:
         if isinstance(node, list):
-            return any(walk(n) for n in node)
+            return any(walk(n, allow_alias) for n in node)
         if isinstance(node, ast.ColumnRef):
-            return not resolves(node)
+            return not resolves(node, allow_alias)
         if isinstance(node, ast.Select):
             return _references_outside(node, catalog, visible)
         if is_dataclass(node) and not isinstance(node, (ast.Pos, ast.DataType)):
-            return any(walk(getattr(node, f.name)) for f in fields(node))
+            return any(walk(getattr(node, f.name), allow_alias) for f in fields(node))
         return False
 
     exprs = [i.expr for i in sel.items if isinstance(i, ast.ExprItem)]
     exprs += [j.on for j in sel.joins if j.on is not None]
-    exprs += [sel.where, *sel.group_by, sel.having, *(o.expr for o in sel.order_by)]
-    return walk([e for e in exprs if e is not None])
+    exprs += [sel.where, *sel.group_by, sel.having]
+    # Los alias de proyección solo son visibles en ORDER BY, no en la
+    # expresión que los define ni en WHERE. Las subconsultas abren su ámbito.
+    return walk([e for e in exprs if e is not None]) or walk(
+        [o.expr for o in sel.order_by], allow_alias=True)

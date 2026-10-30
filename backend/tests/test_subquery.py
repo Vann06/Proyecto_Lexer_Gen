@@ -116,3 +116,26 @@ def test_deteccion_de_correlacion(uni, sql, expected):
     [stmt] = build(parse(sql))
     where = stmt.body.where
     assert subquery.is_correlated(where.select, uni.load_catalog()) is expected
+
+
+@pytest.mark.parametrize("inner, expected", [
+    ("SELECT id AS id", [[1, 1], [2, 2]]),
+    ("SELECT 10 AS id WHERE id = 1", [[1, 10], [2, None]]),
+    ("SELECT (SELECT id AS id) AS valor", [[1, 1], [2, 2]]),
+])
+def test_alias_no_oculta_correlacion_en_select_where_o_anidada(db, inner, expected):
+    run(db, "CREATE TABLE t (id INT); INSERT INTO t VALUES (1), (2)")
+    assert run(db, f"SELECT id, ({inner}) AS copia FROM t ORDER BY id").rows == expected
+
+
+def test_alias_order_by_conserva_cache_no_correlacionada(db, monkeypatch):
+    run(db, "CREATE TABLE t (id INT); INSERT INTO t VALUES (1), (2)")
+    calls = []
+    original = subquery.select
+    def spy(sel, database, env):
+        calls.append(sel)
+        return original(sel, database, env)
+    monkeypatch.setattr(subquery, "select", spy)
+    result = run(db, "SELECT id, (SELECT 7 AS valor ORDER BY valor) FROM t ORDER BY id")
+    assert result.rows == [[1, 7], [2, 7]]
+    assert len(calls) == 1

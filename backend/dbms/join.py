@@ -20,7 +20,7 @@ Solo INNER: la semántica rechaza LEFT/RIGHT/CROSS (SEM099) antes de llegar.
 """
 from dataclasses import fields, is_dataclass
 
-from dbms import ast, index
+from dbms import ast, index, sqltypes
 from dbms.eval import Environment, evaluate
 
 
@@ -72,9 +72,12 @@ def _by_index(db, table, idx, other):
     filas se leen del CSV por posición, solo las necesarias, con caché."""
     keys = {key: ids for key, ids in index.load_entries(db, table, idx)}
     cache: dict[int, object] = {}
+    column_type = table.column(idx.columns[0]).type
 
     def candidates(env):
         value = evaluate(other, env)
+        if column_type.name == "DATE":
+            value = sqltypes.coerce(value, column_type)
         ids = keys.get(value, []) if value is not None else []
         missing = [rid for rid in ids if rid not in cache]
         if missing:

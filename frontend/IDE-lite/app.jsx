@@ -748,7 +748,7 @@ function App(){
       const res = await fetch(`${API}/api/sql/parse`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ script: f.rawContent }),
+        body:    JSON.stringify({ script: f.rawContent, database: D.DATABASE }),
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();

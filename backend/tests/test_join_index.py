@@ -24,6 +24,26 @@ from test_executor import db, run  # noqa: F401  (fixture)
 from universidad import UNIVERSIDAD
 
 
+@pytest.mark.parametrize("condition", [
+    "b.d = '2026-01-01'", "'2026-01-01' = b.d", "b.d = a.d", "b.d = NULL",
+])
+def test_join_date_mismo_resultado_con_indice(db, reads, condition):
+    run(db, "CREATE TABLE a (id INT, d DATE); CREATE TABLE b (id INT, d DATE); "
+            "INSERT INTO a VALUES (1, '2026-01-01'), (2, NULL); "
+            "INSERT INTO b VALUES (10, '2026-01-01'), (11, '2026-01-01'), "
+            "(12, '2026-02-01'), (13, NULL)")
+    query = f"SELECT a.id, b.id FROM a INNER JOIN b ON {condition} ORDER BY a.id, b.id"
+    expected = run(db, query).rows
+    if condition != "b.d = NULL":
+        assert expected
+    run(db, "CREATE INDEX idx_d ON b(d)")
+    reads.clear()
+    result = run(db, query)
+    assert result.rows == expected
+    assert "JOIN b: índice idx_d" in result.plan
+    assert reads == ["a"]
+
+
 @pytest.fixture
 def uni(db):
     run(db, UNIVERSIDAD)
