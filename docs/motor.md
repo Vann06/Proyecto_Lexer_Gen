@@ -20,6 +20,7 @@ tabla de abajo).
 | D4: acceso por índice | igualdad/rangos y conjunciones, lectura por posiciones del CSV | pruebas que prohíben `Database.read_rows` en consultas indexadas |
 | D4: mantenimiento | reconstrucción de todos los índices afectados y posiciones | comparación con recorrido completo después de mutaciones y reapertura |
 | D3: INNER JOIN | `join.rows`: bucles anidados, ámbito local compartido | `test_join.py` |
+| D4: JOIN con índice | igualdad en ON contra un índice de la tabla unida, lectura por posiciones | `test_join_index.py` (incluye comparación aleatoria y que la tabla unida no se recorra) |
 | D3: agregados y GROUP BY | `aggregate.group`: grupos, NULL, grupo vacío global, HAVING/ORDER BY | `test_aggregate.py` |
 | D4: subconsultas | `subquery.runner`: correlación por entorno, caché de no correlacionadas | `test_subquery.py` |
 | Todo, por la API | criterios "hecho cuando" de PLAN.md y `demo.sql` completo | `test_aceptacion.py` |
@@ -107,6 +108,14 @@ aplicables y después se evalúa el WHERE completo sobre los candidatos. OR y
 expresiones no indexables usan recorrido completo para preservar resultados.
 Los índices compuestos se guardan y mantienen, pero no optimizan búsquedas
 por prefijo en esta entrega.
+
+INNER JOIN también usa índices (`join.py`): si una parte del ON es
+`unida.col = expresión` y la expresión no depende de la tabla unida, el `.idx`
+de `col` se carga una vez (`index.load_entries`) y cada fila de la izquierda
+busca su clave; las filas unidas se leen por posición con caché. Se evalúa el
+ON completo después, así que el resultado es idéntico al bucle anidado. El
+plan agrega una parte por JOIN: `JOIN c: índice pk_cursos` o
+`JOIN c: recorrido completo`. Una clave NULL no coincide con nada.
 
 Cada mutación valida primero todos los valores y restricciones. INSERT/UPDATE/
 DELETE reescriben el CSV y reconstruyen los índices y posiciones. UPDATE y

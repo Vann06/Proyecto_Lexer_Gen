@@ -51,7 +51,7 @@ class ParseResult:
 # Nombres legibles para los tokens que no son palabras clave.
 _TOKEN_NAMES = {
     "IDENTIFIER": "identificador", "INT_LIT": "entero", "FLOAT_LIT": "decimal",
-    "STRING_LIT": "cadena", "fin de archivo": "fin de archivo",
+    "STRING_LIT": "cadena", "<EOF>": "fin de archivo",
 }
 # Palabras clave que la gramática también acepta como identificador
 # (regla nonReserved): en "se esperaba" solo repiten "identificador".
@@ -73,17 +73,24 @@ def _expected(text: str) -> str:
     return items[0] if len(items) == 1 else "uno de: " + ", ".join(items)
 
 
+def _eof(text: str) -> str:
+    return text.replace("<EOF>", "fin de archivo")
+
+
 def _translate(msg: str, offending: str | None) -> tuple[str, str]:
-    msg = msg.replace("'<EOF>'", "fin de archivo").replace("<EOF>", "fin de archivo")
+    # <EOF> queda como un solo token hasta el final: si se tradujera antes,
+    # _expected partiría "fin de archivo" en tres elementos por los espacios.
+    msg = msg.replace("'<EOF>'", "<EOF>")
     m = re.match(r"^mismatched input (.+?) expecting (.+)$", msg, re.S)
     if m:
-        return "SYN001", f"Entrada inesperada {m.group(1)}; se esperaba {_expected(m.group(2))}"
+        return "SYN001", f"Entrada inesperada {_eof(m.group(1))}; se esperaba {_expected(m.group(2))}"
     m = re.match(r"^extraneous input (.+?) expecting (.+)$", msg, re.S)
     if m:
-        return "SYN002", f"Entrada sobrante {m.group(1)}; se esperaba {_expected(m.group(2))}"
+        return "SYN002", f"Entrada sobrante {_eof(m.group(1))}; se esperaba {_expected(m.group(2))}"
     m = re.match(r"^missing (.+?) at (.+)$", msg, re.S)
     if m:
-        return "SYN003", f"Falta {_expected(m.group(1))} antes de {m.group(2)}"
+        return "SYN003", f"Falta {_expected(m.group(1))} antes de {_eof(m.group(2))}"
+    msg = _eof(msg)
     if msg.startswith("no viable alternative"):
         # ANTLR pega los lexemas sin espacios ('CREATETABLA'); se cita solo
         # el token donde se detectó el error.

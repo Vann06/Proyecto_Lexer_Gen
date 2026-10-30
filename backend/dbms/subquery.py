@@ -19,8 +19,6 @@ from dataclasses import fields, is_dataclass
 from dbms import ast
 from dbms.select import select
 
-_SUBQUERIES = (ast.ScalarSubquery, ast.InSubquery, ast.Exists)
-
 
 def runner(db):
     catalog = None

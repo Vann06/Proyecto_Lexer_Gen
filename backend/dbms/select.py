@@ -48,7 +48,10 @@ def select(stmt, db, env=None, *, join_rows=None, group=None):
     if stmt.joins:
         if join_rows is None:
             join_rows = _extension("join", "rows")
-        envs = list(join_rows(stmt, db, envs))
+        joined = join_rows(stmt, db, envs)
+        # join.rows puede decir qué estrategia usó cada JOIN (índice o recorrido).
+        plan = "; ".join([plan, *getattr(joined, "plan", [])])
+        envs = list(joined)
     envs = [e for e in envs if stmt.where is None or evaluate(stmt.where, e) is True]
     if stmt.group_by or stmt.having or _has_aggregate(stmt.items) or _has_aggregate(stmt.order_by):
         if group is None:

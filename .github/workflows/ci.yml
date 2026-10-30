@@ -1,12 +1,14 @@
 name: CI
 
-# Corre en cada push directo a main y en cada pull request cuyo destino sea
-# main (el filtro `branches` de `pull_request` mira la rama BASE del PR).
+# Corre en cada push a SQL (el intérprete), a las ramas de trabajo SQL-* y a
+# main, y en cada pull request cuyo destino sea SQL o main (el filtro
+# `branches` de `pull_request` mira la rama BASE del PR).
 on:
   push:
-    branches: [main]
+    branches: [SQL, "SQL-*", main]
   pull_request:
-    branches: [main]
+    branches: [SQL, main]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -37,5 +39,10 @@ jobs:
           yes | sh ../scripts/gen_parser.sh
           git diff --exit-code -- dbms/parser
 
-      - name: Tests
+      # Un test por requisito del enunciado: si algo se rompe, el nombre del
+      # test que falla dice qué requisito fue.
+      - name: Rúbrica del enunciado
+        run: python -m pytest tests/test_rubrica.py -v
+
+      - name: Suite completa
         run: python -m pytest -q

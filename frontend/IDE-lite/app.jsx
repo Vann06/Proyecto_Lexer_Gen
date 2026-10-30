@@ -1,8 +1,8 @@
 /* eslint-disable */
 // IDE-lite del DBMS: editor SQL con resaltado + sidebar de archivos + las
-// vistas del análisis: flujo de tokens, árbol de derivación de ANTLR, AST y
-// problemas léxicos/sintácticos. Todo sale de `POST /api/sql/parse`.
-// (Fase E: pestañas RESULTADOS y CATÁLOGO cuando exista /api/sql/run.)
+// vistas: tokens, árbol de derivación de ANTLR, AST y problemas (▶ ANALIZAR,
+// `POST /api/sql/parse`), y resultados y catálogo (▶ EJECUTAR,
+// `POST /api/sql/run` y `GET /api/catalog`).
 const { useState, useEffect, useRef } = React;
 const D = window.IDE_DATA;
 

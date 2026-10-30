@@ -2,8 +2,10 @@
 -- ▶ ANALIZAR muestra tokens, árbol sintáctico, AST y problemas
 -- (léxicos, sintácticos y semánticos). Este script no debe dar ninguno.
 
-CREATE DATABASE IF NOT EXISTS universidad;
-USE universidad;
+-- Base propia y limpia: el script se puede ejecutar las veces que se quiera.
+DROP DATABASE IF EXISTS demo;
+CREATE DATABASE demo;
+USE demo;
 
 -- ── Tablas: los cinco tipos y las restricciones ───────────────────────
 CREATE TABLE estudiantes (
