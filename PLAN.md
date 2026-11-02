@@ -147,7 +147,7 @@ Archivos, para que cada persona trabaje en los suyos sin pisarse:
 - `CREATE TABLE` (con `IF NOT EXISTS`): `table_from_ast` → catálogo → `.csv` vacío.
 - `DROP TABLE` (con `IF EXISTS`): borra el `.csv`, sus índices y la entrada del catálogo.
 - `INSERT`: columnas omitidas = NULL, `coerce` de cada valor, `_rowid` = `NEXT_ROWID` (y se incrementa).
-  Hace cumplir NOT NULL, PRIMARY KEY y UNIQUE (`EXE001` llave duplicada, `EXE002` NULL en columna NOT NULL).
+  Hace cumplir NOT NULL, PRIMARY KEY, UNIQUE y FOREIGN KEY (`EXE001` llave duplicada, `EXE002` NULL en columna NOT NULL, `EXE007` FOREIGN KEY violada, con RESTRICT al borrar o cambiar el padre).
 - `SELECT * / col, col FROM t` sin WHERE: lectura y proyección.
 - Definir `Result` aquí: lo usan D2–D4 y la fase E.
 - **Hecho cuando**: crear, insertar y consultar de punta a punta en `tmp_path`, revisando también los archivos.

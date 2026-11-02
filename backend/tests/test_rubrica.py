@@ -318,6 +318,7 @@ def test_R21_indices_actualizados_tras_insert_update_delete(bd):
     bd.ok("CREATE INDEX idx_edad ON estudiantes (edad); CREATE INDEX idx_nota ON inscripciones (nota);")
     bd.ok("INSERT INTO estudiantes (id, nombre, edad) VALUES (7, 'Nuevo', 18);"
           "UPDATE estudiantes SET edad = edad + 1 WHERE edad < 18;"
+          "DELETE FROM inscripciones WHERE estudiante_id = 1;"   # FK: antes que el padre
           "DELETE FROM estudiantes WHERE id = 1;"
           "UPDATE inscripciones SET nota = 50 WHERE nota IS NULL;"
           "DELETE FROM inscripciones WHERE nota < 60;")

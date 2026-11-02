@@ -138,6 +138,7 @@ Los rowids borrados no se reutilizan. DROP TABLE elimina CSV, posiciones,
 | EXE004 | error aritmético o valor incompatible en ejecución |
 | EXE005 | columna no disponible o ambigua en el entorno |
 | EXE006 | subconsulta con cantidad de columnas inválida (callback) |
+| EXE007 | FOREIGN KEY violada: hijo sin padre, o DELETE/UPDATE/DROP TABLE de un padre aún referenciado (RESTRICT) |
 | EXE099 | sentencia o extensión no soportada (p. ej. si falta `join.py`) |
 
 La división INT/INT trunca hacia cero para respetar el tipo que infiere la

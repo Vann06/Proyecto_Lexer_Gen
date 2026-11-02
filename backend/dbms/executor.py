@@ -4,7 +4,7 @@ Las mutaciones se calculan y validan completas en memoria antes de escribir.
 No ofrece transacciones concurrentes ni recuperación frente a apagados.
 """
 from dbms import ast, sqltypes
-from dbms.catalog import PRIMARY_KEY, UNIQUE, IndexSchema, table_from_ast
+from dbms.catalog import FOREIGN_KEY, PRIMARY_KEY, UNIQUE, IndexSchema, table_from_ast
 from dbms.eval import Environment, evaluate
 from dbms import index, subquery
 from dbms.result import ExecutionError, Result
@@ -30,6 +30,37 @@ def _validate(table, rows, catalog):
             if key in seen:
                 raise ExecutionError("EXE001", f"Llave duplicada en '{name}': {key}")
             seen.add(key)
+
+
+def _referencing(catalog, name):
+    """FOREIGN KEY de otras tablas que apuntan a `name`."""
+    return [(t, fk) for t in catalog.tables.values() if t.name != name
+            for fk in t.constraints_of(FOREIGN_KEY) if fk.ref_table == name]
+
+
+def _check_foreign_keys(db, catalog, table, rows):
+    """RESTRICT: toda llave no NULL de un hijo debe existir en el padre.
+
+    `rows` es el estado nuevo de `table`; se revisan sus FK salientes (una
+    FK a sí misma se valida contra `rows`) y las entrantes de otras tablas.
+    """
+    # ponytail: lee completas las tablas relacionadas; con índice sobre las columnas referenciadas bastaría un lookup
+    def keys(rs, cols):
+        return {k for r in rs if None not in (k := tuple(r.values[c] for c in cols))}
+
+    def parent_rows(name):
+        return rows if name == table.name else db.read_rows(catalog.table(name))
+
+    for fk in table.constraints_of(FOREIGN_KEY):
+        existing = keys(parent_rows(fk.ref_table), fk.ref_columns)
+        for key in keys(rows, fk.columns) - existing:
+            raise ExecutionError("EXE007", f"'{fk.name}': {key} no existe en "
+                                 f"'{fk.ref_table}' ({', '.join(fk.ref_columns)})")
+    for child, fk in _referencing(catalog, table.name):
+        missing = keys(db.read_rows(child), fk.columns) - keys(rows, fk.ref_columns)
+        if missing:
+            raise ExecutionError("EXE007", f"'{fk.name}': '{child.name}' todavía referencia "
+                                 f"{sorted(missing)[0]} de '{table.name}'")
 
 
 def execute(stmt, db, *, env=None, join_rows=None, group=None):
@@ -78,6 +109,9 @@ def _execute(s, db, env, join_rows, group):
         if s.name not in catalog.tables and s.if_exists:
             return Result(message=f"La tabla '{s.name}' no existe")
         table = catalog.table(s.name)
+        if refs := _referencing(catalog, s.name):
+            child, fk = refs[0]
+            raise ExecutionError("EXE007", f"'{s.name}' está referenciada por '{child.name}' ('{fk.name}')")
         dropped = catalog.drop_table(s.name)
         db.drop_table_file(s.name)
         for idx in dropped:
@@ -137,6 +171,7 @@ def _execute(s, db, env, join_rows, group):
                 updated.append(row)
             rows = updated
         _validate(table, rows, catalog)
+        _check_foreign_keys(db, catalog, table, rows)
         db.write_rows(table, rows)
         index.rebuild(db, catalog, table, rows)
         db.save_catalog(catalog)

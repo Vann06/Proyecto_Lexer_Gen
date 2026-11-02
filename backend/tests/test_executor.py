@@ -116,3 +116,27 @@ def test_duplicate_inside_batch_and_update_collision_leave_files_unchanged(db):
             run(db, sql)
         assert error.value.code == "EXE001"
         assert snapshot(db) == before
+
+
+def test_foreign_keys_restrict(db):
+    run(db, """CREATE TABLE cursos (id INT PRIMARY KEY);
+               CREATE TABLE ins (e INT, c INT REFERENCES cursos);
+               CREATE TABLE emp (id INT PRIMARY KEY, jefe INT REFERENCES emp);
+               INSERT INTO cursos VALUES (1), (2);
+               INSERT INTO ins VALUES (10, 1), (11, NULL);
+               INSERT INTO emp VALUES (1, NULL), (2, 1)""")
+    before = snapshot(db)
+    for sql in ["INSERT INTO ins VALUES (12, 99)",      # hijo sin padre
+                "UPDATE ins SET c = 3",
+                "DELETE FROM cursos WHERE id = 1",      # padre con hijos
+                "UPDATE cursos SET id = id + 10",
+                "DROP TABLE cursos",
+                "INSERT INTO emp VALUES (3, 7)",        # FK a sí misma
+                "DELETE FROM emp WHERE id = 1"]:
+        with pytest.raises(ExecutionError) as exc:
+            run(db, sql)
+        assert exc.value.code == "EXE007", sql
+    assert snapshot(db) == before
+    run(db, """DELETE FROM cursos WHERE id = 2; UPDATE ins SET c = NULL WHERE e = 10;
+               DELETE FROM cursos; DELETE FROM emp; INSERT INTO emp VALUES (5, 5)""")
+    assert run(db, "SELECT * FROM emp").rows == [[5, 5]]
