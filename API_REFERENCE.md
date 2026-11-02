@@ -214,13 +214,13 @@ nombra producciones: cada forma se reconoce con `SemanticSpec`.
 | `gen/objects.rs:43` | `find_member(clase, nombre) -> Option<(&Symbol, &Symbol)>` | Un miembro buscando por la herencia, y la clase que lo define |
 | `gen/objects.rs:60` | `class_of(node) -> Option<String>` | La clase del tipo estático de una expresión |
 | `gen/objects.rs:80` | `as_value(op)` | Copia a un temporal solo si `op` es una dirección `t[off]` (para usarlo como base de `x[i]`) |
-| `gen/objects.rs:92` | `gen_class(node)` | Métodos, `<Clase>.$init` y la vtable (`vt_<Clase>`) de una clase; un struct no emite nada |
+| `gen/objects.rs:92` | `gen_class(node)` | Métodos, `<Clase>.0init` y la vtable (`vt_<Clase>`) de una clase; un struct no emite nada |
 | `gen/objects.rs:169` | `try_gen_object_expr(node)` | `new`, literal de struct y lectura `obj.campo` |
 | `gen/objects.rs:278` | `gen_method_call(node, clase, método, this, args)` | Llamada virtual: ranura del método en la vtable de la clase estática |
 | `gen/objects.rs:308` | `try_gen_object_assign(node) -> bool` | `obj.campo = valor` |
 | `gen/lists.rs:20` | `try_gen_list_expr(node)` | Literal de lista y acceso `a[i]` con `check_bounds` |
 | `gen/lists.rs:100` | `try_gen_list_assign(node)` | Siempre `false`: la gramática no tiene `a[i] = x` |
-| `gen/objects.rs:26,50,55` *(priv)* | `lineage`, `has_init`, `nearest_init` | La clase y sus ancestros; si declara campos; el `$init` más cercano |
+| `gen/objects.rs:26,50,55` *(priv)* | `lineage`, `has_init`, `nearest_init` | La clase y sus ancestros; si declara campos; el `0init` más cercano |
 | `gen/objects.rs:68,194,201` *(priv)* | `into_temp`, `field_slot`, `field_operand` | Dirección `t[offset]` de un campo |
 
 ## Capa API (`src/api/`)

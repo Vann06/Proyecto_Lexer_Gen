@@ -89,7 +89,7 @@ const HL_RULES = {
   tac: [
     { re: /;[^\n]*/y, cls: "com" },
     { re: /"(\\.|[^"\\])*"/y, cls: "str" },
-    { re: /\b(func|endfunc|data|goto|if|ifFalse|param|link|call|callv|return|alloc|check_bounds|check_zero|try_begin|try_end|exception|print|concat|minus|minusf)\b/y, cls: "kw" },
+    { re: /\b(func|endfunc|data|goto|if|ifFalse|param|link|call|callv|return|alloc|check_bounds|check_zero|try_begin|try_end|exception|print_int|print_float|print_bool|print_str|print_ref|concat|streq|strne|minus|minusf)\b/y, cls: "kw" },
     { re: /\b(true|false|null)\b/y, cls: "term" },
     { re: /\b(t[0-9]+|fp|G)\b/y, cls: "fn" },
     { re: /-?[0-9]+(?:\.[0-9]+)?/y, cls: "num" },

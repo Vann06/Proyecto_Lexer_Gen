@@ -398,11 +398,15 @@ pub fn allocate_classes(classes: &mut [&mut Symbol], target: &TargetLayout) -> C
                     SymbolKind::Variable => {
                         let width = member.ty.as_ref().map(|t| width_of(t, target)).unwrap_or(Width::Unresolved);
                         match width {
+                            // Cada campo empieza en una palabra y ocupa su ancho
+                            // redondeado a la palabra, igual que un local en un
+                            // marco: así un `boolean` (1 byte) no deja al
+                            // siguiente campo en una dirección que no es
+                            // múltiplo de 4, donde `lw`/`sw` de MIPS fallan.
                             Width::Known(w) => {
-                                let align = natural_align(w, target.word);
-                                offset = align_up(offset, align);
+                                offset = align_up(offset, target.word);
                                 member.storage = Some(StorageInfo { area: StorageArea::Object, offset: offset as isize, size_bytes: w });
-                                offset += w;
+                                offset += align_up(w.max(1), target.word);
                             }
                             Width::Unresolved => own_incomplete = true,
                         }
@@ -787,6 +791,33 @@ mod tests {
         // Un método no ocupa espacio de instancia: Hijo solo tiene el puntero
         // a la vtable, heredado de un Padre también sin campos.
         assert_eq!(sizes.instance_size("Hijo"), Some(4));
+    }
+
+    #[test]
+    fn los_campos_booleanos_quedan_alineados_a_la_palabra() {
+        // Dos `boolean` seguidos: cada uno en su propia palabra (+4 y +8), no
+        // en +4 y +5. En MIPS, `lw` desde una dirección que no es múltiplo de
+        // 4 hace fallar el programa.
+        let target = TargetLayout::default();
+        let campo = |name: &str, decl_index: usize| Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Variable,
+            ty: Some(Type::Bool),
+            decl_index,
+            ..Symbol::default()
+        };
+        let mut banderas = Symbol {
+            name: "Banderas".to_string(),
+            kind: SymbolKind::Class,
+            members: Some(vec![campo("a", 0), campo("b", 1)]),
+            ..Symbol::default()
+        };
+        let mut classes: Vec<&mut Symbol> = vec![&mut banderas];
+        let sizes = allocate_classes(&mut classes, &target);
+        let offsets: Vec<isize> =
+            banderas.members.as_ref().unwrap().iter().map(|m| m.storage.as_ref().unwrap().offset).collect();
+        assert_eq!(offsets, vec![4, 8]);
+        assert_eq!(sizes.instance_size("Banderas"), Some(12));
     }
 
     #[test]

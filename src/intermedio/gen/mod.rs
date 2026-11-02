@@ -60,6 +60,8 @@ pub(crate) const LIST_HEADER: isize = 4;
 /// - `C001`: el programa tiene errores de fases anteriores; no se genera TAC.
 /// - `C002`: algún registro de activación quedó incompleto (un símbolo sin
 ///   tipo no tiene tamaño); no se generan direcciones inventadas.
+/// - `C003`: un literal entero que no cabe en 32 bits (el tamaño de
+///   `integer` en el registro de activación y en MIPS).
 /// - `C900`: una construcción que el generador todavía no traduce.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodegenError {
@@ -317,6 +319,22 @@ impl<'a> Generator<'a> {
     /// El tipo que el análisis le dio a `node`, si es una expresión tipada.
     pub(crate) fn type_of(&self, node: &ParseNode) -> Option<&'a Type> {
         self.analysis.types.get(node)
+    }
+
+    /// El tipo de la expresión `node`, bajando por la cadena de nodos de un
+    /// solo hijo (`expr → or_expr → … → atom`) hasta el primero que el
+    /// análisis anotó: el tipo puede haber quedado en cualquier eslabón.
+    pub(crate) fn expr_type(&self, node: &ParseNode) -> Option<&'a Type> {
+        let mut current = node;
+        loop {
+            if let Some(ty) = self.type_of(current) {
+                return Some(ty);
+            }
+            match current.children.as_slice() {
+                [only] => current = only,
+                _ => return None,
+            }
+        }
     }
 
     /// Dónde vive la variable que nombra `r`, ya en forma de operando

@@ -90,7 +90,7 @@ fn precedencia_y_reciclaje_de_temporales() {
     t0 = b * c
     t0 = a + t0
     x = t0 - d
-    print x
+    print_int x
 endfunc"#
     );
 }
@@ -132,7 +132,7 @@ fn asociatividad_negacion_y_condiciones_literales() {
     y = not t0
     z = true
     ifFalse z goto L0
-    print 1
+    print_int 1
 L0:
 L1:
     goto L2
@@ -192,18 +192,18 @@ fn if_else_if_else_y_if_sin_else() {
     a = 1
     if a >= 3 goto L1
     if a == 0 goto L1
-    print 1
+    print_int 1
     goto L0
 L1:
     if a != 5 goto L3
-    print 2
+    print_int 2
     goto L2
 L3:
-    print 3
+    print_int 3
 L2:
 L0:
     if a <= 0 goto L4
-    print 4
+    print_int 4
 L4:
 endfunc"#
     );
@@ -232,7 +232,7 @@ L2:
     if i != 2 goto L3
     goto L0
 L3:
-    print i
+    print_int i
     goto L0
 L1:
 L4:
@@ -246,7 +246,7 @@ L7:
     if j != 1 goto L10
     goto L8
 L10:
-    print j
+    print_int j
 L8:
     j = j + 1
     goto L7
@@ -283,7 +283,7 @@ L0:
     if n != 0 goto L3
     goto L1
 L3:
-    print n
+    print_int n
 L1:
     t2 = t2 + 1
     goto L0
@@ -308,12 +308,12 @@ fn switch_cae_entre_casos_y_continue_sigue_al_bucle_de_afuera() {
     if t0 == 2 goto L2
     goto L3
 L1:
-    print 1
+    print_int 1
 L2:
-    print 2
+    print_int 2
     goto L0
 L3:
-    print 0
+    print_int 0
 L0:
 L4:
     t0 = x
@@ -350,7 +350,7 @@ L0:
     goto L3
 L2:
     e = exception
-    print e
+    print_str e
 L3:
     x = x + 1
     goto L0
@@ -362,7 +362,7 @@ endfunc"#
 #[test]
 fn una_variable_local_con_el_nombre_de_una_global_lleva_sufijo() {
     let tac = main_tac("let x: integer = 1;\n{ let x: integer = 2; print(x); }\nprint(x);\n");
-    assert!(tac.contains("    x = 1\n    x.1 = 2\n    print x.1\n    print x\n"), "{tac}");
+    assert!(tac.contains("    x = 1\n    x.1 = 2\n    print_int x.1\n    print_int x\n"), "{tac}");
 }
 
 #[test]
@@ -381,4 +381,92 @@ fn el_generador_devuelve_sus_temporales_a_la_tabla() {
     assert_eq!(analysis.layout.main_temp_slots, Some(2));
     let texto = storage::dump(&analysis.layout);
     assert!(texto.contains("marco main (nivel 0): 16 bytes de temporales"), "{texto}");
+}
+
+// ═════════════════ Preparación para MIPS: print con tipo y textos ═════════════════
+
+/// El TAC completo del programa (todas las funciones), sin espacios finales.
+fn todo_el_tac(source: &str) -> String {
+    generar(source).to_string().lines().map(str::trim_end).collect::<Vec<_>>().join("\n")
+}
+
+/// Lo que imprime el programa en el intérprete.
+fn ejecutar(source: &str) -> String {
+    let program = generar(source);
+    lexer_generator::intermedio::vm::Vm::new(&program).run().expect("debe ejecutar").output
+}
+
+#[test]
+fn cada_print_dice_que_clase_de_valor_imprime() {
+    // En MIPS imprimir un entero, un texto o un booleano son rutinas
+    // distintas: el TAC lo dice en la instrucción.
+    let tac = todo_el_tac(
+        "let a: integer = 1; let s: string = \"x\"; let b: boolean = true;\n\
+         print(a); print(s); print(b); print(a + 1); print(\"lit\"); print(a < 2);\n\
+         print(s + \"y\");\n\
+         let l = [1, 2]; print(l[0]);\n\
+         function f(): string { return \"r\"; }\n\
+         print(f());\n\
+         let n = null; print(n);\n",
+    );
+    for esperado in [
+        "print_int a",
+        "print_str s",
+        "print_bool b",
+        "print_str \"lit\"",
+        "print_ref n",
+    ] {
+        assert!(tac.contains(esperado), "falta `{esperado}`:\n{tac}");
+    }
+    // a + 1, l[0] → enteros; a < 2 → booleano; s + "y" y f() → textos.
+    assert_eq!(tac.matches("print_int").count(), 3, "{tac}");
+    assert_eq!(tac.matches("print_bool").count(), 2, "{tac}");
+    assert_eq!(tac.matches("print_str").count(), 4, "{tac}");
+    // `s + "y"` es concatenación aunque el análisis no anote el nodo de la suma.
+    assert!(tac.contains("concat \"y\""), "{tac}");
+}
+
+#[test]
+fn la_igualdad_de_textos_compara_su_contenido() {
+    let src = "let s: string = \"a\";\n\
+               if (s == \"a\") { print(1); }\n\
+               let distinto: boolean = s != \"b\";\n\
+               print(distinto);\n\
+               switch (s) { case \"a\": print(2); }\n\
+               let n: integer = 1;\n\
+               if (n == 1) { print(3); }\n";
+    let tac = todo_el_tac(src);
+    assert!(tac.contains("if s strne \"a\" goto"), "en una condición, negada:\n{tac}");
+    assert!(tac.contains("distinto = s strne \"b\""), "como valor:\n{tac}");
+    assert!(tac.contains("streq \"a\" goto"), "en un switch sobre textos:\n{tac}");
+    assert!(tac.contains("if n != 1 goto"), "los enteros siguen con ==/!=:\n{tac}");
+    assert_eq!(ejecutar(src), "1\ntrue\n2\n3\n");
+}
+
+#[test]
+fn los_enteros_dan_la_vuelta_en_32_bits_como_en_mips() {
+    // 13! = 6227020800 no cabe en 32 bits: da la vuelta, igual que `mul` de
+    // MIPS, en vez de un error que el ensamblador no daría.
+    let salida = ejecutar(
+        "function factorial(n: integer): integer {\n\
+           if (n <= 1) { return 1; }\n\
+           return n * factorial(n - 1);\n\
+         }\n\
+         print(factorial(12));\n\
+         print(factorial(13));\n",
+    );
+    assert_eq!(salida, "479001600\n1932053504\n");
+}
+
+#[test]
+fn el_catch_recibe_un_mensaje_fijo() {
+    // Sin números: MIPS guarda estos textos tal cual en `.data`.
+    let salida = ejecutar(
+        "let l = [1, 2, 3];\n\
+         let cero: integer = 0;\n\
+         try { print(l[100]); } catch (e) { print(e); }\n\
+         try { print(10 / cero); } catch (e) { print(e); }\n\
+         try { print(10 % cero); } catch (e) { print(e); }\n",
+    );
+    assert_eq!(salida, "índice fuera de rango\ndivisión por cero\ndivisión por cero\n");
 }

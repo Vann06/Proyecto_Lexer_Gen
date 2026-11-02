@@ -35,7 +35,7 @@ func main nivel 0 marco 8
     param r
     param 1
     t0 = call suma, 2
-    print t0
+    print_int t0
 endfunc
 
 func suma nivel 1 marco 16
@@ -62,7 +62,7 @@ print(factorial(5));
 func main nivel 0 marco 8
     param 5
     t0 = call factorial, 1
-    print t0
+    print_int t0
 endfunc
 
 func factorial nivel 1 marco 16
@@ -102,7 +102,7 @@ func main nivel 0 marco 8
     x = 10
     param 5
     t0 = call contador, 1
-    print t0
+    print_int t0
 endfunc
 
 func contador nivel 1 marco 24
@@ -125,7 +125,7 @@ endfunc"#
     );
 }
 
-/// `workspace/ejemplo_closures.cps`: la función anidada se llama dos veces con `link fp`. La clase `Punto` aporta su `$init` y su vtable vacía.
+/// `workspace/ejemplo_closures.cps`: la función anidada se llama dos veces con `link fp`. La clase `Punto` aporta su `0init` y su vtable vacía.
 #[test]
 fn el_ejemplo_de_closures_del_workspace() {
     let tac = programa(
@@ -158,7 +158,7 @@ data vt_Punto:
 
 func main nivel 0 marco 0
     resultado = call contador, 0
-    print resultado
+    print_int resultado
 endfunc
 
 func contador nivel 1 marco 20
@@ -181,7 +181,7 @@ func contador.incrementar nivel 2 marco 24
     return t0[-12]          ; total
 endfunc
 
-func Punto.$init nivel 1 marco 16
+func Punto.0init nivel 1 marco 16
     t0 = this
     t0[4] = 0               ; x
     t0 = this
@@ -209,7 +209,7 @@ print(externa());
         r#"; área estática: 0 bytes
 func main nivel 0 marco 8
     t0 = call externa, 0
-    print t0
+    print_int t0
 endfunc
 
 func externa nivel 1 marco 16
@@ -253,7 +253,7 @@ func main nivel 0 marco 8
     param t0
     param 2
     t0 = call dos, 2
-    print t0
+    print_int t0
     call nada, 0
 endfunc
 
@@ -267,12 +267,12 @@ func dos nivel 1 marco 16
 endfunc
 
 func nada nivel 1 marco 8
-    print "nada"
+    print_str "nada"
 endfunc"#
     );
 }
 
-/// `new` reserva, guarda la vtable, llama a `$init` y luego al constructor (`this` primero; `nargs` cuenta a `this`). `obj.campo` es `t[offset]`.
+/// `new` reserva, guarda la vtable, llama a `0init` y luego al constructor (`this` primero; `nargs` cuenta a `this`). `obj.campo` es `t[offset]`.
 #[test]
 fn new_con_constructor_campos_y_this() {
     let tac = programa(
@@ -306,7 +306,7 @@ func main nivel 0 marco 16
     t0 = alloc 12
     t0[0] = &vt_Contador
     param t0
-    call Contador.$init, 1
+    call Contador.0init, 1
     param t0
     param "a"
     param 5
@@ -320,16 +320,16 @@ func main nivel 0 marco 16
     t0 = c[0]
     t0 = t0[8]
     t0 = callv t0, 1
-    print t0
+    print_int t0
     t0 = c
-    print t0[8]             ; nombre
+    print_str t0[8]         ; nombre
     t0 = c
     t0 = t0[4] + 10         ; cuenta
     t1 = c
     t1[4] = t0              ; cuenta
 endfunc
 
-func Contador.$init nivel 1 marco 16
+func Contador.0init nivel 1 marco 16
     t0 = this
     t0[4] = 0               ; cuenta
     t0 = this
@@ -357,7 +357,7 @@ endfunc"#
     );
 }
 
-/// Sin constructor no hay segunda llamada; una clase sin campos tampoco tiene `$init`.
+/// Sin constructor no hay segunda llamada; una clase sin campos tampoco tiene `0init`.
 #[test]
 fn una_clase_sin_constructor_solo_llama_a_su_init() {
     let tac = programa(
@@ -378,7 +378,7 @@ func main nivel 0 marco 16
     t0 = alloc 12
     t0[0] = &vt_Punto
     param t0
-    call Punto.$init, 1
+    call Punto.0init, 1
     p = t0
     t0 = alloc 4
     t0[0] = &vt_Caja
@@ -386,10 +386,10 @@ func main nivel 0 marco 16
     t0 = p
     t1 = p
     t0 = t0[4] + t1[8]      ; x, y
-    print t0
+    print_int t0
 endfunc
 
-func Punto.$init nivel 1 marco 16
+func Punto.0init nivel 1 marco 16
     t0 = this
     t0[4] = 1               ; x
     t0 = this
@@ -398,7 +398,7 @@ endfunc"#
     );
 }
 
-/// `this.hablar()` dentro de `Animal.presentar` (tipo estático `Animal`) y `p.hablar()` usan la ranura 1; `vt_Perro` la apunta a `Perro.hablar`. El constructor es heredado y `Perro.$init` encadena a `Animal.$init`.
+/// `this.hablar()` dentro de `Animal.presentar` (tipo estático `Animal`) y `p.hablar()` usan la ranura 1; `vt_Perro` la apunta a `Perro.hablar`. El constructor es heredado y `Perro.0init` encadena a `Animal.0init`.
 #[test]
 fn la_sobrescritura_se_llama_por_la_misma_ranura_de_la_vtable() {
     let tac = programa(
@@ -427,7 +427,7 @@ func main nivel 0 marco 8
     t0 = alloc 12
     t0[0] = &vt_Perro
     param t0
-    call Perro.$init, 1
+    call Perro.0init, 1
     param t0
     param "Toby"
     call Animal.constructor, 2
@@ -436,15 +436,15 @@ func main nivel 0 marco 8
     t0 = p[0]
     t0 = t0[8]
     t0 = callv t0, 1
-    print t0
+    print_str t0
     param p
     t0 = p[0]
     t0 = t0[4]
     t0 = callv t0, 1
-    print t0
+    print_str t0
 endfunc
 
-func Animal.$init nivel 1 marco 16
+func Animal.0init nivel 1 marco 16
     t0 = this
     t0[4] = null            ; nombre
 endfunc
@@ -468,9 +468,9 @@ func Animal.presentar nivel 1 marco 24
     return t0
 endfunc
 
-func Perro.$init nivel 1 marco 16
+func Perro.0init nivel 1 marco 16
     param this
-    call Animal.$init, 1
+    call Animal.0init, 1
     t0 = this
     t0[8] = "criollo"       ; raza
 endfunc
@@ -502,7 +502,7 @@ data vt_Cuenta: Cuenta.conBono
 func main nivel 0 marco 0
 endfunc
 
-func Cuenta.$init nivel 1 marco 16
+func Cuenta.0init nivel 1 marco 16
     t0 = this
     t0[4] = 100             ; saldo
 endfunc
@@ -552,12 +552,12 @@ func main nivel 0 marco 16
     i = 1
     check_bounds lista, 0
     t0 = lista[4]
-    print t0
+    print_int t0
     check_bounds lista, i
     t0 = i * 4
     t0 = t0 + 4
     t0 = lista[t0]
-    print t0
+    print_int t0
     t0 = alloc 12
     t0[0] = 2
     t1 = alloc 12
@@ -575,7 +575,7 @@ func main nivel 0 marco 16
     t0 = m[8]
     check_bounds t0, 0
     t0 = t0[4]
-    print t0
+    print_int t0
     t0 = alloc 4
     t0[0] = 0
     vacia = t0
@@ -606,7 +606,7 @@ func main nivel 0 marco 16
     t1 = p
     t1[0] = t0              ; x
     t0 = p
-    print t0[4]             ; y
+    print_int t0[4]         ; y
 endfunc"#
     );
 }
@@ -644,9 +644,9 @@ func main nivel 0 marco 8
     t0[4] = 7
     param t0
     t0 = call primero, 1
-    print t0
+    print_int t0
     t0 = call tope, 0
-    print t0
+    print_int t0
 endfunc
 
 func primero nivel 1 marco 20
@@ -689,7 +689,7 @@ fn la_rubrica_se_genera_completa_y_cada_funcion_recibe_sus_temporales() {
     let nombres: Vec<&str> = program.functions.iter().map(|f| f.name.as_str()).collect();
     assert_eq!(
         nombres,
-        ["saludar", "crearContador", "crearContador.siguiente", "Animal.$init", "Animal.constructor", "Animal.hablar", "Perro.hablar", "suma", "factorial"]
+        ["saludar", "crearContador", "crearContador.siguiente", "Animal.0init", "Animal.constructor", "Animal.hablar", "Perro.hablar", "suma", "factorial"]
     );
     assert_eq!(analysis.layout.main_temp_slots, program.main.as_ref().map(|m| m.max_temps));
     for owner in analysis.layout.functions.values() {

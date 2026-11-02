@@ -3,8 +3,8 @@
 //! - Layout de un objeto: `[puntero a vtable][campos…]` (offsets de
 //!   `storage::allocate_classes`). Un struct no lleva vtable.
 //! - `gen_class`: los métodos (cada uno una función, ver `func.rs`), el
-//!   inicializador de campos `<Clase>.$init` y la vtable como dato.
-//! - `new C(args)`: `alloc`, vtable, `$init` y constructor.
+//!   inicializador de campos `<Clase>.0init` y la vtable como dato.
+//! - `new C(args)`: `alloc`, vtable, `0init` y constructor.
 //! - Campos: `obj.campo` es la dirección `t[offset]`. Métodos: despacho
 //!   virtual (`t = obj[0]`, `t = t[ranura × 4]`, `callv`).
 //! - Literal de struct `P { x: 1 }`: `alloc` y un `store` por campo.
@@ -46,14 +46,14 @@ impl<'a> Generator<'a> {
             .find_map(|c| c.members.as_ref()?.iter().find(|m| m.name == name).map(|m| (m, c)))
     }
 
-    /// `true` si la clase declara campos propios (y entonces tiene `$init`).
+    /// `true` si la clase declara campos propios (y entonces tiene `0init`).
     fn has_init(class: &Symbol) -> bool {
         class.members.iter().flatten().any(|m| m.kind == SymbolKind::Variable)
     }
 
-    /// La etiqueta del `$init` más cercano a `class`, ella incluida.
+    /// La etiqueta del `0init` más cercano a `class`, ella incluida.
     fn nearest_init(&self, class: &str) -> Option<String> {
-        self.lineage(class).into_iter().find(|c| Self::has_init(c)).map(|c| format!("{}.$init", c.name))
+        self.lineage(class).into_iter().find(|c| Self::has_init(c)).map(|c| format!("{}.0init", c.name))
     }
 
     /// El nombre de la clase de `node`, según su tipo estático.
@@ -87,7 +87,7 @@ impl<'a> Generator<'a> {
     // ───────────────────────────────── clases ─────────────────────────────────
 
     /// Una declaración de clase o struct. Una clase emite sus métodos, su
-    /// `$init` y su vtable; un struct no emite nada (no tiene métodos ni
+    /// `0init` y su vtable; un struct no emite nada (no tiene métodos ni
     /// vtable, y sus campos se escriben donde se usa el literal).
     pub(crate) fn gen_class(&mut self, node: &ParseNode) {
         if self.scope_kind_of(node) == Some(ScopeKind::Struct) {
@@ -145,7 +145,12 @@ impl<'a> Generator<'a> {
         }
     }
 
-    /// `<Clase>.$init`: inicializa los campos de la clase (primero los del
+    /// `<Clase>.0init`. El segmento empieza con un dígito a propósito: ningún
+    /// identificador de Compiscript puede (`id = (letter|'_')(alnum|'_')*`),
+    /// así que no choca con un método del usuario, y a diferencia de `$` es
+    /// válido en una etiqueta de MIPS (donde `$` nombra registros).
+    ///
+    /// Inicializa los campos de la clase (primero los del
     /// padre, si los tiene). Recibe `this` como cualquier método. Cada campo
     /// se traduce con el código de una declaración: dentro del cuerpo de la
     /// clase su acceso es `Field`, así que se escribe a través de `this`.
@@ -153,7 +158,7 @@ impl<'a> Generator<'a> {
         let frame = (-self.target.local_base) as usize;
         let parent_init = class.parent.as_deref().and_then(|p| self.nearest_init(p));
         let this = self.this_operand();
-        self.in_function(TacFunction::new(format!("{name}.$init"), 1, frame), Some(0), |g| {
+        self.in_function(TacFunction::new(format!("{name}.0init"), 1, frame), Some(0), |g| {
             if let Some(parent_init) = parent_init {
                 g.emit(Instr::Param(this));
                 g.emit(Instr::Call { dst: None, func: parent_init, nargs: 1 });
@@ -207,7 +212,7 @@ impl<'a> Generator<'a> {
     ///     t = alloc <tamaño>
     ///     t[0] = &vt_C
     ///     param t
-    ///     call C.$init, 1           ; si la clase (o un ancestro) tiene campos
+    ///     call C.0init, 1           ; si la clase (o un ancestro) tiene campos
     ///     param t
     ///     param <arg>…
     ///     call C.constructor, n+1   ; si la clase (o un ancestro) tiene uno

@@ -677,6 +677,14 @@ impl<'a> Visitor for Analyzer<'a> {
         // Como la rama de aritmética, no hace early-return ni salta hijos: la
         // expresión de retorno tiene que seguir recorriéndose para que sus
         // identificadores se validen como usos normales.
+        // `print(e)` (`%print`): se resuelve el tipo de `e` para dejarlo
+        // anotado. No valida nada (cualquier valor se puede imprimir), pero sin
+        // esto la generación de código no sabría si imprime un entero, un
+        // texto o un booleano, que en MIPS son llamadas al sistema distintas.
+        if let Some(value) = self.spec.prints.get(&node.symbol).and_then(|i| node.children.get(*i)) {
+            classes::resolve_expr_type(value, &self.table, self.spec, &mut self.types);
+        }
+
         if let Some(rule) = self.spec.returns.iter().find(|r| r.production == node.symbol) {
             let value_node = find_child_index(node, &rule.value_child).map(|i| &node.children[i]);
             let value_ty = value_node.and_then(|n| classes::resolve_expr_type(n, &self.table, self.spec, &mut self.types));

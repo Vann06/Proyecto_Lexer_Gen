@@ -49,7 +49,7 @@ Nota: la forma de cada construcción no está hardcodeada; la da la directiva `%
 
 | Requisito | Estado | Dónde / cómo |
 |---|---|---|
-| Creación de objetos e invocación del constructor | ✅ | `gen/objects.rs`: `t = alloc n`, `t[0] = &vt_C`, `call C.$init` (inicializa campos, encadena al padre), `call C.constructor` (el más cercano en la herencia). |
+| Creación de objetos e invocación del constructor | ✅ | `gen/objects.rs`: `t = alloc n`, `t[0] = &vt_C`, `call C.0init` (inicializa campos, encadena al padre), `call C.constructor` (el más cercano en la herencia). |
 | Acceso a atributos | ✅ | `t[offset]` con el nombre del campo como comentario; offsets de `LayoutReport::classes`. |
 | Invocación de métodos y `this` | ✅ | `this` es el primer `param` (`fp[16]`); despacho virtual por vtable: `t = obj[0]; t = t[slot*4]; x = callv t, n`. Campos/`this` desde una función anidada dentro de un método siguen los enlaces (`un_campo_usado_desde_una_funcion_anidada_en_un_metodo_sigue_los_enlaces`). |
 

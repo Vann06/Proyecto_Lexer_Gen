@@ -121,6 +121,11 @@ pub enum BinOp {
     DivF,
     /// Concatenación de textos (`+` entre dos `string`).
     Concat,
+    /// Igualdad y desigualdad de CONTENIDO entre dos textos. `==`/`!=`
+    /// comparan valores simples o direcciones; dos textos iguales pueden
+    /// estar en direcciones distintas.
+    StrEq,
+    StrNe,
     Eq,
     Ne,
     Lt,
@@ -142,6 +147,8 @@ impl BinOp {
             BinOp::MulF => "*f",
             BinOp::DivF => "/f",
             BinOp::Concat => "concat",
+            BinOp::StrEq => "streq",
+            BinOp::StrNe => "strne",
             BinOp::Eq => "==",
             BinOp::Ne => "!=",
             BinOp::Lt => "<",
@@ -154,7 +161,46 @@ impl BinOp {
     /// `true` para las comparaciones: las únicas que pueden ir en un salto
     /// condicional `if x relop y goto L`.
     pub fn is_relational(self) -> bool {
-        matches!(self, BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge)
+        matches!(self, BinOp::Eq | BinOp::Ne | BinOp::StrEq | BinOp::StrNe | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge)
+    }
+}
+
+/// Qué clase de valor imprime un `print`. En MIPS cada una es una rutina
+/// distinta (un entero y un texto son llamadas al sistema diferentes; un
+/// booleano se imprime como `true`/`false`), así que el TAC lo dice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrintKind {
+    Int,
+    Float,
+    Bool,
+    Str,
+    /// Una referencia que no es texto: una lista, un objeto o `null`. Imprime
+    /// `null` si es nula; si no, su dirección (depende de la implementación).
+    Ref,
+}
+
+impl PrintKind {
+    /// La clase de impresión de un valor de tipo `ty` (`Ref` si no se conoce
+    /// o es una referencia).
+    pub fn of(ty: Option<&crate::semantico::types::Type>) -> Self {
+        use crate::semantico::types::Type;
+        match ty {
+            Some(Type::Int) => PrintKind::Int,
+            Some(Type::Float) => PrintKind::Float,
+            Some(Type::Bool) => PrintKind::Bool,
+            Some(Type::Str) => PrintKind::Str,
+            _ => PrintKind::Ref,
+        }
+    }
+
+    pub fn mnemonic(self) -> &'static str {
+        match self {
+            PrintKind::Int => "print_int",
+            PrintKind::Float => "print_float",
+            PrintKind::Bool => "print_bool",
+            PrintKind::Str => "print_str",
+            PrintKind::Ref => "print_ref",
+        }
     }
 }
 
@@ -218,8 +264,8 @@ pub enum Instr {
     Alloc { dst: Operand, size: Operand },
     /// `x = &nombre`: la dirección de un dato con nombre (una vtable).
     AddrOf { dst: Operand, name: String },
-    /// `print x`
-    Print(Operand),
+    /// `print_int x`, `print_str x`… (ver `PrintKind`).
+    Print { value: Operand, kind: PrintKind },
     /// `check_bounds a, i`: si `i` está fuera de la lista `a`, error en
     /// tiempo de ejecución.
     CheckBounds { array: Operand, index: Operand },
@@ -340,7 +386,7 @@ impl fmt::Display for Instr {
             Instr::Store { base, index, src } => write!(f, "{base}[{index}] = {src}"),
             Instr::Alloc { dst, size } => write!(f, "{dst} = alloc {size}"),
             Instr::AddrOf { dst, name } => write!(f, "{dst} = &{name}"),
-            Instr::Print(x) => write!(f, "print {x}"),
+            Instr::Print { value, kind } => write!(f, "{} {value}", kind.mnemonic()),
             Instr::CheckBounds { array, index } => write!(f, "check_bounds {array}, {index}"),
             Instr::CheckZero(x) => write!(f, "check_zero {x}"),
             Instr::TryBegin(l) => write!(f, "try_begin {l}"),
@@ -359,7 +405,7 @@ impl Instr {
             Instr::Binary { dst, left, right, .. } => vec![dst, left, right],
             Instr::IfTrue { cond, .. } | Instr::IfFalse { cond, .. } => vec![cond],
             Instr::IfRel { left, right, .. } => vec![left, right],
-            Instr::Param(x) | Instr::Link(x) | Instr::Print(x) | Instr::CheckZero(x) | Instr::GetException(x) => vec![x],
+            Instr::Param(x) | Instr::Link(x) | Instr::Print { value: x, .. } | Instr::CheckZero(x) | Instr::GetException(x) => vec![x],
             Instr::Call { dst, .. } => dst.iter().collect(),
             Instr::CallV { dst, target, .. } => dst.iter().chain(std::iter::once(target)).collect(),
             Instr::Return(x) => x.iter().collect(),
@@ -443,7 +489,7 @@ pub fn quad_json(instr: &Instr) -> Value {
         Instr::Store { base, index, src } => ("[]=".into(), Some(s(src)), Some(s(index)), Some(s(base))),
         Instr::Alloc { dst, size } => ("alloc".into(), Some(s(size)), None, Some(s(dst))),
         Instr::AddrOf { dst, name } => ("&".into(), Some(name.clone()), None, Some(s(dst))),
-        Instr::Print(x) => ("print".into(), Some(s(x)), None, None),
+        Instr::Print { value, kind } => (kind.mnemonic().into(), Some(s(value)), None, None),
         Instr::CheckBounds { array, index } => ("check_bounds".into(), Some(s(array)), Some(s(index)), None),
         Instr::CheckZero(x) => ("check_zero".into(), Some(s(x)), None, None),
         Instr::TryBegin(l) => ("try_begin".into(), None, None, Some(l.clone())),

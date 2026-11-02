@@ -134,18 +134,18 @@ variable, un temporal (`t0`, `t1`…), una constante (`5`, `2.5`, `true`,
 | Grupo | Sintaxis | Significado |
 |---|---|---|
 | Copia | `x = y` | |
-| Binaria | `x = y op z` | `op` ∈ `+ - * / %` (enteros), `+f -f *f /f` (flotantes), `concat` (strings), `== != < <= > >=` (resultado booleano). No hay `and`/`or`: `&&` y `\|\|` se traducen con saltos (§6) |
+| Binaria | `x = y op z` | `op` ∈ `+ - * / %` (enteros de 32 bits), `+f -f *f /f` (flotantes), `concat` (strings), `== != < <= > >=` (resultado booleano), `streq strne` (igualdad de CONTENIDO entre dos strings; `==`/`!=` comparan valores simples o direcciones). No hay `and`/`or`: `&&` y `\|\|` se traducen con saltos (§6) |
 | Unaria | `x = minus y` · `x = minusf y` · `x = not y` · `x = (float) y` | Negación entera/flotante, negación lógica, conversión `integer → float` (§6.5.2) |
 | Etiqueta | `L3:` | |
 | Salto incondicional | `goto L3` | |
-| Saltos condicionales | `if x goto L` · `ifFalse x goto L` · `if x relop y goto L` | El tercero compara sin pasar por un temporal |
+| Saltos condicionales | `if x goto L` · `ifFalse x goto L` · `if x relop y goto L` | El tercero compara sin pasar por un temporal; `relop` incluye `streq`/`strne` |
 | Funciones | `func f nivel N marco M` … `endfunc` | Delimitan una función; `N` es su nivel de anidamiento, `M` el tamaño de su marco (con temporales) |
 | Llamadas | `param x` · `link x` · `x = call f, n` · `call f, n` · `x = callv t, n` | Argumento, enlace de acceso, llamada directa (con o sin resultado), llamada indirecta por vtable |
 | Retorno | `return x` · `return` | |
 | Acceso indexado | `x = y[i]` · `x[i] = y` | Lectura / escritura en `y + i` bytes |
 | Heap | `x = alloc n` · `x = &vt_C` | Reserva `n` bytes; dirección de un dato (vtable) |
 | Datos | `data vt_C: f, g, …` | Tabla de métodos de una clase |
-| E/S | `print x` | |
+| E/S | `print_int x` · `print_float x` · `print_bool x` · `print_str x` · `print_ref x` | La instrucción dice qué clase de valor imprime, porque en MIPS cada una es una rutina distinta. `print_bool` escribe `true`/`false`; `print_ref` (lista, objeto o `null`) escribe `null` si es nula |
 | Verificaciones | `check_bounds a, i` · `check_zero x` | Error de ejecución si `i` está fuera de la lista `a` o si `x` es 0 |
 | Excepciones | `try_begin L` · `try_end` · `x = exception` | Apila / desapila un manejador; mensaje del error capturado |
 
@@ -298,8 +298,8 @@ print(x);
     nombre = null
     x = 1
     x.1 = 2
-    print x.1
-    print x
+    print_int x.1
+    print_int x
 ```
 
 ## 7. Control de flujo
@@ -317,18 +317,18 @@ if (a > 0) { print(4); }
 ```
     if a >= 3 goto L1
     if a == 0 goto L1
-    print 1
+    print_int 1
     goto L0
 L1:
     if a != 5 goto L3
-    print 2
+    print_int 2
     goto L2
 L3:
-    print 3
+    print_int 3
 L2:
 L0:
     if a <= 0 goto L4
-    print 4
+    print_int 4
 L4:
 ```
 
@@ -352,7 +352,7 @@ L2:
     if i != 2 goto L3
     goto L0              ; continue
 L3:
-    print i
+    print_int i
     goto L0
 L1:
 L4:                      ; do-while: cuerpo primero
@@ -366,7 +366,7 @@ L7:
     if j != 1 goto L10
     goto L8              ; continue → paso
 L10:
-    print j
+    print_int j
 L8:
     j = j + 1            ; paso
     goto L7
@@ -394,7 +394,7 @@ L0:
     if n != 0 goto L3
     goto L1              ; continue
 L3:
-    print n
+    print_int n
 L1:
     t2 = t2 + 1
     goto L0
@@ -416,12 +416,12 @@ switch (x) { case 1: print(1); case 2: print(2); break; default: print(0); }
     if t0 == 2 goto L2
     goto L3              ; default
 L1:
-    print 1              ; cae al caso 2
+    print_int 1              ; cae al caso 2
 L2:
-    print 2
+    print_int 2
     goto L0              ; break
 L3:
-    print 0
+    print_int 0
 L0:
 ```
 
@@ -446,7 +446,7 @@ L0:
     goto L3
 L2:
     e = exception
-    print e
+    print_str e
 L3:
     x = x + 1
     goto L0
@@ -487,7 +487,7 @@ Todos los ejemplos salen de `tests/tac_fase2_tests.rs`, que fija el TAC exacto.
   - declarada en la función actual (`Local`): `link fp`;
   - declarada en una función de afuera (`NonLocal { hops }`): se siguen
     `hops` enlaces (`t = fp[12]`, `t = t[12]`…) y se emite `link t`.
-  Es la regla `nc − ng + 1` del libro. Los métodos y `$init` son de nivel 1 y
+  Es la regla `nc − ng + 1` del libro. Los métodos y `0init` son de nivel 1 y
   tampoco llevan `link`.
 - **Una llamada sin valor** (`nada();`, `obj.poner(1);`) se traduce igual que
   una con valor, solo que sin destino.
@@ -536,7 +536,7 @@ tiene vtable. Una instancia de `Perro : Animal` con `Animal { nombre }` y
     t0 = alloc 12
     t0[0] = &vt_Perro
     param t0
-    call Perro.$init, 1               ; el $init más cercano subiendo por la herencia
+    call Perro.0init, 1               ; el 0init más cercano subiendo por la herencia
     param t0
     param "Toby"
     call Animal.constructor, 2        ; el constructor más cercano (puede ser heredado)
@@ -544,17 +544,17 @@ tiene vtable. Una instancia de `Perro : Animal` con `Animal { nombre }` y
 ```
 
 Si no hay constructor no hay segunda llamada; si ninguna clase de la cadena
-declara campos, tampoco hay `$init`.
+declara campos, tampoco hay `0init`.
 
-**`<Clase>.$init`:** función sintética (nivel 1, recibe `this` en `fp[16]`)
+**`<Clase>.0init`:** función sintética (nivel 1, recibe `this` en `fp[16]`)
 que inicializa los campos que declara la clase, en orden; primero llama al
-`$init` del padre si lo hay. Cada campo se traduce como una declaración: con
+`0init` del padre si lo hay. Cada campo se traduce como una declaración: con
 inicializador o con el valor por defecto de su tipo (`0`, `false`, `null`).
 
 ```
-func Perro.$init nivel 1 marco 16
+func Perro.0init nivel 1 marco 16
     param this
-    call Animal.$init, 1
+    call Animal.0init, 1
     t0 = this
     t0[8] = "criollo"       ; raza
 ```
@@ -720,8 +720,8 @@ más. Cada error lleva código, mensaje, archivo, línea y columna:
 | `L` | Léxica | `L001` carácter no reconocido |
 | `P` | Sintáctica | `P001` token inesperado, con los tokens esperados y sugerencia "¿quisiste decir?" |
 | `S` | Semántica | `S002` no declarada, `S006` asignación incompatible, `S013`/`S014` aridad/tipo de argumento, `S016` retorno… (lista completa en `CUMPLIMIENTO_REQUISITOS.md`) |
-| `C` | Generación | `C001` no se genera porque hay errores semánticos; `C002` hay símbolos sin tipo (no se sabe su tamaño) |
-| `R` | Ejecución (solo con `--run`) | índice fuera de rango (`check_bounds`), división entre cero (`check_zero`); se pueden capturar con `try/catch` |
+| `C` | Generación | `C001` no se genera porque hay errores semánticos; `C002` hay símbolos sin tipo (no se sabe su tamaño); `C003` un literal entero que no cabe en 32 bits |
+| `R` | Ejecución (solo con `--run`) | índice fuera de rango (`check_bounds`), división entre cero (`check_zero`); se pueden capturar con `try/catch`. La variable del `catch` recibe un **texto fijo**, sin números: `índice fuera de rango`, `división por cero` (también para `%`, porque `check_zero` va antes de los dos) o, para cualquier otro error interno, `error en tiempo de ejecución` |
 
 Los casos de error de la batería están en `workspace/tac/error/`
 (`lexical.cps`, `syntax.cps`, `semantic_errors.cps`) y los de ejecución en
@@ -730,8 +730,15 @@ Los casos de error de la batería están en `workspace/tac/error/`
 ## 11. Supuestos generales
 
 - **Tamaños**: `integer`, `boolean`, `string`, listas y objetos ocupan una
-  palabra de 4 bytes (`boolean` ocupa 1, redondeado a 4 en parámetros y
-  listas). Las ranuras de temporales y el valor de retorno miden 8 para que
+  palabra de 4 bytes (`boolean` ocupa 1, redondeado a 4 en parámetros,
+  locales, listas y campos de clase: todo dato que no sea `float` empieza en
+  un múltiplo de 4, así MIPS lo lee con `lw`/`sw`).
+- **Enteros de 32 bits**: la aritmética entera da la vuelta al desbordarse
+  (`2147483647 + 1` = `-2147483648`), igual que `addu`/`subu`/`mul` de MIPS.
+  Un literal que no cabe en 32 bits es el error `C003`.
+- **Etiquetas**: válidas en MIPS. Funciones `f`, anidadas `f.g`, métodos
+  `Clase.m`; el inicializador de campos que crea el compilador es
+  `Clase.0init` (empieza con dígito, así que no puede chocar con un método). Las ranuras de temporales y el valor de retorno miden 8 para que
   quepa un `float`, aunque la gramática actual no tiene ese tipo. Strings, listas y objetos son referencias al heap.
 - **Booleanos**: cortocircuito con saltos en condiciones; `true`/`false`
   materializado cuando se usan como valor.
@@ -749,3 +756,77 @@ Los casos de error de la batería están en `workspace/tac/error/`
   `check_zero`, y saltan al `try` más interno o terminan el programa.
 - **Asignación a elementos de lista** (`a[i] = x`) no existe porque la
   gramática no la permite (ver §8, "Supuestos y límites").
+
+## 12. Contrato TAC → MIPS
+
+Lo que recibe la fase de generación de código MIPS, y lo que tiene que
+respetar para que el ensamblador haga exactamente lo mismo que el intérprete
+de TAC (`cpsc --run`). Es el equivalente, para la siguiente fase, de lo que
+`ARQUITECTURA.md` §8 es para esta.
+
+### Lo que el TAC ya deja resuelto
+
+| Qué | Dónde |
+|---|---|
+| Etiqueta, nivel y tamaño del marco (con temporales) de cada función | `func f nivel N marco M` |
+| Dirección de cada variable: área (`G`, `fp`, `obj`), offset y tamaño | Tabla de símbolos extendida (§9) |
+| Tamaño del área estática | `; área estática: N bytes` |
+| Vtables | `data vt_C: f, g, …` |
+| Clase de cada valor impreso | `print_int` / `print_str` / `print_bool` / `print_ref` |
+| Igualdad de textos por contenido | `streq` / `strne` |
+| Ancho de cada dato | Todo es una palabra (`lw`/`sw`) salvo `float` (8 bytes; la gramática no lo tiene) |
+
+### Datos (`.data`)
+
+- `G: .space N` para el área estática; una global es `offset(G)`.
+- Un literal de texto es una etiqueta `.asciiz`; su valor es su dirección.
+- `vt_C: .word f, g, …` para cada vtable.
+- Los mensajes fijos de error (§10) como `.asciiz`.
+
+### Secuencia de llamada
+
+El registro de activación es el de §4: parámetros desde `fp+16`, enlace de
+acceso en `fp+12`, valor de retorno en `fp+4` (8 bytes), enlace de control en
+`fp+0`, dirección de retorno en `fp-4`, estado guardado en `fp-8`, locales
+desde `fp-12` y debajo los temporales (`tk` en `fp - (marco_sin_temporales +
+8·(k+1))`).
+
+1. **Quien llama**, al ver los `param`, `link` y `call`: reserva en la pila
+   la parte de arriba del marco nuevo (16 bytes + los parámetros), escribe
+   cada parámetro en su offset (en orden, `this` primero en un método), el
+   enlace de acceso (el operando de `link`, o nada si no hay `link`) y su
+   propio `$fp` como enlace de control. Salta con `jal f` (o `jalr` para
+   `callv`).
+2. **Prólogo de la función**: `$fp` pasa a apuntar al enlace de control;
+   guarda `$ra` en `fp-4`; baja `$sp` el tamaño de `marco` de su `func`.
+3. **`return x`**: escribe `x` en `fp+4` (o en `$v0`, si la fase lo prefiere;
+   es una decisión de la fase de MIPS, pero tiene que ser una sola).
+4. **Epílogo**: restaura `$ra` desde `fp-4` y `$fp` desde el enlace de
+   control, sube `$sp` y vuelve con `jr $ra`. Quien llama lee el resultado y
+   libera la parte que había reservado.
+
+### Rutinas de apoyo que hay que escribir en MIPS
+
+| Instrucción TAC | Qué hace la rutina |
+|---|---|
+| `print_int` / `print_str` | `syscall` 1 / 4, más el salto de línea |
+| `print_bool` | Escribe `true` o `false` |
+| `print_ref` | Escribe `null` si es 0; si no, la dirección |
+| `x = alloc n` | `syscall` 9 (sbrk) |
+| `concat` | Mide los dos textos, reserva y copia |
+| `streq` / `strne` | Compara carácter por carácter |
+| `check_bounds a, i` | Lee la longitud en `a[0]`; si `i` está fuera, error `índice fuera de rango` |
+| `check_zero x` | Si `x` es 0, error `división por cero` |
+| `try_begin L` / `try_end` / `x = exception` | Una pila de manejadores (etiqueta + `$fp`/`$sp` a restaurar); un error salta al de arriba con el mensaje fijo, o termina el programa si no hay ninguno |
+
+### Lo que decide la fase de MIPS
+
+- `getReg()`: qué temporal del TAC va en qué registro (`$t`, `$s`). Cada
+  temporal ya tiene su ranura de 8 bytes en el marco para derramarlo
+  (*spill*) cuando no alcancen los registros.
+- Si usa registros `$s`, la función debe guardarlos: el espacio extra se
+  suma al marco (hoy el marco reserva una sola palabra de estado guardado,
+  en `fp-8`).
+- Los registros `$t` no sobreviven a una llamada: un temporal vivo durante
+  un `call` va a su ranura antes de llamar.
+

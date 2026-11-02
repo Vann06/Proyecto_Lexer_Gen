@@ -24,7 +24,7 @@ use crate::semantico::types::Type;
 use crate::sintactico::gramatica::flow::{FlowKind, FlowRole};
 use crate::sintactico::runtime::parse_tree::ParseNode;
 
-use super::super::tac::{BinOp, Instr, Operand};
+use super::super::tac::{BinOp, Instr, Operand, PrintKind};
 use super::{Generator, JumpTargets, LIST_HEADER};
 
 impl<'a> Generator<'a> {
@@ -33,8 +33,9 @@ impl<'a> Generator<'a> {
             return true;
         }
         if let Some(value) = self.ispec.print_value(node) {
+            let kind = PrintKind::of(self.expr_type(value));
             let v = self.gen_expr(value);
-            self.emit(Instr::Print(v.clone()));
+            self.emit(Instr::Print { value: v.clone(), kind });
             self.release(&v);
             return true;
         }
@@ -388,8 +389,13 @@ impl<'a> Generator<'a> {
             match self.ispec.flow_of(member).map(|s| s.kind()) {
                 Some(FlowKind::Case) => {
                     let Some(case_value) = self.part(member, FlowRole::Value) else { continue };
+                    let op = if self.expr_type(disc) == Some(&Type::Str) && self.expr_type(case_value) == Some(&Type::Str) {
+                        BinOp::StrEq
+                    } else {
+                        BinOp::Eq
+                    };
                     let v = self.gen_widened(case_value);
-                    self.emit(Instr::IfRel { left: subject.clone(), op: BinOp::Eq, right: v.clone(), label: label.clone() });
+                    self.emit(Instr::IfRel { left: subject.clone(), op, right: v.clone(), label: label.clone() });
                     self.release(&v);
                 }
                 _ => default_label = Some(label.clone()),

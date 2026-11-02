@@ -146,6 +146,10 @@ pub struct SemanticSpec {
     /// gramática no tiene dónde escribirla — p.ej. `catch (e)`, donde `e`
     /// es siempre el mensaje del error.
     pub fixed_types: HashMap<String, Type>,
+    /// Producciones de impresión (`%print`) y el índice de la expresión que
+    /// imprimen. El análisis resuelve el tipo de esa expresión para que la
+    /// generación de código sepa QUÉ imprime (entero, texto, booleano…).
+    pub prints: HashMap<String, usize>,
 }
 
 /// "La producción `production`, cuando empieza con `open_token`, es solo una
@@ -686,6 +690,7 @@ impl SemanticSpec {
                 .iter()
                 .map(|(production, kind)| (production.clone(), type_from_directive(kind)))
                 .collect(),
+            prints: grammar.print_directives.iter().cloned().collect(),
         })
     }
 }

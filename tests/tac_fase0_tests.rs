@@ -120,3 +120,9 @@ fn una_clase_ya_se_traduce_en_la_fase_2() {
     // no queda ninguna del lenguaje que el análisis acepte sin traducción.
     assert!(generar("let x: integer = 1;\nclass C { }\n").is_ok());
 }
+
+#[test]
+fn un_literal_entero_que_no_cabe_en_32_bits_es_un_error() {
+    let errs = generar("let ok: integer = 2147483647;\nlet x: integer = 3000000000;\n").unwrap_err();
+    assert_eq!(errs, vec![("C003".to_string(), 2)]);
+}

@@ -139,7 +139,6 @@ pub enum RuntimeError {
     },
     DivisionByZero,
     ModuloByZero,
-    ArithmeticOverflow { operation: &'static str },
 }
 
 impl fmt::Display for RuntimeError {
@@ -264,9 +263,6 @@ impl fmt::Display for RuntimeError {
             } => write!(f, "operando incompatible para {operation}: {left}"),
             RuntimeError::DivisionByZero => write!(f, "división por cero"),
             RuntimeError::ModuloByZero => write!(f, "módulo por cero"),
-            RuntimeError::ArithmeticOverflow { operation } => {
-                write!(f, "desbordamiento aritmético en {operation}")
-            }
         }
     }
 }
@@ -278,6 +274,23 @@ impl RuntimeError {
     /// recuperables por `try/catch`. Los defectos estructurales del TAC y el
     /// límite de pasos siguen siendo fatales para no ocultar programas
     /// inválidos ni neutralizar la protección contra ciclos infinitos.
+    /// El texto FIJO que recibe el programa en un `catch` (`x = exception`).
+    /// Es siempre el mismo para cada clase de error, sin números: la
+    /// traducción a MIPS lo guarda tal cual en `.data`, así que el intérprete
+    /// y el ensamblador imprimen exactamente lo mismo. El `Display` conserva
+    /// el detalle para depurar.
+    ///
+    /// `check_zero` va antes de `/` y de `%`, así que un divisor cero en
+    /// cualquiera de las dos da "división por cero".
+    pub fn program_message(&self) -> &'static str {
+        match self {
+            RuntimeError::IndexOutOfBounds { .. } => "índice fuera de rango",
+            RuntimeError::DivisionByZero | RuntimeError::ZeroCheckFailed => "división por cero",
+            RuntimeError::ModuloByZero => "módulo por cero",
+            _ => "error en tiempo de ejecución",
+        }
+    }
+
     fn is_catchable(&self) -> bool {
         matches!(
             self,
@@ -302,7 +315,6 @@ impl RuntimeError {
                 | RuntimeError::InvalidOperands { .. }
                 | RuntimeError::DivisionByZero
                 | RuntimeError::ModuloByZero
-                | RuntimeError::ArithmeticOverflow { .. }
         )
     }
 }
@@ -635,7 +647,7 @@ impl<'a> Vm<'a> {
                         // El handler que recibe el error deja de estar activo;
                         // si el catch falla, debe verlo el try exterior.
                         self.handlers.truncate(index);
-                        self.current_exception = Some(error.to_string());
+                        self.current_exception = Some(error.program_message().to_string());
                         pc = handler.target_pc;
                     } else {
                         self.handlers.truncate(handler_base);
@@ -894,7 +906,9 @@ impl<'a> Vm<'a> {
                 let result = eval_binary(*op, left, right)?;
                 self.write_operand(dst, result)
             }
-            Instr::Print(operand) => {
+            // `kind` es para la traducción a MIPS; el intérprete ya conoce el
+            // valor real y lo imprime según él.
+            Instr::Print { value: operand, .. } => {
                 let value = self.read_operand(operand)?;
                 self.output.push_str(&value.to_string());
                 self.output.push('\n');
@@ -1238,14 +1252,17 @@ fn invalid_binary(op: BinOp, left: &Value, right: &Value) -> RuntimeError {
     }
 }
 
+/// Aritmética entera de 32 bits que da la vuelta al desbordarse, igual que
+/// `addu`/`subu`/`mul`/`div` de MIPS: un `integer` ocupa 4 bytes en el
+/// registro de activación, así que el intérprete calcula lo mismo que el
+/// ensamblador. (`i32::MIN / -1` también da la vuelta, a `i32::MIN`.)
+fn int32(a: i64, b: i64, op: fn(i32, i32) -> i32) -> Value {
+    Value::Int(op(a as i32, b as i32) as i64)
+}
+
 fn eval_unary(op: UnOp, value: Value) -> Result<Value, RuntimeError> {
     match (op, value) {
-        (UnOp::Neg, Value::Int(value)) => value
-            .checked_neg()
-            .map(Value::Int)
-            .ok_or(RuntimeError::ArithmeticOverflow {
-                operation: UnOp::Neg.symbol(),
-            }),
+        (UnOp::Neg, Value::Int(value)) => Ok(int32(value, 0, |a, _| a.wrapping_neg())),
         (UnOp::NegF, Value::Float(value)) => Ok(Value::Float(-value)),
         (UnOp::Not, Value::Bool(value)) => Ok(Value::Bool(!value)),
         (UnOp::IntToFloat, Value::Int(value)) => Ok(Value::Float(value as f64)),
@@ -1268,6 +1285,12 @@ fn comparable_equality(left: &Value, right: &Value) -> Option<bool> {
 }
 
 fn eval_binary(op: BinOp, left: Value, right: Value) -> Result<Value, RuntimeError> {
+    if matches!(op, BinOp::StrEq | BinOp::StrNe) {
+        return match (&left, &right) {
+            (Value::Str(a), Value::Str(b)) => Ok(Value::Bool((a == b) == (op == BinOp::StrEq))),
+            _ => Err(invalid_binary(op, &left, &right)),
+        };
+    }
     if matches!(op, BinOp::Eq | BinOp::Ne) {
         return comparable_equality(&left, &right)
             .map(|equal| Value::Bool(if op == BinOp::Eq { equal } else { !equal }))
@@ -1276,28 +1299,13 @@ fn eval_binary(op: BinOp, left: Value, right: Value) -> Result<Value, RuntimeErr
 
     let invalid = || invalid_binary(op, &left, &right);
     match (op, &left, &right) {
-        (BinOp::Add, Value::Int(a), Value::Int(b)) => a
-            .checked_add(*b)
-            .map(Value::Int)
-            .ok_or(RuntimeError::ArithmeticOverflow { operation: "+" }),
-        (BinOp::Sub, Value::Int(a), Value::Int(b)) => a
-            .checked_sub(*b)
-            .map(Value::Int)
-            .ok_or(RuntimeError::ArithmeticOverflow { operation: "-" }),
-        (BinOp::Mul, Value::Int(a), Value::Int(b)) => a
-            .checked_mul(*b)
-            .map(Value::Int)
-            .ok_or(RuntimeError::ArithmeticOverflow { operation: "*" }),
+        (BinOp::Add, Value::Int(a), Value::Int(b)) => Ok(int32(*a, *b, i32::wrapping_add)),
+        (BinOp::Sub, Value::Int(a), Value::Int(b)) => Ok(int32(*a, *b, i32::wrapping_sub)),
+        (BinOp::Mul, Value::Int(a), Value::Int(b)) => Ok(int32(*a, *b, i32::wrapping_mul)),
         (BinOp::Div, Value::Int(_), Value::Int(0)) => Err(RuntimeError::DivisionByZero),
-        (BinOp::Div, Value::Int(a), Value::Int(b)) => a
-            .checked_div(*b)
-            .map(Value::Int)
-            .ok_or(RuntimeError::ArithmeticOverflow { operation: "/" }),
+        (BinOp::Div, Value::Int(a), Value::Int(b)) => Ok(int32(*a, *b, i32::wrapping_div)),
         (BinOp::Mod, Value::Int(_), Value::Int(0)) => Err(RuntimeError::ModuloByZero),
-        (BinOp::Mod, Value::Int(a), Value::Int(b)) => a
-            .checked_rem(*b)
-            .map(Value::Int)
-            .ok_or(RuntimeError::ArithmeticOverflow { operation: "%" }),
+        (BinOp::Mod, Value::Int(a), Value::Int(b)) => Ok(int32(*a, *b, i32::wrapping_rem)),
         (BinOp::AddF, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
         (BinOp::SubF, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
         (BinOp::MulF, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
@@ -1321,7 +1329,7 @@ fn eval_binary(op: BinOp, left: Value, right: Value) -> Result<Value, RuntimeErr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::intermedio::tac::DataItem;
+    use crate::intermedio::tac::{DataItem, PrintKind};
 
     fn program_with_main(body: Vec<Instr>) -> TacProgram {
         let mut main = TacFunction::new("main", 0, 0);
@@ -1449,7 +1457,7 @@ mod tests {
                 dst: Operand::Temp(0),
                 src: Operand::Int(5),
             },
-            Instr::Print(Operand::Temp(0)),
+            Instr::Print { value: Operand::Temp(0), kind: PrintKind::Int },
         ])
         .unwrap();
 
@@ -1474,7 +1482,7 @@ mod tests {
                 left: Operand::Temp(0),
                 right: Operand::Temp(1),
             },
-            Instr::Print(Operand::Temp(2)),
+            Instr::Print { value: Operand::Temp(2), kind: PrintKind::Int },
         ])
         .unwrap();
 
@@ -1498,11 +1506,28 @@ mod tests {
                 left: Operand::Temp(0),
                 right: Operand::Temp(1),
             },
-            Instr::Print(Operand::Temp(2)),
+            Instr::Print { value: Operand::Temp(2), kind: PrintKind::Int },
         ])
         .unwrap();
 
         assert_eq!(result.output, "6\n");
+    }
+
+    #[test]
+    fn los_enteros_son_de_32_bits_y_dan_la_vuelta_como_en_mips() {
+        let print = |value| Instr::Print { value, kind: PrintKind::Int };
+        let body = vec![
+            Instr::Binary { dst: Operand::Temp(0), op: BinOp::Add, left: Operand::Int(2147483647), right: Operand::Int(1) },
+            print(Operand::Temp(0)),
+            Instr::Binary { dst: Operand::Temp(0), op: BinOp::Mul, left: Operand::Int(65536), right: Operand::Int(65536) },
+            print(Operand::Temp(0)),
+            Instr::Binary { dst: Operand::Temp(0), op: BinOp::Div, left: Operand::Int(-2147483648), right: Operand::Int(-1) },
+            print(Operand::Temp(0)),
+            Instr::Unary { dst: Operand::Temp(0), op: UnOp::Neg, src: Operand::Int(-2147483648) },
+            print(Operand::Temp(0)),
+        ];
+        let result = run_main(body).unwrap();
+        assert_eq!(result.output, "-2147483648\n0\n-2147483648\n-2147483648\n");
     }
 
     #[test]
@@ -1528,7 +1553,7 @@ mod tests {
                 left: Operand::Temp(0),
                 right: Operand::Temp(1),
             });
-            body.push(Instr::Print(dst));
+            body.push(Instr::Print { value: dst, kind: PrintKind::Int });
         }
 
         let result = run_main(body).unwrap();
@@ -1559,7 +1584,7 @@ mod tests {
                 left: Operand::Temp(0),
                 right: Operand::Temp(1),
             });
-            body.push(Instr::Print(dst));
+            body.push(Instr::Print { value: dst, kind: PrintKind::Int });
         }
 
         let result = run_main(body).unwrap();
@@ -1575,25 +1600,25 @@ mod tests {
                 op: UnOp::Neg,
                 src: Operand::Int(5),
             },
-            Instr::Print(Operand::Temp(0)),
+            Instr::Print { value: Operand::Temp(0), kind: PrintKind::Int },
             Instr::Unary {
                 dst: Operand::Temp(1),
                 op: UnOp::NegF,
                 src: Operand::Float(2.5),
             },
-            Instr::Print(Operand::Temp(1)),
+            Instr::Print { value: Operand::Temp(1), kind: PrintKind::Int },
             Instr::Unary {
                 dst: Operand::Temp(2),
                 op: UnOp::Not,
                 src: Operand::Bool(true),
             },
-            Instr::Print(Operand::Temp(2)),
+            Instr::Print { value: Operand::Temp(2), kind: PrintKind::Int },
             Instr::Unary {
                 dst: Operand::Temp(3),
                 op: UnOp::IntToFloat,
                 src: Operand::Int(3),
             },
-            Instr::Print(Operand::Temp(3)),
+            Instr::Print { value: Operand::Temp(3), kind: PrintKind::Int },
         ])
         .unwrap();
 
@@ -1609,7 +1634,7 @@ mod tests {
                 left: Operand::Str("hola ".into()),
                 right: Operand::Str("mundo".into()),
             },
-            Instr::Print(Operand::Temp(0)),
+            Instr::Print { value: Operand::Temp(0), kind: PrintKind::Int },
         ])
         .unwrap();
 
@@ -1637,7 +1662,7 @@ mod tests {
                 left: Operand::Int(2),
                 right: Operand::Int(3),
             });
-            body.push(Instr::Print(dst));
+            body.push(Instr::Print { value: dst, kind: PrintKind::Int });
         }
 
         let result = run_main(body).unwrap();
@@ -1687,9 +1712,9 @@ mod tests {
     fn goto_salta_instrucciones_hasta_la_etiqueta() {
         let result = run_main(vec![
             Instr::Goto("fin".into()),
-            Instr::Print(Operand::Int(99)),
+            Instr::Print { value: Operand::Int(99), kind: PrintKind::Int },
             Instr::Label("fin".into()),
-            Instr::Print(Operand::Int(1)),
+            Instr::Print { value: Operand::Int(1), kind: PrintKind::Int },
         ])
         .unwrap();
 
@@ -1703,10 +1728,10 @@ mod tests {
                 cond: Operand::Bool(true),
                 label: "verdadero".into(),
             },
-            Instr::Print(Operand::Int(0)),
+            Instr::Print { value: Operand::Int(0), kind: PrintKind::Int },
             Instr::Goto("fin".into()),
             Instr::Label("verdadero".into()),
-            Instr::Print(Operand::Int(1)),
+            Instr::Print { value: Operand::Int(1), kind: PrintKind::Int },
             Instr::Label("fin".into()),
         ])
         .unwrap();
@@ -1721,10 +1746,10 @@ mod tests {
                 cond: Operand::Bool(false),
                 label: "falso".into(),
             },
-            Instr::Print(Operand::Int(1)),
+            Instr::Print { value: Operand::Int(1), kind: PrintKind::Int },
             Instr::Goto("fin".into()),
             Instr::Label("falso".into()),
-            Instr::Print(Operand::Int(0)),
+            Instr::Print { value: Operand::Int(0), kind: PrintKind::Int },
             Instr::Label("fin".into()),
         ])
         .unwrap();
@@ -1741,10 +1766,10 @@ mod tests {
                 right: Operand::Int(3),
                 label: "menor".into(),
             },
-            Instr::Print(Operand::Bool(false)),
+            Instr::Print { value: Operand::Bool(false), kind: PrintKind::Bool },
             Instr::Goto("fin".into()),
             Instr::Label("menor".into()),
-            Instr::Print(Operand::Bool(true)),
+            Instr::Print { value: Operand::Bool(true), kind: PrintKind::Bool },
             Instr::Label("fin".into()),
         ])
         .unwrap();
@@ -1766,7 +1791,7 @@ mod tests {
                 right: Operand::Int(3),
                 label: "fin".into(),
             },
-            Instr::Print(Operand::Temp(0)),
+            Instr::Print { value: Operand::Temp(0), kind: PrintKind::Int },
             Instr::Binary {
                 dst: Operand::Temp(0),
                 op: BinOp::Add,
@@ -1828,7 +1853,7 @@ mod tests {
                 base: Operand::Temp(0),
                 index: Operand::Int(4),
             },
-            Instr::Print(Operand::Temp(1)),
+            Instr::Print { value: Operand::Temp(1), kind: PrintKind::Int },
         ])
         .unwrap();
 
@@ -1866,8 +1891,8 @@ mod tests {
                 base: Operand::Temp(1),
                 index: Operand::Int(0),
             },
-            Instr::Print(Operand::Temp(2)),
-            Instr::Print(Operand::Temp(3)),
+            Instr::Print { value: Operand::Temp(2), kind: PrintKind::Int },
+            Instr::Print { value: Operand::Temp(3), kind: PrintKind::Int },
         ])
         .unwrap();
 
@@ -1909,7 +1934,7 @@ mod tests {
                 dst: Operand::mem(Base::Temp(0), 4),
                 src: Operand::Int(9),
             },
-            Instr::Print(Operand::mem(Base::Temp(0), 4)),
+            Instr::Print { value: Operand::mem(Base::Temp(0), 4), kind: PrintKind::Int },
         ])
         .unwrap();
 
@@ -1932,7 +1957,7 @@ mod tests {
                 array: Operand::Temp(0),
                 index: Operand::Int(0),
             },
-            Instr::Print(Operand::Bool(true)),
+            Instr::Print { value: Operand::Bool(true), kind: PrintKind::Bool },
         ])
         .unwrap();
 
@@ -2040,7 +2065,7 @@ mod tests {
             "saludar",
             1,
             8,
-            vec![Instr::Print(Operand::Str("hola".into()))],
+            vec![Instr::Print { value: Operand::Str("hola".into()), kind: PrintKind::Str }],
         );
         let program = program_with_functions(
             vec![Instr::Call {
@@ -2079,7 +2104,7 @@ mod tests {
                     func: "suma".into(),
                     nargs: 2,
                 },
-                Instr::Print(Operand::Temp(0)),
+                Instr::Print { value: Operand::Temp(0), kind: PrintKind::Int },
             ],
             vec![sum],
         );
@@ -2102,7 +2127,7 @@ mod tests {
                     func: "respuesta".into(),
                     nargs: 0,
                 },
-                Instr::Print(Operand::Temp(0)),
+                Instr::Print { value: Operand::Temp(0), kind: PrintKind::Int },
             ],
             vec![answer],
         );
@@ -2120,14 +2145,14 @@ mod tests {
         );
         let program = program_with_functions(
             vec![
-                Instr::Print(Operand::Int(0)),
+                Instr::Print { value: Operand::Int(0), kind: PrintKind::Int },
                 Instr::Call {
                     dst: Some(Operand::Temp(0)),
                     func: "uno".into(),
                     nargs: 0,
                 },
-                Instr::Print(Operand::Temp(0)),
-                Instr::Print(Operand::Int(2)),
+                Instr::Print { value: Operand::Temp(0), kind: PrintKind::Int },
+                Instr::Print { value: Operand::Int(2), kind: PrintKind::Int },
             ],
             vec![one],
         );
@@ -2179,7 +2204,7 @@ mod tests {
                     func: "factorial".into(),
                     nargs: 1,
                 },
-                Instr::Print(Operand::Temp(0)),
+                Instr::Print { value: Operand::Temp(0), kind: PrintKind::Int },
             ],
             vec![factorial],
         );
@@ -2209,14 +2234,14 @@ mod tests {
                     func: "identidad".into(),
                     nargs: 1,
                 },
-                Instr::Print(Operand::Temp(0)),
+                Instr::Print { value: Operand::Temp(0), kind: PrintKind::Int },
                 Instr::Param(Operand::Int(9)),
                 Instr::Call {
                     dst: Some(Operand::Temp(0)),
                     func: "identidad".into(),
                     nargs: 1,
                 },
-                Instr::Print(Operand::Temp(0)),
+                Instr::Print { value: Operand::Temp(0), kind: PrintKind::Int },
             ],
             vec![identity],
         );
@@ -2271,7 +2296,7 @@ mod tests {
                     func: "externa".into(),
                     nargs: 0,
                 },
-                Instr::Print(Operand::Temp(0)),
+                Instr::Print { value: Operand::Temp(0), kind: PrintKind::Int },
             ],
             vec![outer, inner],
         );
@@ -2353,7 +2378,7 @@ mod tests {
                     func: "contador".into(),
                     nargs: 1,
                 },
-                Instr::Print(Operand::Temp(0)),
+                Instr::Print { value: Operand::Temp(0), kind: PrintKind::Int },
             ],
             vec![contador, sumar],
         );
@@ -2430,7 +2455,7 @@ mod tests {
                     func: "outer".into(),
                     nargs: 0,
                 },
-                Instr::Print(Operand::Temp(0)),
+                Instr::Print { value: Operand::Temp(0), kind: PrintKind::Int },
             ],
             vec![outer, middle, inner],
         );
@@ -2529,7 +2554,7 @@ mod tests {
                     func: "outer".into(),
                     nargs: 0,
                 },
-                Instr::Print(Operand::Temp(0)),
+                Instr::Print { value: Operand::Temp(0), kind: PrintKind::Int },
             ],
             vec![outer, nested],
         );
@@ -2615,7 +2640,7 @@ mod tests {
                     target: Operand::Temp(1),
                     nargs: 1,
                 },
-                Instr::Print(Operand::Temp(2)),
+                Instr::Print { value: Operand::Temp(2), kind: PrintKind::Int },
             ],
             vec![value_method],
         );
@@ -2662,7 +2687,7 @@ mod tests {
                     target: Operand::Temp(1),
                     nargs: 1,
                 },
-                Instr::Print(Operand::Temp(2)),
+                Instr::Print { value: Operand::Temp(2), kind: PrintKind::Int },
             ],
             vec![inherited],
         );
@@ -2717,7 +2742,7 @@ mod tests {
                     target: Operand::Temp(1),
                     nargs: 1,
                 },
-                Instr::Print(Operand::Temp(2)),
+                Instr::Print { value: Operand::Temp(2), kind: PrintKind::Int },
             ],
             vec![animal, dog],
         );
@@ -2747,7 +2772,7 @@ mod tests {
             Instr::Goto("end".into()),
             Instr::Label("catch".into()),
             Instr::GetException(Operand::Temp(1)),
-            Instr::Print(Operand::Temp(1)),
+            Instr::Print { value: Operand::Temp(1), kind: PrintKind::Int },
             Instr::Label("end".into()),
         ])
         .unwrap();
@@ -2776,14 +2801,14 @@ mod tests {
             Instr::Goto("end".into()),
             Instr::Label("catch".into()),
             Instr::GetException(Operand::Temp(1)),
-            Instr::Print(Operand::Temp(1)),
+            Instr::Print { value: Operand::Temp(1), kind: PrintKind::Int },
             Instr::Label("end".into()),
         ])
         .unwrap();
 
         assert_eq!(
             result.output,
-            "índice 1 fuera de rango para una lista de longitud 1\n"
+            "índice fuera de rango\n"
         );
     }
 
@@ -2802,7 +2827,7 @@ mod tests {
             Instr::Goto("inner_end".into()),
             Instr::Label("inner_catch".into()),
             Instr::GetException(Operand::Temp(1)),
-            Instr::Print(Operand::Temp(1)),
+            Instr::Print { value: Operand::Temp(1), kind: PrintKind::Int },
             // El catch interno falla: como su handler ya se consumió, el
             // error siguiente debe llegar al try exterior.
             Instr::Binary {
@@ -2816,7 +2841,7 @@ mod tests {
             Instr::Goto("outer_end".into()),
             Instr::Label("outer_catch".into()),
             Instr::GetException(Operand::Temp(2)),
-            Instr::Print(Operand::Temp(2)),
+            Instr::Print { value: Operand::Temp(2), kind: PrintKind::Int },
             Instr::Label("outer_end".into()),
         ])
         .unwrap();
@@ -2850,7 +2875,7 @@ mod tests {
             },
             Instr::Goto("end".into()),
             Instr::Label("catch".into()),
-            Instr::Print(Operand::Str("no debe ejecutarse".into())),
+            Instr::Print { value: Operand::Str("no debe ejecutarse".into()), kind: PrintKind::Str },
             Instr::Label("end".into()),
         ])
         .unwrap_err();
@@ -2883,7 +2908,7 @@ mod tests {
                 Instr::Goto("end".into()),
                 Instr::Label("catch".into()),
                 Instr::GetException(Operand::Temp(0)),
-                Instr::Print(Operand::Temp(0)),
+                Instr::Print { value: Operand::Temp(0), kind: PrintKind::Int },
                 Instr::Label("end".into()),
             ],
             vec![failing],

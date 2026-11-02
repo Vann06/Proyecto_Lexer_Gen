@@ -4,6 +4,6 @@ func main nivel 0 marco 8
     x = 1 + t0
     check_zero 4
     y = x % 4
-    print x
-    print y
+    print_int x
+    print_int y
 endfunc

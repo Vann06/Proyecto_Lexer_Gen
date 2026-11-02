@@ -54,12 +54,13 @@ impl<'a> Generator<'a> {
             return Some(self.gen_arithmetic(node, op, left, right));
         }
         if let Some((op, left, right)) = operators::find_comparison(node, self.sspec) {
+            let op = self.comparison_op(op, left, right);
             let l = self.gen_widened(left);
             let r = self.gen_widened(right);
             self.release(&l);
             self.release(&r);
             let dst = self.new_temp();
-            self.emit(Instr::Binary { dst: dst.clone(), op: relop(op), left: l, right: r });
+            self.emit(Instr::Binary { dst: dst.clone(), op, left: l, right: r });
             return Some(dst);
         }
         if operators::find_logical(node, self.sspec).is_some() {
@@ -78,6 +79,17 @@ impl<'a> Generator<'a> {
             return Some(dst);
         }
         None
+    }
+
+    /// La operación de una comparación: `==`/`!=` entre dos `string`
+    /// comparan su CONTENIDO (`streq`/`strne`); el resto, su valor.
+    fn comparison_op(&self, op: ComparisonOperator, left: &ParseNode, right: &ParseNode) -> BinOp {
+        let texts = self.expr_type(left) == Some(&Type::Str) && self.expr_type(right) == Some(&Type::Str);
+        match (op, texts) {
+            (ComparisonOperator::Eq, true) => BinOp::StrEq,
+            (ComparisonOperator::Neq, true) => BinOp::StrNe,
+            _ => relop(op),
+        }
     }
 
     /// El hijo que encierra una agrupación `( expr )` (`%group`).
@@ -99,9 +111,19 @@ impl<'a> Generator<'a> {
         }
         let lexeme = leaf.lexeme.as_deref().unwrap_or("");
         match self.sspec.type_tokens.get(&leaf.symbol) {
-            Some(Type::Int) => match lexeme.parse() {
-                Ok(n) => Operand::Int(n),
-                Err(_) => self.unsupported(leaf, "un literal entero fuera de rango"),
+            // Un `integer` es de 32 bits (4 bytes en el marco, un registro en
+            // MIPS): un literal que no cabe es un error de compilación.
+            Some(Type::Int) => match lexeme.parse::<i32>() {
+                Ok(n) => Operand::Int(n as i64),
+                Err(_) => {
+                    self.errors.push(super::CodegenError::new(
+                        "C003",
+                        format!("el literal entero {lexeme} no cabe en 32 bits (máximo {})", i32::MAX),
+                        leaf.line,
+                        leaf.col,
+                    ));
+                    Operand::Int(0)
+                }
             },
             Some(Type::Float) => match lexeme.parse() {
                 Ok(x) => Operand::Float(x),
@@ -138,9 +160,16 @@ impl<'a> Generator<'a> {
     fn gen_arithmetic(&mut self, node: &ParseNode, op: ArithmeticOperator, left: &ParseNode, right: &ParseNode) -> Operand {
         let l = self.gen_widened(left);
         let r = self.gen_widened(right);
-        let float = self.type_of(node) == Some(&Type::Float);
+        // El tipo del resultado; si el análisis no lo dejó en el nodo, el de
+        // los operandos (`"a" + s` es texto si sus dos lados lo son).
+        let result = self.type_of(node).or_else(|| match (self.expr_type(left), self.expr_type(right)) {
+            (Some(Type::Str), Some(Type::Str)) => Some(&Type::Str),
+            (Some(Type::Float), _) | (_, Some(Type::Float)) => Some(&Type::Float),
+            _ => None,
+        });
+        let float = result == Some(&Type::Float);
         let binop = match op {
-            ArithmeticOperator::Add if self.type_of(node) == Some(&Type::Str) => BinOp::Concat,
+            ArithmeticOperator::Add if result == Some(&Type::Str) => BinOp::Concat,
             ArithmeticOperator::Add if float => BinOp::AddF,
             ArithmeticOperator::Subtract if float => BinOp::SubF,
             ArithmeticOperator::Multiply if float => BinOp::MulF,
@@ -228,9 +257,9 @@ impl<'a> Generator<'a> {
         }
 
         if let Some((op, left, right)) = operators::find_comparison(node, self.sspec) {
+            let op = self.comparison_op(op, left, right);
             let l = self.gen_widened(left);
             let r = self.gen_widened(right);
-            let op = relop(op);
             match (on_true, on_false) {
                 (Some(t), Some(f)) => {
                     self.emit(Instr::IfRel { left: l.clone(), op, right: r.clone(), label: t.to_string() });
@@ -303,6 +332,8 @@ fn negate(op: BinOp) -> BinOp {
     match op {
         BinOp::Eq => BinOp::Ne,
         BinOp::Ne => BinOp::Eq,
+        BinOp::StrEq => BinOp::StrNe,
+        BinOp::StrNe => BinOp::StrEq,
         BinOp::Lt => BinOp::Ge,
         BinOp::Le => BinOp::Gt,
         BinOp::Gt => BinOp::Le,

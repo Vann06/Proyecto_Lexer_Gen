@@ -20,7 +20,7 @@ fn respuesta_expone_tac_cuadruplos_simbolos_y_temporales_sin_ejecutar() {
 
     assert!(response.problems.is_empty(), "{:#?}", response.problems);
     assert!(response.tac.contains("func main"));
-    assert!(response.tac.contains("print x"));
+    assert!(response.tac.contains("print_int x"));
     assert!(response.tac_quads["main"]["quads"].is_array());
     assert!(response.symbols_ext["symbols"].is_array());
     assert!(response.symbols_ext["frames"].is_array());
