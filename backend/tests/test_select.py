@@ -33,8 +33,12 @@ def test_dates_and_filters(db):
 
 @pytest.mark.parametrize("query", ["SELECT COUNT(*) FROM t", "SELECT n FROM t GROUP BY n",
                                   "SELECT a.n FROM t a INNER JOIN t b ON a.n = b.n"])
-def test_unconnected_d3_is_never_silently_ignored(db, query):
+def test_unconnected_d3_is_never_silently_ignored(db, query, monkeypatch):
+    import sys
     from dbms.result import ExecutionError
+    # D3 ya existe: se simula que join.py / aggregate.py faltan.
+    monkeypatch.setitem(sys.modules, "dbms.join", None)
+    monkeypatch.setitem(sys.modules, "dbms.aggregate", None)
     run(db, "CREATE TABLE t (n INT)")
     with pytest.raises(ExecutionError) as error:
         run(db, query)
@@ -62,7 +66,7 @@ def test_group_module_extension_and_having_order_projection(db, monkeypatch):
     from types import SimpleNamespace
     from dbms.eval import Environment
     run(db, "CREATE TABLE t (n INT); INSERT INTO t VALUES (1), (2), (3)")
-    def group(stmt, envs):
+    def group(stmt, envs, outer=None):
         assert len(envs) == 2  # WHERE ya se aplicó
         return [Environment(aggregate_runner=lambda call, env: len(envs))]
     monkeypatch.setitem(sys.modules, "dbms.aggregate", SimpleNamespace(group=group))

@@ -1,6 +1,11 @@
--- errores_semanticos.sql — un error semántico por línea, para la pestaña
+-- Entrega 3 · análisis semántico: un error por línea, para ▶ ANALIZAR →
 -- PROBLEMAS. La sintaxis de todo el archivo es válida: cada error lo detecta
 -- el análisis semántico contra el catálogo, con su línea y columna.
+-- (Con ▶ EJECUTAR se detiene en el primero, la línea del SEM001.)
+CREATE DATABASE IF NOT EXISTS entrega3;
+USE entrega3;
+DROP TABLE IF EXISTS estudiantes;
+DROP TABLE IF EXISTS inscripciones;
 CREATE TABLE estudiantes (id INT PRIMARY KEY, nombre VARCHAR(10) NOT NULL, edad INT, ingreso DATE);
 CREATE TABLE inscripciones (estudiante_id INT, curso_id INT, nota FLOAT);
 CREATE INDEX idx_edad ON estudiantes (edad);

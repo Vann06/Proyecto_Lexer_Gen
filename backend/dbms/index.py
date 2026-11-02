@@ -81,6 +81,19 @@ def lookup(db, table, index, op, value):
     column = table.column(index.columns[0])
     if column.type.name == "DATE":
         value = sqltypes.coerce(value, column.type)
+    entries = load_entries(db, table, index)
+    keys = [entry[0] for entry in entries]
+    left, right = bisect_left(keys, value), bisect_right(keys, value)
+    bounds = {"=": (left, right), "<": (0, left), "<=": (0, right),
+              ">": (right, len(entries)), ">=": (left, len(entries))}
+    start, end = bounds[op]
+    return {rid for _, ids in entries[start:end] for rid in ids}
+
+
+def load_entries(db, table, index):
+    """Las líneas de un índice de una columna como [(clave, [rowid, ...])],
+    ordenadas por clave y sin la de NULL (nunca coincide con nada)."""
+    column = table.column(index.columns[0])
     entries = []
     try:
         for line in index_path(db, index.name).read_text(encoding="utf-8").splitlines():
@@ -93,18 +106,14 @@ def lookup(db, table, index, op, value):
             entries.append((key, [int(i) for i in ids.split(",")]))
     except (OSError, ValueError) as exc:
         raise StorageError(f"No se pudo leer el índice '{index.name}': {exc}") from exc
-    keys = [entry[0] for entry in entries]
-    left, right = bisect_left(keys, value), bisect_right(keys, value)
-    bounds = {"=": (left, right), "<": (0, left), "<=": (0, right),
-              ">": (right, len(entries)), ">=": (left, len(entries))}
-    start, end = bounds[op]
-    return {rid for _, ids in entries[start:end] for rid in ids}
+    return entries
 
 
-def _terms(expr):
+def conjuncts(expr):
+    """Las partes de una condición unidas por AND (la usa también join.py)."""
     if isinstance(expr, ast.Binary) and expr.op == "AND":
-        yield from _terms(expr.left)
-        yield from _terms(expr.right)
+        yield from conjuncts(expr.left)
+        yield from conjuncts(expr.right)
     else:
         yield expr
 
@@ -117,7 +126,7 @@ def _literal(expr):
 def candidates(db, catalog, table, where, alias=None):
     """Intersección de predicados indexables; siempre reevaluar WHERE completo."""
     selected, used = None, []
-    for term in _terms(where):
+    for term in conjuncts(where):
         if not isinstance(term, ast.Binary) or term.op not in ("=", "<", "<=", ">", ">="):
             continue
         col, literal, op = term.left, term.right, term.op

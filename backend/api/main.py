@@ -1,7 +1,6 @@
 """API HTTP del DBMS.
 
-Mismos endpoints de workspace y /health que tenía el servidor Rust anterior
-(el IDE los usa sin cambios), más los de SQL:
+Endpoints del workspace (los archivos .sql que ve el IDE), /health y los de SQL:
 
     POST /api/sql/parse   {script, database?}  -> tokens, árbol DOT, AST DOT,
                           problemas (léxicos, sintácticos y semánticos), sentencias

@@ -17,6 +17,23 @@ def test_health(client):
     assert client.get("/health").json()["status"] == "ok"
 
 
+def test_analizar_y_ejecutar_en_base_activa(client):
+    setup = client.post('/api/sql/run', json={'script':
+        'CREATE DATABASE qa; USE qa; CREATE TABLE exclusiva (id INT); '
+        'INSERT INTO exclusiva VALUES (1);'}).json()
+    assert setup['ok']
+    payload = {'script': 'SELECT * FROM exclusiva;', 'database': setup['database']}
+    analyzed = client.post('/api/sql/parse', json=payload).json()
+    assert analyzed['ok']
+    assert not [p for p in analyzed['problems'] if p['level'] == 'err']
+    executed = client.post('/api/sql/run', json=payload).json()
+    assert executed['ok']
+    assert executed['statements'][0]['result']['rows'] == [[1]]
+    # La tabla solo existe en qa, por lo que omitir database sí sería un error.
+    principal = client.post('/api/sql/parse', json={'script': payload['script']}).json()
+    assert [p['code'] for p in principal['problems']] == ['SEM001']
+
+
 def test_workspace_roundtrip(client):
     assert client.put("/api/workspace/demo.sql", content="SELECT 1;").status_code == 200
     assert client.get("/api/workspace/demo.sql").text == "SELECT 1;"

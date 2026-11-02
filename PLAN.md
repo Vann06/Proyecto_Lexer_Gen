@@ -11,9 +11,9 @@ existente**. Cada fase cierra una o más entregas del curso.
 | C | 3 | Análisis semántico (`SEMxxx`) | ✅ |
 | D1 | 4 | CREATE/DROP TABLE, INSERT, SELECT simple | ✅ |
 | D2 | 5 | Evaluador de expresiones, WHERE, ORDER BY, UPDATE, DELETE | ✅ |
-| D3 | 6 | INNER JOIN, agregados, GROUP BY, HAVING | pendiente |
-| D4 | 7 | Índices y subconsultas | índices ✅; subconsultas pendientes |
-| E | 8 | API de ejecución, IDE (EJECUTAR, RESULTADOS, CATÁLOGO), ejemplos y documentación | pendiente |
+| D3 | 6 | INNER JOIN, agregados, GROUP BY, HAVING | ✅ |
+| D4 | 7 | Índices y subconsultas | ✅ |
+| E | 8 | API de ejecución, IDE (EJECUTAR, RESULTADOS, CATÁLOGO), ejemplos y documentación | ✅ |
 
 B va antes que C porque la semántica valida contra el catálogo. D va de lo
 fácil a lo difícil para tener algo funcionando cuanto antes. El reparto entre
@@ -161,7 +161,12 @@ Archivos, para que cada persona trabaje en los suyos sin pisarse:
 - `ORDER BY` con varias claves, ASC/DESC, por alias o por expresión; NULL al final.
 - **Hecho cuando**: `SELECT nombre FROM estudiantes WHERE edad >= 18;` (el ejemplo del enunciado) y UPDATE/DELETE revisando el `.csv`.
 
-### D3. INNER JOIN, agregados, GROUP BY y HAVING (entrega 6) — 🔴 pesada
+### D3. INNER JOIN, agregados, GROUP BY y HAVING (entrega 6) — ✅
+
+`dbms/join.py` (`rows`: bucles anidados, las tablas unidas comparten el
+ámbito local) y `dbms/aggregate.py` (`group`: un entorno por grupo con
+`aggregate_runner`). Se enchufan a los puntos de extensión que ya tenía
+`select.py`. Pruebas: `tests/test_join.py`, `tests/test_aggregate.py`.
 
 - INNER JOIN por bucles anidados; nombres calificados y alias (`e.id`, `i.estudiante_id`).
 - COUNT/SUM/AVG/MIN/MAX: `COUNT(*)` vs `COUNT(col)` (no cuenta NULL), `DISTINCT`, NULL ignorado en el resto.
@@ -169,7 +174,7 @@ Archivos, para que cada persona trabaje en los suyos sin pisarse:
 - HAVING y ORDER BY pueden usar agregados (`HAVING COUNT(*) > 1`, `ORDER BY SUM(nota) DESC`).
 - **Hecho cuando**: consultas de estudiantes × inscripciones × cursos con conteos y promedios por curso.
 
-### D4. Índices y subconsultas (entrega 7) — 🔴 pesada
+### D4. Índices y subconsultas (entrega 7) — ✅
 
 **Índices**
 Implementados y probados por Persona 2. Formato preciso, acceso directo al CSV,
@@ -178,8 +183,15 @@ contratos de extensiones y límites: [docs/motor.md](docs/motor.md).
 - `CREATE INDEX` construye `<idx>.idx` (`valor|rowid,rowid,…` ordenado); `DROP INDEX` lo borra.
 - En WHERE, una conjunción `col = literal` o un rango (`<`, `<=`, `>`, `>=`) sobre una columna indexada se resuelve con búsqueda binaria en el índice y solo se leen esas filas. `Result.plan` dice `"índice idx_edad"` o `"recorrido completo"` para poder demostrarlo.
 - INSERT, UPDATE y DELETE mantienen todos los índices de la tabla.
+- **JOIN con índice** (extra): si ON tiene `unida.col = <tablas anteriores>` y `col` tiene un índice de una columna (también los implícitos de PK/UNIQUE), cada fila de la izquierda busca en el índice y solo se leen esas filas de la tabla unida. El plan lo muestra: `recorrido completo; JOIN c: índice pk_cursos`. Pruebas: `tests/test_join_index.py`.
 
 **Subconsultas**
+`dbms/subquery.py`: el `subquery_runner` que `executor.execute` instala en
+cada sentencia. Ejecuta el SELECT interno con el entorno de la fila externa
+(así funciona la correlación) y cachea las no correlacionadas dentro de la
+sentencia. La lógica de IN/EXISTS/escalar ya estaba en `eval.py`.
+Pruebas: `tests/test_subquery.py`.
+
 - IN / NOT IN (cuidado: `x NOT IN (…)` con un NULL en la subconsulta nunca es verdadero).
 - EXISTS / NOT EXISTS correlacionados: se reevalúan por cada fila externa; las no correlacionadas se calculan una vez.
 - Escalar: NULL si no devuelve filas; `EXE003` si devuelve más de una.
@@ -187,12 +199,13 @@ contratos de extensiones y límites: [docs/motor.md](docs/motor.md).
 
 - **Toda la fase D**: tests de punta a punta por sentencia sobre una base en `tmp_path`, comparando filas y archivos resultantes.
 
-## E. Integración — API e IDE ✅ (faltan ejemplos y docs)
+## E. Integración — ✅
 
 - API: `POST /api/sql/run {script, database}` → por sentencia: problemas, resultado, plan; `GET /api/catalog`.
 - IDE: botón **▶ EJECUTAR** (además de ANALIZAR), pestañas **RESULTADOS** (tabla por sentencia) y **CATÁLOGO** (tablas, columnas, tipos, índices); errores SEM/EXE en PROBLEMAS.
-- `workspace/`: scripts de demostración por entrega (estudiantes, cursos, inscripciones).
-- README y guía de uso actualizados.
+- `workspace/`: un script de demostración por entrega (`entrega1_…` a `entrega8_…`), repetibles (cada uno crea su base); `tests/test_workspace.py` los verifica.
+- `tests/test_rubrica.py`: un test por requisito del enunciado (R01–R30), con un caso extremo de punta a punta.
+- README, [guía de uso](docs/guia_uso.md) y README del IDE reescritos; el CI corre en `SQL` y `SQL-*`; Docker guarda las bases en `./data`.
 
 ---
 
@@ -209,8 +222,9 @@ Dos grupos, según lo que hace hoy la semántica:
 ## Reparto del trabajo
 
 Tres personas, cada una con una parte inicial que no depende de las demás y
-una segunda parte que arranca cuando la base de otra ya está lista. Cambiar
-"Persona 1/2/3" por los nombres.
+una segunda parte que arranca cuando la base de otra ya está lista.
+Persona 1: Ricardo Godínez · Persona 2: Vianka Castro · Persona 3: Javier Benitez.
+D3 (JOIN y agregados) terminó haciéndose en la rama `SQL` junto con las subconsultas.
 
 | | Primera parte | Segunda parte | Archivos que le pertenecen |
 |---|---|---|---|
@@ -242,7 +256,7 @@ Son las piezas que una persona produce y otra consume. Si se fijan primero, cada
 | 1 | C: resolución de tablas/columnas, ambigüedad, tipos, INSERT (`SEM001`–`SEM009`) | D1: `Result`, CREATE/DROP, INSERT con PK/UNIQUE/NOT NULL, SELECT simple | E: `/api/sql/run` (parse → semántica → ejecución), `/api/catalog`, botón EJECUTAR, pestañas RESULTADOS y CATÁLOGO |
 | 2 | C: índices, subconsultas (`SEM012`), agregados (`SEM013`), funciones (`SEM014`) | D2: evaluador con NULL, WHERE, ORDER BY, UPDATE, DELETE | D3: INNER JOIN (cuando el evaluador básico de D2 ya esté en `SQL`) |
 | 3 | D4: IN / EXISTS / escalar, correlación | D4: `.idx`, uso en WHERE, mantenimiento, `plan` | D3: agregados, GROUP BY, HAVING |
-| 4 | Todas: scripts de demostración por entrega (lidera Persona 3), README, corrección de errores y, si sobra tiempo, lo de "Fuera de alcance" | | |
+| 4 | ✅ Scripts por entrega, rúbrica, README y guía de uso, CI y Docker corregidos. Queda opcional: lo de "Fuera de alcance" | | |
 
 Dependencias a vigilar:
 - **D3 necesita el evaluador de D2.** Persona 2 debe integrar pronto una primera versión de `eval.py` (columnas, literales, comparaciones, AND/OR), aunque falten detalles.
@@ -251,7 +265,11 @@ Dependencias a vigilar:
 
 ### Forma de trabajo con git
 
-- Una rama por persona desde `SQL`: `sql/semantica`, `sql/motor`, `sql/integracion`.
+- Una rama por persona desde `SQL`: `SQL-semantica`, `SQL-motor`, `SQL-integracion`.
+  **Nunca usar el prefijo `sql/`** mientras exista la rama `SQL`: en Windows y
+  macOS el sistema de archivos no distingue mayúsculas, y `git pull` falla con
+  "some local refs could not be updated" porque no puede crear la carpeta
+  `sql/` al lado del archivo `SQL`.
 - PRs pequeños hacia `SQL`, uno por sub-fase o parte de ella, con sus tests. `python -m pytest` debe pasar antes de integrar.
 - Cada quien edita sus archivos. Para tocar un archivo de otra persona (por ejemplo, agregar un caso al despacho de `executor.py`), se avisa o se hace en su PR.
 - `PLAN.md` y la tabla de estado del README se actualizan al terminar cada sub-fase.

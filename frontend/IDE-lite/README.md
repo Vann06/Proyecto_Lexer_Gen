@@ -1,50 +1,44 @@
-# IDE-lite — panel semántico
+# IDE-lite
 
-El IDE web del proyecto: editor con resaltado, sidebar de archivos y un solo
-botón **▶ ANALIZAR** que corre el pipeline completo (`POST /api/pipeline`)
-sobre TODO el archivo de prueba. Es lo que levanta `docker-compose.yml` en
-`:4000`.
+El IDE web del intérprete SQL: editor con resaltado, panel de archivos y las
+vistas de cada etapa del compilador. Para usarlo, ver la
+[guía de uso](../../docs/guia_uso.md#3-recorrido-por-el-ide).
 
-Modos de parser: **LALR(1)** y **SLR(1)**. No hay LL(1): en ese modo el
-backend no corre el análisis semántico (la transformación de la gramática
-renombra producciones, ver `api::pipeline`), así que las vistas quedarían
-vacías.
+## Cómo está hecho
 
-El IDE anterior (stepper LR paso a paso, DFA, FIRST/FOLLOW, tablas
-ACTION/GOTO, generación de código) se eliminó; sigue en el historial de git
-(`frontend/IDE-full/`) si hiciera falta.
+React 18 sin paso de compilación: `index.html` carga React, Babel standalone y
+[viz.js](https://github.com/mdaines/viz-js) desde un CDN, y transpila en el
+navegador.
 
-## El slot `.g4`
-
-Un cuarto slot de archivo — **`.g4` de referencia** (p.ej. el
-`Compiscript.g4` de la raíz del repo) — que se carga y se ve en el editor con
-resaltado propio, pero nunca se manda al backend ni se persiste al workspace
-(`sanitize_filename` en `src/bin/api.rs` no lo acepta): sirve para comparar
-visualmente la gramática ANTLR original contra su traducción en `.yalp`
-mientras se prueba. Este generador no compila `.g4`.
-
-## Las cinco vistas
-
-Todas leen directo de la respuesta de `POST /api/pipeline` — nada se
-recalcula ni se reconstruye en el cliente:
-
-| Pestaña | Campo de `/api/pipeline` |
+| Archivo | Contenido |
 |---|---|
-| TOKENS | `token_map` |
-| ÁRBOL SINTÁCTICO | `parse_tree_dot` — sale auto-anotado con el tipo de cada expresión en cuanto hay análisis semántico (el "árbol de análisis anotado" del libro del dragón: mismo campo, el backend decide en `api/pipeline.rs` si lo dibuja plano o anotado según si corrió `analyze()`) |
-| SÍMBOLOS | `symbol_table` (estado final: Global + miembros de funciones/clases) **+** `scopes` (una foto de cada entorno Function/Class/Block al cerrarse — incluye los locales de un bloque anónimo que `symbol_table` no puede mostrar) |
-| TIPOS | `types` — el tipo inferido de cada nodo de expresión, en una tabla; el `id` de cada fila coincide con el nodo correspondiente en el árbol |
-| PROBLEMAS | `problems` completo: errores léxicos (`L`), sintácticos (`P`) y semánticos (`S`), advertencias (`W001` símbolo sin usar, `W002` código inalcanzable) y avisos del IDE (`E`), ordenados por línea. Clic en uno con posición: el editor salta a esa línea, que además queda marcada con una franja roja (error) o amarilla (advertencia) |
+| `index.html` | Estilos (tema retro) y carga de los scripts |
+| `data.jsx` | `window.IDE_DATA`: el estado compartido (archivos abiertos, última respuesta de la API) |
+| `app.jsx` | Componentes: editor, explorador, pestañas de resultados, barra de estado |
+| `Dockerfile` | nginx sirviendo los archivos estáticos (lo usa `docker-compose.yml`) |
 
-## Cómo levantarlo
+La URL de la API está en la constante `API` al inicio de `app.jsx`
+(`http://localhost:8080`).
+
+## De dónde sale cada pestaña
+
+Ninguna vista recalcula nada en el cliente: todas muestran campos de la API.
+
+| Pestaña | Endpoint | Campo |
+|---|---|---|
+| TOKENS | `POST /api/sql/parse` | `tokens` |
+| ÁRBOL SINTÁCTICO | `POST /api/sql/parse` | `parse_tree_dot` (DOT → SVG con viz.js) |
+| AST | `POST /api/sql/parse` | `ast_dot` |
+| PROBLEMAS | `/api/sql/parse` o `/api/sql/run` | `problems` (`LEX`, `SYN`, `SEM`, `EXE`, e `IDE001` si la API no responde) |
+| RESULTADOS | `POST /api/sql/run` | `statements[].result` y `statements[].problems` |
+| CATÁLOGO | `GET /api/catalog?database=…` | `tables`, `indexes` |
+
+El panel WORKSPACE usa `GET /api/workspace`, `GET`/`PUT /api/workspace/{nombre}`;
+la pestaña `SQL.g4` usa `GET /api/grammar`.
+
+## Levantarlo
 
 ```bash
-docker compose up --build     # IDE-lite en :4000, API en :8080
-```
-
-Sin Docker:
-
-```bash
-cargo run --bin api
-python3 -m http.server 5500 --directory frontend/IDE-lite
+docker compose up --build                                   # con la API, desde la raíz
+python -m http.server 4000 --directory frontend/IDE-lite    # solo el IDE (la API aparte)
 ```

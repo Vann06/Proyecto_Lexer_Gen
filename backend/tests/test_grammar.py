@@ -113,6 +113,17 @@ def test_mensajes_en_espanol_sin_ruido():
     assert parse("INSERT INTO t VALUES (1 2);").problems[0].msg.endswith("uno de: ')', ','")
 
 
+@pytest.mark.parametrize("sql, expected", [
+    ("SELECT a FROM t t2 t3;", "Entrada sobrante 't3'; se esperaba uno de: fin de archivo, ';'"),
+    ("SELECT a FROM WHERE b >= 1;", "se esperaba uno de: fin de archivo, ';'"),
+    ("SELECT a FROM t WHERE", "Entrada inesperada fin de archivo; se esperaba"),
+])
+def test_fin_de_archivo_no_se_parte_en_palabras(sql, expected):
+    msgs = [p.msg for p in parse(sql).problems]
+    assert any(expected in m for m in msgs), msgs
+    assert not any("fin, de, archivo" in m for m in msgs), msgs
+
+
 def test_tokens_para_el_ide():
     toks = tokens_to_json(parse("SELECT a\nFROM t;"))
     assert toks[0] == {"kind": "SELECT", "lexeme": "SELECT", "line": 1, "col": 1}

@@ -2,8 +2,10 @@
 -- ▶ ANALIZAR muestra tokens, árbol sintáctico, AST y problemas
 -- (léxicos, sintácticos y semánticos). Este script no debe dar ninguno.
 
-CREATE DATABASE IF NOT EXISTS universidad;
-USE universidad;
+-- Base propia y limpia: el script se puede ejecutar las veces que se quiera.
+DROP DATABASE IF EXISTS demo;
+CREATE DATABASE demo;
+USE demo;
 
 -- ── Tablas: los cinco tipos y las restricciones ───────────────────────
 CREATE TABLE estudiantes (
@@ -39,9 +41,12 @@ CREATE INDEX idx_edad ON estudiantes (edad);
 INSERT INTO estudiantes VALUES
     (1, 'Ana',      'A001', 20, 88.5, TRUE,  '2023-01-15'),
     (2, 'Luis',     'A002', 17, 75.0, TRUE,  '2024-01-10'),
-    (3, 'O''Brien', NULL,   22, NULL, FALSE, '2022-07-01');
+    (3, 'O''Brien', NULL,   22, NULL, FALSE, '2022-07-01'),
+    (4, 'Sofía',    'A004', 19, 92.0, TRUE,  '2024-08-01');   -- sin inscripciones
 
-INSERT INTO cursos (id, nombre, creditos) VALUES (1, 'Compiladores', 5), (2, 'Bases de datos', 4), (3, 'Redes', 3);
+INSERT INTO cursos (id, nombre, creditos) VALUES
+    (1, 'Compiladores', 5), (2, 'Bases de datos', 4), (3, 'Redes', 3),
+    (4, 'Estadística', 2);                                    -- sin inscritos
 
 INSERT INTO inscripciones VALUES (1, 1, 91, TRUE), (1, 3, 55.5, FALSE), (2, 3, 80, TRUE), (3, 2, 60, TRUE);
 

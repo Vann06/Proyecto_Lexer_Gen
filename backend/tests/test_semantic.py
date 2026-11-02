@@ -224,10 +224,10 @@ def test_demo_no_tiene_problemas():
 
 
 def test_errores_semanticos_sql_da_el_codigo_de_cada_linea():
-    """Cada línea marcada `-- SEMxxx` en workspace/errores_semanticos.sql
+    """Cada línea marcada `-- SEMxxx` en workspace/entrega3_errores_semanticos.sql
     produce exactamente ese código, en esa línea."""
     import re
-    text = _workspace("errores_semanticos.sql")
+    text = _workspace("entrega3_errores_semanticos.sql")
     expected = [(i, m.group(1)) for i, line in enumerate(text.splitlines(), start=1)
                 if (m := re.search(r"-- (SEM\d{3})", line))]
     assert [(p.line, p.code) for p in problems(text, Catalog())] == expected
