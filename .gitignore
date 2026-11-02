@@ -20,6 +20,17 @@
 # PIPELINE_GUIDE.md, GUIA_USO.md y API_REFERENCE.md, que sí están versionados.
 /CLAUDE.md
 
+# Python: cachés y entornos que genera ejecutar el código o las pruebas
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+*.egg-info/
+.venv/
+venv/
+
 # OS / Editor
 .DS_Store
 Thumbs.db
