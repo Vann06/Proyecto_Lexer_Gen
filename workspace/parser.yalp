@@ -1,0 +1,12 @@
+%token ID NUM PLUS STAR
+%start E
+%%
+E : E PLUS T
+  | T
+  ;
+T : T STAR F
+  | F
+  ;
+F : ID
+  | NUM
+  ;

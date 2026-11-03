@@ -1,0 +1,9 @@
+let digit = ['0'-'9']
+let letter = ['a'-'z' 'A'-'Z']
+let id = letter (letter|digit)*
+rule tokens =
+  | id         { return ID }
+  | digit+     { return NUM }
+  | '+'        { return PLUS }
+  | '*'        { return STAR }
+  | ' '        { skip }
