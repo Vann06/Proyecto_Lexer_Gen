@@ -168,23 +168,14 @@ fn lista_con_indice_constante_y_variable() {
     assert!(asm.contains("($t8)"), "{asm}");
 }
 
-/// Solo las instrucciones de B dan `M900`.
+/// Al completar las Fases 2 y 3 ya no queda ninguna instrucción sin traducir.
 #[test]
-fn m900_solo_en_instrucciones_de_b() {
+fn no_queda_ningun_m900_despues_de_fase3() {
     for archivo in ["workspace/rubrica.cps", "workspace/tac/ok/control_flow.cps"] {
         let (mips, errores) = generate_partial(&common::generar(&common::read(archivo)), Allocator::Pila);
-        assert!(errores.iter().all(|e| e.code == "M900"), "{archivo}: {errores:?}");
-        for e in &errores {
-            let tac = e.message.split('`').nth(1).expect("la instrucción va entre comillas");
-            let de_b = ["param ", "link ", "call ", "callv ", "return", "print_", "check_", "try_begin", "try_end"]
-                .iter()
-                .any(|p| tac.starts_with(p))
-                || [" = call ", " = callv ", " = alloc ", " concat ", " streq ", " strne ", " = exception"].iter().any(|p| tac.contains(p));
-            assert!(de_b, "{archivo}: `{tac}` es de A y quedó sin traducir");
-        }
-        // Cada M900 deja su comentario en el .asm, que sigue ensamblando.
+        assert!(errores.is_empty(), "{archivo}: {errores:?}");
         let asm = mips.to_string();
-        assert_eq!(asm.matches("# M900").count(), errores.len());
+        assert!(!asm.contains("# M900"), "{archivo}: {asm}");
     }
 }
 
@@ -207,8 +198,8 @@ fn con_impresion(program: &TacProgram, asm: &str, nombres: &[&str]) -> String {
         impresion += &format!("    lw $a0, G+{offset}\n    li $v0, 1\n    syscall\n    li $a0, 10\n    li $v0, 11\n    syscall\n");
     }
     let salida = "    li $v0, 10\n    syscall\n";
-    assert!(asm.ends_with(salida), "{asm}");
-    format!("{}{impresion}{salida}", &asm[..asm.len() - salida.len()])
+    let pos = asm.find(salida).unwrap_or_else(|| panic!("main no tiene exit:\n{asm}"));
+    format!("{}{impresion}{}", &asm[..pos], &asm[pos..])
 }
 
 #[test]

@@ -20,6 +20,7 @@ pub mod data;
 pub mod instr;
 pub mod names;
 pub mod regs;
+pub mod runtime;
 
 use std::fmt;
 use std::rc::Rc;
@@ -90,7 +91,7 @@ pub fn generate_with(program: &TacProgram, allocator: Allocator) -> Result<MipsP
 /// inspeccionar y probar mientras falten traducciones; no es para entregar.
 pub fn generate_partial(program: &TacProgram, allocator: Allocator) -> (MipsProgram, Vec<CodegenError>) {
     let strings = Rc::new(StringTable::from_program(program));
-    let mut mips = MipsProgram { data: data::data_section(program, &strings, Vec::new()), ..Default::default() };
+    let mut mips = MipsProgram { data: data::data_section(program, &strings, runtime::data_section()), ..Default::default() };
     let mut errors = Vec::new();
     for f in program.main.iter().chain(&program.functions) {
         // ponytail: GetReg cae a Pila hasta la Fase 4 (liveness.rs + GetRegAlloc).
@@ -102,6 +103,7 @@ pub fn generate_partial(program: &TacProgram, allocator: Allocator) -> (MipsProg
         mips.text.extend(fe.out);
         mips.stats.push(FunctionStats { funcion: names::label_of(f), ..stats });
     }
+    mips.text.extend(runtime::text_section(program));
     (mips, errors)
 }
 
@@ -150,7 +152,7 @@ fn emit_function(fe: &mut FunctionEmitter, f: &TacFunction, errors: &mut Vec<Cod
 /// Único punto donde se enchufan los traductores: B agrega aquí `calls` y
 /// `runtime` (`instr::translate(..) || calls::translate(..) || …`).
 fn traducir(fe: &mut FunctionEmitter, instr: &Instr, return_label: &str) -> bool {
-    instr::translate(fe, instr) || calls::translate(fe, instr, return_label)
+    instr::translate(fe, instr) || calls::translate(fe, instr, return_label) || runtime::translate(fe, instr)
 }
 
 /// `float` no existe en la gramática (`PLAN_MIPS.md` §4.8): cualquier
