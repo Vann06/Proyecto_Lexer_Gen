@@ -15,6 +15,7 @@
 //! acumulan: si hay alguno, no se devuelve `.asm`.
 
 pub mod asm;
+pub mod calls;
 pub mod data;
 pub mod instr;
 pub mod names;
@@ -105,43 +106,51 @@ pub fn generate_partial(program: &TacProgram, allocator: Allocator) -> (MipsProg
 }
 
 fn emit_function(fe: &mut FunctionEmitter, f: &TacFunction, errors: &mut Vec<CodegenError>) -> FunctionStats {
-    fe.label(&names::label_of(f));
-    // Prólogo PROVISIONAL, solo para que ensamble: B lo reemplaza en calls.rs
-    // (PLAN_MIPS.md §4.4). Las funciones aún no reservan marco ni guardan $ra.
-    if f.level == 0 {
-        fe.emit("move", &[&Reg::Fp, &Reg::Sp]);
-        if f.total_frame_size() > 0 {
-            fe.emit("addiu", &[&Reg::Sp, &Reg::Sp, &-(f.total_frame_size() as i64)]);
-        }
-    }
     fe.alloc.begin_function(f);
-    for (i, instr) in f.body.iter().enumerate() {
+    let mut i = 0;
+    while i < f.body.len() {
+        // Una llamada consume su grupo completo. Así los parámetros se
+        // escriben después de reservar el marco del llamado y `before_call`
+        // ocurre exactamente una vez, en el índice de la llamada.
+        if matches!(f.body[i], Instr::Param(_) | Instr::Link(_) | Instr::Call { .. } | Instr::CallV { .. }) {
+            let end = (i..f.body.len()).find(|&j| matches!(f.body[j], Instr::Call { .. } | Instr::CallV { .. }));
+            if let Some(end) = end {
+                let simple = f.body[i..end].iter().all(|x| matches!(x, Instr::Param(_) | Instr::Link(_)));
+                let translated = if simple {
+                    calls::translate_call_group(fe, &f.body[i..=end], end)
+                } else {
+                    calls::translate_virtual_group(fe, &f.body[i..=end], i)
+                };
+                if translated {
+                    i = end + 1;
+                    continue;
+                }
+            }
+        }
+
+        let instr = &f.body[i];
         fe.alloc.begin_instr(i);
         if !matches!(instr, Instr::Label(_)) {
             fe.comment(instr.to_string());
         }
         if usa_float(instr) {
             errors.push(CodegenError::new("M001", format!("operación de punto flotante no soportada en MIPS: `{instr}` (en `{}`)", f.name), 0, 0));
-        } else if !traducir(fe, instr) {
+        } else if !traducir(fe, instr, &names::ret_label(f)) {
             fe.comment(format!("M900: sin traducir"));
             errors.push(CodegenError::new("M900", format!("instrucción TAC sin traducir a MIPS: `{instr}` (en `{}`)", f.name), 0, 0));
         }
         fe.alloc.end_instr(&mut fe.out);
+        i += 1;
     }
-    // Epílogo PROVISIONAL (ver arriba).
-    if f.level == 0 {
-        fe.emit("li", &[&Reg::V0, &10]);
-        fe.emit("syscall", &[]);
-    } else {
-        fe.emit("jr", &[&Reg::Ra]);
-    }
-    fe.alloc.stats()
+    let stats = fe.alloc.stats();
+    calls::wrap_function(fe, f);
+    stats
 }
 
 /// Único punto donde se enchufan los traductores: B agrega aquí `calls` y
 /// `runtime` (`instr::translate(..) || calls::translate(..) || …`).
-fn traducir(fe: &mut FunctionEmitter, instr: &Instr) -> bool {
-    instr::translate(fe, instr)
+fn traducir(fe: &mut FunctionEmitter, instr: &Instr, return_label: &str) -> bool {
+    instr::translate(fe, instr) || calls::translate(fe, instr, return_label)
 }
 
 /// `float` no existe en la gramática (`PLAN_MIPS.md` §4.8): cualquier

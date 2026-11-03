@@ -149,7 +149,8 @@ fn acceso_a_local_parametro_y_campo() {
          class P { let x: integer; function inc() { this.x = this.x + 1; } }\n",
     );
     // Parámetro `a` (fp+16) y local `l` (fp-12).
-    assert!(asm.contains("_f:\n    # l = a + 1\n    lw $t0, 16($fp)\n    addiu $t1, $t0, 1\n    sw $t1, -12($fp)\n    jr $ra"), "{asm}");
+    assert!(asm.contains("_f:\n    move $fp, $sp\n    sw $ra, -4($fp)\n    addiu $sp, $sp, -12\n    # l = a + 1\n    lw $t0, 16($fp)\n    addiu $t1, $t0, 1\n    sw $t1, -12($fp)"), "{asm}");
+    assert!(asm.contains("_f.0ret:\n    lw $ra, -4($fp)\n    move $sp, $fp\n    lw $fp, 0($fp)\n    jr $ra"), "{asm}");
     // Campo `x` (4) de un objeto cuya dirección vive en el temporal t0: la
     // base se carga en $t9 desde la ranura de t0 (fp-16, marco 16).
     assert!(asm.contains("    # t0 = t0[4] + 1\n    lw $t9, -16($fp)\n    lw $t0, 4($t9)\n    addiu $t1, $t0, 1\n    sw $t1, -16($fp)"), "{asm}");
