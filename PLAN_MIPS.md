@@ -645,7 +645,7 @@ está mal, se arregla ahí y se avisa.
 | Fase | Estado |
 |---|---|
 | 0 — Cimientos y asignación por pila (A) | Hecha (sin MARS local) |
-| 1 — Traducción de instrucciones (A) | Pendiente |
+| 1 — Traducción de instrucciones (A) | Hecha (sin MARS local) |
 | 2 — Secuencias de llamada y retorno (B) | Pendiente |
 | 3 — Rutinas de apoyo y `try` (B) | Pendiente |
 | 4 — `getReg()` (A) | Pendiente |
