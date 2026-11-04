@@ -18,6 +18,7 @@ pub mod asm;
 pub mod calls;
 pub mod data;
 pub mod instr;
+pub mod liveness;
 pub mod names;
 pub mod regs;
 pub mod runtime;
@@ -30,7 +31,7 @@ use crate::intermedio::tac::{BinOp, Instr, Operand, PrintKind, TacFunction, TacP
 
 use asm::{AsmLine, FunctionStats, MipsProgram, Reg};
 use names::StringTable;
-use regs::{RegAlloc, StackAlloc};
+use regs::{GetRegAlloc, RegAlloc, StackAlloc};
 
 /// Qué asignación de registros usar (para compararlas, `PLAN_MIPS.md` §6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +75,7 @@ impl FunctionEmitter {
     }
 }
 
-/// El `.asm` del programa. Usa `Allocator::GetReg` (hoy igual a `Pila`).
+/// El `.asm` del programa. Usa `Allocator::GetReg` por defecto.
 pub fn generate(program: &TacProgram) -> Result<MipsProgram, Vec<CodegenError>> {
     generate_with(program, Allocator::GetReg)
 }
@@ -94,9 +95,9 @@ pub fn generate_partial(program: &TacProgram, allocator: Allocator) -> (MipsProg
     let mut mips = MipsProgram { data: data::data_section(program, &strings, runtime::data_section()), ..Default::default() };
     let mut errors = Vec::new();
     for f in program.main.iter().chain(&program.functions) {
-        // ponytail: GetReg cae a Pila hasta la Fase 4 (liveness.rs + GetRegAlloc).
         let alloc: Box<dyn RegAlloc> = match allocator {
-            Allocator::Pila | Allocator::GetReg => Box::new(StackAlloc::new(strings.clone())),
+            Allocator::Pila => Box::new(StackAlloc::new(strings.clone())),
+            Allocator::GetReg => Box::new(GetRegAlloc::new(strings.clone())),
         };
         let mut fe = FunctionEmitter { out: Vec::new(), alloc, strings: strings.clone() };
         let stats = emit_function(&mut fe, f, &mut errors);

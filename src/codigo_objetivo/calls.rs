@@ -21,8 +21,8 @@ pub fn translate(fe: &mut FunctionEmitter, instr: &Instr, return_label: &str) ->
         let reg = fe.use_op(value);
         fe.emit("sw", &[&reg, &format!("4({})", Reg::Fp)]);
     }
-    fe.emit("j", &[&return_label]);
     fe.alloc.block_boundary(&mut fe.out);
+    fe.emit("j", &[&return_label]);
     true
 }
 
@@ -87,6 +87,7 @@ pub fn translate_call_group(fe: &mut FunctionEmitter, group: &[Instr], call_inde
         }
         _ => unreachable!(),
     }
+    fe.alloc.after_call();
 
     if let Some(dst) = dst {
         let reg = fe.def_op(dst);
@@ -94,7 +95,6 @@ pub fn translate_call_group(fe: &mut FunctionEmitter, group: &[Instr], call_inde
         fe.finish_def(dst, reg);
     }
     fe.emit("addiu", &[&Reg::Sp, &Reg::Sp, &(call_frame as i64)]);
-    fe.alloc.after_call();
     fe.alloc.end_instr(&mut fe.out);
     true
 }
@@ -159,13 +159,13 @@ pub fn translate_virtual_group(
     fe.comment(call.to_string());
     let target_reg = fe.use_op(target);
     fe.emit("jalr", &[&target_reg]);
+    fe.alloc.after_call();
     if let Some(dst) = dst {
         let reg = fe.def_op(dst);
         fe.emit("lw", &[&reg, &format!("4({})", Reg::Sp)]);
         fe.finish_def(dst, reg);
     }
     fe.emit("addiu", &[&Reg::Sp, &Reg::Sp, &(call_frame as i64)]);
-    fe.alloc.after_call();
     fe.alloc.end_instr(&mut fe.out);
     true
 }

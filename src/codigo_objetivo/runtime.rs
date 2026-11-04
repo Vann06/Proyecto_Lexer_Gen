@@ -138,11 +138,11 @@ pub fn translate(fe: &mut FunctionEmitter, instr: &Instr) -> bool {
             fe.emit("move", &[&Reg::A(0), &left]);
             fe.emit("move", &[&Reg::A(1), &right]);
             fe.emit("jal", &[&"rt_streq"]);
+            fe.alloc.block_boundary(&mut fe.out);
             fe.emit(
                 if *op == BinOp::StrEq { "bnez" } else { "beqz" },
                 &[&Reg::V0, label],
             );
-            fe.alloc.block_boundary(&mut fe.out);
         }
         Instr::CheckBounds { array, index } => {
             let array = fe.use_op(array);

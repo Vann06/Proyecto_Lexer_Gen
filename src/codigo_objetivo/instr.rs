@@ -36,17 +36,17 @@ pub fn translate(fe: &mut FunctionEmitter, instr: &Instr) -> bool {
             fe.finish_def(dst, d);
         }
         Instr::Label(l) => {
-            fe.label(l);
             fe.alloc.block_boundary(&mut fe.out);
+            fe.label(l);
         }
         Instr::Goto(l) => {
-            fe.emit("j", &[l]);
             fe.alloc.block_boundary(&mut fe.out);
+            fe.emit("j", &[l]);
         }
         Instr::IfTrue { cond, label } | Instr::IfFalse { cond, label } => {
             let c = fe.use_op(cond);
-            fe.emit(if matches!(instr, Instr::IfTrue { .. }) { "bnez" } else { "beqz" }, &[&c, label]);
             fe.alloc.block_boundary(&mut fe.out);
+            fe.emit(if matches!(instr, Instr::IfTrue { .. }) { "bnez" } else { "beqz" }, &[&c, label]);
         }
         Instr::IfRel { left, op, right, label } => {
             let branch = match op {
@@ -60,8 +60,8 @@ pub fn translate(fe: &mut FunctionEmitter, instr: &Instr) -> bool {
             };
             let a = fe.use_op(left);
             let b = fe.use_op(right);
-            fe.emit(branch, &[&a, &b, label]);
             fe.alloc.block_boundary(&mut fe.out);
+            fe.emit(branch, &[&a, &b, label]);
         }
         Instr::Load { dst, base, index } => {
             let b = fe.use_op(base);
