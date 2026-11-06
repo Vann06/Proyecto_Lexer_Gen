@@ -281,13 +281,13 @@ impl RuntimeError {
     /// el detalle para depurar.
     ///
     /// `check_zero` va antes de `/` y de `%`, así que un divisor cero en
-    /// cualquiera de las dos da "división por cero".
+    /// cualquiera de las dos da "division por cero".
     pub fn program_message(&self) -> &'static str {
         match self {
-            RuntimeError::IndexOutOfBounds { .. } => "índice fuera de rango",
-            RuntimeError::DivisionByZero | RuntimeError::ZeroCheckFailed => "división por cero",
-            RuntimeError::ModuloByZero => "módulo por cero",
-            _ => "error en tiempo de ejecución",
+            RuntimeError::IndexOutOfBounds { .. } => "indice fuera de rango",
+            RuntimeError::DivisionByZero | RuntimeError::ZeroCheckFailed => "division por cero",
+            RuntimeError::ModuloByZero => "modulo por cero",
+            _ => "error en tiempo de ejecucion",
         }
     }
 
@@ -2777,7 +2777,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(result.output, "división por cero\n");
+        assert_eq!(result.output, "division por cero\n");
     }
 
     #[test]
@@ -2808,7 +2808,7 @@ mod tests {
 
         assert_eq!(
             result.output,
-            "índice fuera de rango\n"
+            "indice fuera de rango\n"
         );
     }
 
@@ -2846,7 +2846,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(result.output, "división por cero\nmódulo por cero\n");
+        assert_eq!(result.output, "division por cero\nmodulo por cero\n");
     }
 
     #[test]
@@ -2914,6 +2914,6 @@ mod tests {
             vec![failing],
         );
 
-        assert_eq!(Vm::new(&program).run().unwrap().output, "división por cero\n");
+        assert_eq!(Vm::new(&program).run().unwrap().output, "division por cero\n");
     }
 }

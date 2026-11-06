@@ -468,5 +468,5 @@ fn el_catch_recibe_un_mensaje_fijo() {
          try { print(10 / cero); } catch (e) { print(e); }\n\
          try { print(10 % cero); } catch (e) { print(e); }\n",
     );
-    assert_eq!(salida, "índice fuera de rango\ndivisión por cero\ndivisión por cero\n");
+    assert_eq!(salida, "indice fuera de rango\ndivision por cero\ndivision por cero\n");
 }
