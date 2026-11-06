@@ -7,31 +7,6 @@ mod common;
 use lexer_generator::codigo_objetivo::asm::AsmLine;
 use lexer_generator::codigo_objetivo::{generate_partial, generate_with, Allocator};
 use lexer_generator::intermedio::tac::{Operand, TacProgram};
-use std::path::Path;
-use std::process::Command;
-
-/// Corre `asm` en MARS. `None` (con aviso) si no hay `java` o `tools/Mars4_5.jar`,
-/// salvo que `MIPS_REQUIRED=1`: ahí es un fallo.
-fn correr_mars(asm: &str) -> Option<(String, i32)> {
-    let hay_java = Command::new("java").arg("-version").output().map(|o| o.status.success()).unwrap_or(false);
-    let jar = Path::new("tools/Mars4_5.jar");
-    if !hay_java || !jar.exists() {
-        assert!(std::env::var("MIPS_REQUIRED").as_deref() != Ok("1"), "MIPS_REQUIRED=1 pero no hay java o tools/Mars4_5.jar");
-        eprintln!("AVISO: se omite la prueba con MARS (no hay java o tools/Mars4_5.jar)");
-        return None;
-    }
-    let archivo = std::env::temp_dir().join(format!("mips_fase1_{}_{:?}.asm", std::process::id(), std::thread::current().id()));
-    std::fs::write(&archivo, asm).unwrap();
-    let o = Command::new("java")
-        .args(["-Dfile.encoding=ISO-8859-1", "-jar"])
-        .arg(jar)
-        .args(["nc", "sm", "se2", "ae3"])
-        .arg(&archivo)
-        .output()
-        .expect("java debe ejecutarse");
-    let _ = std::fs::remove_file(&archivo);
-    Some((String::from_utf8_lossy(&o.stdout).into_owned(), o.status.code().unwrap_or(-1)))
-}
 
 fn texto(lineas: &[AsmLine]) -> String {
     lineas.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n")
@@ -209,7 +184,7 @@ fn en_mars_la_suma_da_la_vuelta_de_32_bits() {
     let (mips, errores) = generate_partial(&program, Allocator::Pila);
     assert!(errores.is_empty(), "{errores:?}");
     let asm = con_impresion(&program, &mips.to_string(), &["n"]);
-    if let Some((salida, codigo)) = correr_mars(&asm) {
+    if let Some((salida, codigo)) = common::correr_mars(&asm) {
         assert_eq!((salida.as_str(), codigo), ("-2147483648\n", 0));
     }
 }
@@ -224,7 +199,7 @@ fn en_mars_la_division_y_el_modulo_truncan_como_el_interprete() {
     let (mips, _) = generate_partial(&program, Allocator::Pila);
     let asm = con_impresion(&program, &mips.to_string(), &["q1", "r1", "q2", "r2"]);
     let esperado = format!("{}\n{}\n{}\n{}\n", -7i32.wrapping_div(2), -7i32.wrapping_rem(2), 7i32.wrapping_div(-2), 7i32.wrapping_rem(-2));
-    if let Some((salida, codigo)) = correr_mars(&asm) {
+    if let Some((salida, codigo)) = common::correr_mars(&asm) {
         assert_eq!((salida, codigo), (esperado, 0));
     }
 }

@@ -22,6 +22,7 @@ pub mod liveness;
 pub mod names;
 pub mod regs;
 pub mod runtime;
+pub mod sim;
 
 use std::fmt;
 use std::rc::Rc;

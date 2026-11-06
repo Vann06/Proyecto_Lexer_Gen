@@ -2,6 +2,7 @@
 //! fuente de Compiscript con el pipeline real (léxico, LALR, semántico) y
 //! devuelven el programa generado.
 use lexer_generator::api;
+use lexer_generator::codigo_objetivo::sim;
 use lexer_generator::intermedio::gen::{generate, CodegenError};
 use lexer_generator::intermedio::spec::IntermediateSpec;
 use lexer_generator::intermedio::tac::TacProgram;
@@ -15,6 +16,7 @@ use lexer_generator::sintactico::runtime::parse_tree::ParseToken;
 use lexer_generator::sintactico::runtime::parser_lr::LRParser;
 use lexer_generator::sintactico::tablas::LRTable;
 use std::fs;
+use std::time::Duration;
 
 pub fn read(path: &str) -> String {
     fs::read_to_string(path).unwrap_or_else(|e| panic!("no se pudo leer {path}: {e}"))
@@ -66,4 +68,23 @@ pub fn generar(source: &str) -> TacProgram {
 /// final de cada línea.
 pub fn programa(source: &str) -> String {
     generar(source).to_string().lines().map(str::trim_end).collect::<Vec<_>>().join("\n")
+}
+
+/// Si se pueden correr las pruebas con MARS. Sin `java` o sin el `.jar` se omiten
+/// con un aviso, salvo que `MIPS_REQUIRED=1`: ahí es un fallo.
+pub fn hay_mars() -> bool {
+    let hay = sim::mars_available();
+    if !hay {
+        assert!(std::env::var("MIPS_REQUIRED").as_deref() != Ok("1"), "MIPS_REQUIRED=1 pero no hay java o tools/Mars4_5.jar");
+        eprintln!("AVISO: se omite la prueba con MARS (no hay java o tools/Mars4_5.jar)");
+    }
+    hay
+}
+
+/// Lo que imprime `asm` en MARS y su código de salida; `None` si se omite.
+pub fn correr_mars(asm: &str) -> Option<(String, i32)> {
+    hay_mars().then(|| {
+        let resultado = sim::run_mars(asm, Duration::from_secs(30)).unwrap_or_else(|e| panic!("{e}"));
+        (resultado.stdout, resultado.exit_code)
+    })
 }

@@ -12,6 +12,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Sin esto, las pruebas que ejecutan MIPS se omiten si falta Java o MARS.
+  # Aquí tienen que correr: una prueba omitida no comprueba nada.
+  MIPS_REQUIRED: "1"
 
 jobs:
   build-and-test:
@@ -27,6 +30,13 @@ jobs:
 
       - name: Cache de cargo
         uses: Swatinem/rust-cache@v2
+
+      # MARS (tools/Mars4_5.jar) es un programa de Java.
+      - name: Instalar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
       # --locked: Cargo.lock está trackeado a propósito (Dockerfile.api
       # depende de que exista para un build reproducible) — si alguien
