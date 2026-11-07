@@ -135,7 +135,9 @@ pub(crate) fn collect_lr_syntax_errors_with(
     table: &LRTable,
     grammar: &Grammar,
     token_map: &[(String, String, usize, usize)],
+    yal: &str,
 ) -> Vec<(String, String, usize, usize, String)> {
+    let spellings = token_spellings(yal);
     // Cualquier token declarado sirve como punto de sincronización: en cuanto se
     // descarta la entrada hasta encontrar UNO que el estado recuperado pueda
     // aceptar, se reintenta desde ahí — una heurística genérica razonable sin
@@ -152,9 +154,93 @@ pub(crate) fn collect_lr_syntax_errors_with(
                 .cloned()
                 .or_else(|| token_map.last().cloned())
                 .unwrap_or_else(|| (e.token.clone(), String::new(), 1, 1));
-            (kind, lexeme, line, col, e.msg)
+            // El último token solo aporta la posición: lo inesperado es que se acabó.
+            let lexeme = if e.token == "$" { String::new() } else { lexeme };
+            let msg = if e.expected.is_empty() {
+                e.msg
+            } else {
+                let found = if e.token == "$" { "el fin del archivo".to_string() } else { format!("'{lexeme}'") };
+                format!("Error sintáctico: no se esperaba {found}. Esperado: {}", describe_expected(&e.expected, &spellings))
+            };
+            (kind, lexeme, line, col, msg)
         })
         .collect()
+}
+
+/// Largo mínimo de una palabra para sugerir otra: con menos, casi todo queda cerca.
+const MIN_SUGGESTED_LEN: usize = 3;
+
+/// Cuántas opciones se listan antes de resumir el resto.
+const MAX_EXPECTED_SHOWN: usize = 6;
+
+/// Lo que cierra una construcción. Si cabe uno, es lo que hay que decir: tras una
+/// expresión completa también cabe cualquier operador, y eso no ayuda a nadie.
+const CLOSERS: &[&str] = &[";", ")", "]", "}"];
+
+/// Cómo se escribe cada token, leído de las reglas del `.yal` (`';' { "SEMI" }`,
+/// `kw_let { "LET" }`). Los que no tienen una sola escritura, como un identificador,
+/// no aparecen y se muestran con su nombre.
+fn token_spellings(yal: &str) -> HashMap<String, String> {
+    let lets: HashMap<&str, &str> = yal
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("let ")?.split_once('='))
+        .map(|(name, value)| (name.trim(), value.trim()))
+        .collect();
+
+    yal.lines()
+        .filter_map(|line| {
+            let (pattern, action) = line.trim().trim_start_matches('|').split_once('{')?;
+            let token = action.trim().trim_end_matches('}').trim().strip_prefix('"')?.strip_suffix('"')?;
+            let pattern = pattern.trim();
+            let spelling = literal_of(lets.get(pattern).copied().unwrap_or(pattern), &lets)?;
+            Some((token.to_string(), spelling))
+        })
+        .collect()
+}
+
+/// `'='  '='` da `==`, y `let` da `let`. Cualquier otra forma es un patrón.
+fn literal_of(value: &str, lets: &HashMap<&str, &str>) -> Option<String> {
+    if !value.is_empty() && value.chars().all(|c| c.is_ascii_alphabetic()) && !lets.contains_key(value) {
+        return Some(value.to_string());
+    }
+    let mut chars = value.chars();
+    let mut literal = String::new();
+    while let Some(quote) = chars.next() {
+        if quote != '\'' {
+            return None;
+        }
+        literal.push(chars.next()?);
+        if chars.next()? != '\'' {
+            return None;
+        }
+    }
+    (!literal.is_empty()).then_some(literal)
+}
+
+fn describe_expected(expected: &[String], spellings: &HashMap<String, String>) -> String {
+    let closers: Vec<String> = expected
+        .iter()
+        .filter_map(|token| spellings.get(token))
+        .filter(|spelling| CLOSERS.contains(&spelling.as_str()))
+        .map(|spelling| format!("'{spelling}'"))
+        .collect();
+    if !closers.is_empty() {
+        return closers.join(", ");
+    }
+
+    let names: Vec<String> = expected
+        .iter()
+        .map(|token| match (token.as_str(), spellings.get(token)) {
+            ("$", _) => "el fin del archivo".to_string(),
+            (_, Some(spelling)) => format!("'{spelling}'"),
+            (token, None) => token.to_string(),
+        })
+        .collect();
+    let shown = names[..names.len().min(MAX_EXPECTED_SHOWN)].join(", ");
+    match names.len().saturating_sub(MAX_EXPECTED_SHOWN) {
+        0 => shown,
+        rest => format!("{shown} y {rest} más"),
+    }
 }
 
 pub fn build_parse_response(
@@ -313,13 +399,14 @@ pub(crate) fn collect_lr_syntax_errors(
     yalp: &str,
     token_map: &[(String, String, usize, usize)],
     mode: &str,
+    yal: &str,
 ) -> Vec<(String, String, usize, usize, String)> {
     if mode != "lalr" && mode != "slr" {
         return Vec::new();
     }
     let Ok(grammar) = Grammar::parse_for_lr_from_str(yalp) else { return Vec::new(); };
     let table = build_lr_table(&grammar, mode);
-    collect_lr_syntax_errors_with(&table, &grammar, token_map)
+    collect_lr_syntax_errors_with(&table, &grammar, token_map, yal)
 }
 
 /// Enriquece un error de sintaxis con una sugerencia de token por distancia de
@@ -336,35 +423,30 @@ pub(crate) fn push_syntax_problem(
     tokens: &HashSet<String>,
     source_name: &str,
 ) {
-    let suggestion = suggest_similar_token(lexeme, tokens);
+    // Solo una palabra puede estar mal escrita, y un token bien escrito pero fuera
+    // de lugar se parece a sí mismo: eso no es una sugerencia.
+    let suggestion = suggest_similar_token(lexeme, tokens)
+        .filter(|similar| lexeme.chars().count() >= MIN_SUGGESTED_LEN && is_identifier_like(lexeme) && similar != kind);
     if let Some(s) = suggestion {
-        if is_identifier_like(lexeme) && s != kind {
-            lex_problems.push(json!({
-                "level": "err",
-                "code": "L001",
-                "msg": format!("Lexema posiblemente mal escrito: '{}' (¿quiso '{}'?)", lexeme, s),
-                "loc": format!("{}:{}:{}", source_name, line, col),
-                "line": line,
-                "col": col,
-                "token": kind,
-            }));
-        } else {
-            let msg = format!("{} · lexema \"{}\" (¿quiso \"{}\"?)", base_msg, lexeme, s);
-            lex_problems.push(json!({
-                "level": "err",
-                "code": "P001",
-                "msg": msg,
-                "loc": format!("{}:{}:{}", source_name, line, col),
-                "line": line,
-                "col": col,
-                "token": kind,
-            }));
-        }
+        lex_problems.push(json!({
+            "level": "err",
+            "code": "L001",
+            "msg": format!("Lexema posiblemente mal escrito: '{}' (¿quiso '{}'?)", lexeme, s),
+            "loc": format!("{}:{}:{}", source_name, line, col),
+            "line": line,
+            "col": col,
+            "token": kind,
+        }));
     } else {
         lex_problems.push(json!({
             "level": "err",
             "code": "P001",
-            "msg": format!("{} · lexema \"{}\"", base_msg, lexeme),
+            // El mensaje con los tokens esperados ya nombra lo que se encontró.
+            "msg": if base_msg.contains("no se esperaba") {
+                base_msg.to_string()
+            } else {
+                format!("{} · lexema \"{}\"", base_msg, lexeme)
+            },
             "loc": format!("{}:{}:{}", source_name, line, col),
             "line": line,
             "col": col,
@@ -480,11 +562,12 @@ impl ParseObserver for JsonTraceObserver {
     fn on_error(
         &mut self,
         _cause: ErrorCause,
-        state: usize,
+        stack: &[usize],
         _ip: usize,
         token: &ParseToken,
         table: &LRTable,
     ) -> OnError {
+        let state = *stack.last().expect("la pila nunca queda vacía");
         let expected_str = format_expected_tokens(&table.expected_tokens(state));
         self.push_entry(
             "error",

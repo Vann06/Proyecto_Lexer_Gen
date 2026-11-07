@@ -22,6 +22,8 @@ pub struct ParseErrorDetail {
     pub pos: usize,
     pub token: String,
     pub msg: String,
+    /// Los tokens que podían seguir. Vacío si el error no viene de la tabla.
+    pub expected: Vec<String>,
 }
 
 pub struct LRParser<'a> {
@@ -39,9 +41,9 @@ pub(crate) fn tokens_from_kinds(kinds: Vec<String>) -> Vec<ParseToken> {
 
 /// Traduce el corte del driver al `String` de error que devolvían `parse` y
 /// `parse_tree`.
-fn drive_error_msg(err: &DriveError, table: &LRTable) -> String {
+fn drive_error_msg(err: &DriveError) -> String {
     match err {
-        DriveError::Syntax { state, token, .. } => format_error(*state, &token.kind, table),
+        DriveError::Syntax { token, expected, .. } => format_error(expected, &token.kind),
         DriveError::MissingGoto { top, head, .. } => DriveError::missing_goto_msg(*top, head),
         DriveError::InputExhausted => DriveError::exhausted_msg(),
         DriveError::Unrecovered => "Error sintáctico irrecuperable.".to_string(),
@@ -128,20 +130,24 @@ impl<'t> ParseObserver for RecoveringObserver<'t> {
     fn on_error(
         &mut self,
         cause: ErrorCause,
-        state: usize,
+        stack: &[usize],
         ip: usize,
         token: &ParseToken,
         _table: &LRTable,
     ) -> OnError {
+        let expected = match cause {
+            ErrorCause::NoAction => self.table.viable_tokens(stack),
+            ErrorCause::LoopGuard => Vec::new(),
+        };
         let msg = match cause {
-            ErrorCause::NoAction => format_error(state, &token.kind, self.table),
+            ErrorCause::NoAction => format_error(&expected, &token.kind),
             ErrorCause::LoopGuard => format!(
                 "Error sintáctico irrecuperable en la posición actual \
                  (token '{}'); se descarta para evitar un bucle sin fin.",
                 token.kind
             ),
         };
-        self.errors.push(ParseErrorDetail { pos: ip, token: token.kind.clone(), msg });
+        self.errors.push(ParseErrorDetail { pos: ip, token: token.kind.clone(), msg, expected });
         OnError::Recover
     }
 }
@@ -157,7 +163,7 @@ impl<'a> LRParser<'a> {
         let mut obs = TraceObserver::default();
         match driver::drive(self.table, tokens_from_kinds(tokens), &[], &mut obs) {
             Ok(()) => Ok(obs.trace),
-            Err(e) => Err(drive_error_msg(&e, self.table)),
+            Err(e) => Err(drive_error_msg(&e)),
         }
     }
 
@@ -173,7 +179,7 @@ impl<'a> LRParser<'a> {
                 .nodes
                 .pop()
                 .ok_or_else(|| "Error interno: Accept con pila de nodos vacía.".to_string()),
-            Err(e) => Err(drive_error_msg(&e, self.table)),
+            Err(e) => Err(drive_error_msg(&e)),
         }
     }
 
@@ -203,6 +209,7 @@ impl<'a> LRParser<'a> {
                     pos: ip,
                     token: token.kind,
                     msg: DriveError::missing_goto_msg(top, &head),
+                    expected: Vec::new(),
                 });
                 (None, obs.errors)
             }
@@ -211,6 +218,7 @@ impl<'a> LRParser<'a> {
                     pos: usize::MAX,
                     token: String::new(),
                     msg: DriveError::exhausted_msg(),
+                    expected: Vec::new(),
                 });
                 (None, obs.errors)
             }
@@ -220,10 +228,9 @@ impl<'a> LRParser<'a> {
     }
 }
 
-fn format_error(state: usize, token: &str, table: &LRTable) -> String {
-    let expected_str = crate::sintactico::tablas::format_expected_tokens(&table.expected_tokens(state));
-    format!("Error sintáctico: estado I{}, token '{}'. Esperado: {}",
-            state, token, expected_str)
+fn format_error(expected: &[String], token: &str) -> String {
+    let expected = crate::sintactico::tablas::format_expected_tokens(expected);
+    format!("Error sintáctico: token '{token}' inesperado. Esperado: {expected}")
 }
 
 /// Imprime la traza del parseo en formato columnar.
