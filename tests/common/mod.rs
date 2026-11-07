@@ -88,3 +88,38 @@ pub fn correr_mars(asm: &str) -> Option<(String, i32)> {
         (resultado.stdout, resultado.exit_code)
     })
 }
+
+/// Un compilador que construye las tablas una sola vez, para probar muchos programas.
+pub fn compilador() -> impl Fn(&str) -> Result<TacProgram, String> {
+    use lexer_generator::lexico::runtime::simulator::{LexResult, Simulator};
+
+    let (_, _, lexer_table) = api::build_lexer_artifacts(&read("workspace/compiscript.yal")).expect("lexer válido");
+    let grammar = Grammar::parse_for_lr_from_str(&read("workspace/compiscript.yalp")).expect("gramática válida");
+    let first = calculate_first(&grammar);
+    let table = LRTable::build_from_lalr(&merge_by_core(LR1Automaton::build(&grammar, &first)), &grammar);
+    let sspec = SemanticSpec::from_grammar(&grammar).expect("compiscript.yalp trae %ident");
+    let ispec = IntermediateSpec::from_grammar(&grammar);
+
+    move |source| {
+        let mut sim = Simulator::new(&lexer_table, source);
+        let mut tokens = Vec::new();
+        loop {
+            match sim.next_token() {
+                LexResult::Token(t) => {
+                    let kind = t.kind.to_uppercase();
+                    if !grammar.ignores_kind(&kind) {
+                        tokens.push(ParseToken { kind, lexeme: t.lexeme, line: t.line, col: t.col });
+                    }
+                }
+                LexResult::Error { lexeme, line, col } => return Err(format!("léxico: '{lexeme}' en {line}:{col}")),
+                LexResult::EOF => break,
+            }
+        }
+        let tree = LRParser::new(&table).parse_tree(tokens).map_err(|e| format!("sintaxis: {e:?}"))?;
+        let analysis = analyze(&tree, &sspec);
+        if !analysis.errors.is_empty() {
+            return Err(format!("semántica: {:?}", analysis.errors));
+        }
+        generate(&tree, &analysis, &sspec, &ispec).map_err(|e| format!("TAC: {e:?}"))
+    }
+}

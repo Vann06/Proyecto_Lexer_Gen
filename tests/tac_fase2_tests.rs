@@ -10,6 +10,7 @@
 //! asignación a un subtipo (`let a: Animal = new Perro()`) la rechaza el
 //! análisis (S006), así que la sobrescritura se prueba por `this` dentro de
 //! la clase padre.
+#[allow(dead_code)]
 mod common;
 use common::*;
 use lexer_generator::intermedio::gen::extend_layout;

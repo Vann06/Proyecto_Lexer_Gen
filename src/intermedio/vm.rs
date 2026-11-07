@@ -1307,6 +1307,9 @@ fn comparable_equality(left: &Value, right: &Value) -> Option<bool> {
         (Value::FramePointer(a), Value::FramePointer(b)) => Some(a == b),
         (Value::Address(a), Value::Address(b)) => Some(a == b),
         (Value::Null, Value::Null) => Some(true),
+        // Como en MIPS, donde `null` es la dirección 0: nada reservado la tiene.
+        (Value::Null, Value::Pointer(_) | Value::Str(_))
+        | (Value::Pointer(_) | Value::Str(_), Value::Null) => Some(false),
         _ => None,
     }
 }
@@ -2956,5 +2959,15 @@ mod tests {
         let result = Vm::with_max_steps(&program, 10 * MAX_CALL_DEPTH).run();
 
         assert_eq!(result, Err(RuntimeError::CallDepthExceeded { limit: MAX_CALL_DEPTH }));
+    }
+
+    #[test]
+    fn null_es_distinto_de_un_objeto_y_de_un_texto() {
+        for valor in [Value::Pointer(0), Value::Str("hola".into())] {
+            for (izquierda, derecha) in [(valor.clone(), Value::Null), (Value::Null, valor)] {
+                assert_eq!(eval_binary(BinOp::Eq, izquierda.clone(), derecha.clone()), Ok(Value::Bool(false)));
+                assert_eq!(eval_binary(BinOp::Ne, izquierda, derecha), Ok(Value::Bool(true)));
+            }
+        }
     }
 }

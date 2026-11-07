@@ -5,22 +5,9 @@
 #[allow(dead_code)]
 mod common;
 
-use lexer_generator::api;
 use lexer_generator::codigo_objetivo::{generate, generate_with, Allocator};
-use lexer_generator::intermedio::gen::generate as generate_tac;
-use lexer_generator::intermedio::spec::IntermediateSpec;
 use lexer_generator::intermedio::tac::{BinOp, Instr, Operand, TacFunction, TacProgram};
 use lexer_generator::intermedio::vm::Vm;
-use lexer_generator::lexico::runtime::simulator::{LexResult, Simulator};
-use lexer_generator::semantico::analyzer::analyze;
-use lexer_generator::semantico::spec::SemanticSpec;
-use lexer_generator::sintactico::automatas::lalr::merge_by_core;
-use lexer_generator::sintactico::automatas::lr1::LR1Automaton;
-use lexer_generator::sintactico::gramatica::first::calculate_first;
-use lexer_generator::sintactico::gramatica::grammar::Grammar;
-use lexer_generator::sintactico::runtime::parse_tree::ParseToken;
-use lexer_generator::sintactico::runtime::parser_lr::LRParser;
-use lexer_generator::sintactico::tablas::LRTable;
 use std::collections::BTreeSet;
 use std::fs;
 
@@ -125,36 +112,7 @@ fn salida_del_interprete(program: &TacProgram) -> (String, i32) {
 
 #[test]
 fn los_programas_reales_generan_un_asm_bien_formado_con_los_dos_asignadores() {
-    let (_, _, lexer_table) =
-        api::build_lexer_artifacts(&fs::read_to_string("workspace/compiscript.yal").unwrap()).expect("lexer válido");
-    let grammar = Grammar::parse_for_lr_from_str(&fs::read_to_string("workspace/compiscript.yalp").unwrap()).expect("gramática válida");
-    let first = calculate_first(&grammar);
-    let table = LRTable::build_from_lalr(&merge_by_core(LR1Automaton::build(&grammar, &first)), &grammar);
-    let sspec = SemanticSpec::from_grammar(&grammar).expect("compiscript.yalp trae %ident");
-    let ispec = IntermediateSpec::from_grammar(&grammar);
-
-    let compilar = |source: &str| -> Result<TacProgram, String> {
-        let mut sim = Simulator::new(&lexer_table, source);
-        let mut tokens = Vec::new();
-        loop {
-            match sim.next_token() {
-                LexResult::Token(t) => {
-                    let kind = t.kind.to_uppercase();
-                    if !grammar.ignores_kind(&kind) {
-                        tokens.push(ParseToken { kind, lexeme: t.lexeme, line: t.line, col: t.col });
-                    }
-                }
-                LexResult::Error { lexeme, line, col } => return Err(format!("léxico: '{lexeme}' en {line}:{col}")),
-                LexResult::EOF => break,
-            }
-        }
-        let tree = LRParser::new(&table).parse_tree(tokens).map_err(|e| format!("sintaxis: {e:?}"))?;
-        let analysis = analyze(&tree, &sspec);
-        if !analysis.errors.is_empty() {
-            return Err(format!("semántica: {:?}", analysis.errors));
-        }
-        generate_tac(&tree, &analysis, &sspec, &ispec).map_err(|e| format!("TAC: {e:?}"))
-    };
+    let compilar = common::compilador();
 
     let mut fallos = Vec::new();
     for ruta in PROGRAMAS {
