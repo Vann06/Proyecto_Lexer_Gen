@@ -67,6 +67,8 @@ impl fmt::Display for Value {
 pub enum RuntimeError {
     /// La ejecución alcanzó el límite configurado de instrucciones.
     StepLimitExceeded { limit: usize },
+    /// Demasiadas llamadas anidadas a la vez.
+    CallDepthExceeded { limit: usize },
     /// Una instrucción todavía no forma parte del subconjunto ejecutable de
     /// la VM. Permite ampliar el intérprete de manera incremental.
     UnsupportedInstruction(String),
@@ -145,7 +147,10 @@ impl fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             RuntimeError::StepLimitExceeded { limit } => {
-                write!(f, "se excedió el límite de {limit} pasos de la VM")
+                write!(f, "se excedió el límite de {limit} pasos de la VM: posible ciclo infinito")
+            }
+            RuntimeError::CallDepthExceeded { limit } => {
+                write!(f, "se excedió el límite de {limit} llamadas anidadas: posible recursión infinita")
             }
             RuntimeError::UnsupportedInstruction(instruction) => {
                 write!(
@@ -328,6 +333,14 @@ pub struct VmResult {
 
 /// Límite predeterminado para detener programas que no terminan.
 pub const DEFAULT_MAX_STEPS: usize = 100_000;
+
+/// Llamadas anidadas que acepta la VM. Cada una es una llamada de Rust, y agotar
+/// esa pila no es un error que se pueda atrapar: mata todo el proceso.
+pub const MAX_CALL_DEPTH: usize = 20_000;
+
+/// Pila del hilo que ejecuta el programa, con margen para `MAX_CALL_DEPTH` también
+/// en debug. Solo se reserva: el sistema la entrega a medida que se usa.
+const VM_STACK_BYTES: usize = 256 * 1024 * 1024;
 
 /// Bloque reservado por `alloc`.
 ///
@@ -595,8 +608,19 @@ impl<'a> Vm<'a> {
         self.frames.last()?.slots.get(&offset)
     }
 
-    /// Ejecuta el cuerpo de `main` con un contador de programa local.
+    /// Ejecuta el programa en un hilo propio, con pila para `MAX_CALL_DEPTH`.
     pub fn run(&mut self) -> Result<VmResult, RuntimeError> {
+        std::thread::scope(|scope| {
+            let vm = std::thread::Builder::new()
+                .stack_size(VM_STACK_BYTES)
+                .spawn_scoped(scope, || self.run_main())
+                .expect("el sistema debe poder crear el hilo de la VM");
+            vm.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+        })
+    }
+
+    /// Ejecuta el cuerpo de `main` con un contador de programa local.
+    fn run_main(&mut self) -> Result<VmResult, RuntimeError> {
         self.globals.clear();
         self.frames.clear();
         self.heap.clear();
@@ -830,6 +854,9 @@ impl<'a> Vm<'a> {
                 nargs,
                 pending,
             });
+        }
+        if self.frames.len() >= MAX_CALL_DEPTH {
+            return Err(RuntimeError::CallDepthExceeded { limit: MAX_CALL_DEPTH });
         }
         let params = std::mem::take(&mut self.current_frame_mut().pending_params);
         let access_link = self.current_frame_mut().pending_link.take();
@@ -1394,7 +1421,7 @@ mod tests {
     #[test]
     fn runtime_error_tiene_un_mensaje_legible() {
         let error = RuntimeError::StepLimitExceeded { limit: 10 };
-        assert_eq!(error.to_string(), "se excedió el límite de 10 pasos de la VM");
+        assert_eq!(error.to_string(), "se excedió el límite de 10 pasos de la VM: posible ciclo infinito");
     }
 
     #[test]
@@ -2915,5 +2942,19 @@ mod tests {
         );
 
         assert_eq!(Vm::new(&program).run().unwrap().output, "division por cero\n");
+    }
+
+    #[test]
+    fn una_recursion_sin_fin_se_detiene_en_el_limite_sin_agotar_la_pila() {
+        let call = || Instr::Call { dst: None, func: "f".into(), nargs: 0 };
+        let mut main = TacFunction::new("main", 0, 0);
+        main.body = vec![call()];
+        let mut f = TacFunction::new("f", 1, 0);
+        f.body = vec![call()];
+        let program = TacProgram { main: Some(main), functions: vec![f], ..Default::default() };
+
+        let result = Vm::with_max_steps(&program, 10 * MAX_CALL_DEPTH).run();
+
+        assert_eq!(result, Err(RuntimeError::CallDepthExceeded { limit: MAX_CALL_DEPTH }));
     }
 }
