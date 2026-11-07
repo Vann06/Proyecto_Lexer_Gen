@@ -23,6 +23,7 @@ roadmap — ver [ORGANIZACION.md](ORGANIZACION.md#fases-futuras-no-implementadas
 
 ```bash
 cargo run --bin cpsc -- workspace/rubrica.cps --run   # TAC, tabla extendida y salida
+cargo run --bin cpsc -- workspace/rubrica.cps -o rubrica.asm --sim  # MIPS a un archivo y ejecución en MARS
 cargo test --test tac_battery_tests                   # batería de casos exitosos y fallidos
 ```
 

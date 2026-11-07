@@ -35,9 +35,10 @@ use names::StringTable;
 use regs::{GetRegAlloc, RegAlloc, StackAlloc};
 
 /// Qué asignación de registros usar (para compararlas, `PLAN_MIPS.md` §6).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Allocator {
     Pila,
+    #[default]
     GetReg,
 }
 

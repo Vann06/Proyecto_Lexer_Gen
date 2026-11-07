@@ -144,7 +144,7 @@ async fn run_pipeline(
         &req.source,
         &req.mode,
         &req.source_name,
-        api::PipelineOptions { run: req.run, run_mips: req.run_mips },
+        api::PipelineOptions { run: req.run, run_mips: req.run_mips, ..Default::default() },
     )
         .map(Json)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))

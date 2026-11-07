@@ -18,7 +18,7 @@ fn compiscript(source: &str, options: PipelineOptions) -> ParseResponse {
 }
 
 fn con_mars(source: &str) -> Option<ParseResponse> {
-    common::hay_mars().then(|| compiscript(source, PipelineOptions { run: true, run_mips: true }))
+    common::hay_mars().then(|| compiscript(source, PipelineOptions { run: true, run_mips: true, ..Default::default() }))
 }
 
 #[test]
@@ -36,7 +36,7 @@ fn un_programa_valido_trae_mips_y_estadisticas_sin_ejecutar() {
 
 #[test]
 fn con_errores_no_hay_mips() {
-    let response = compiscript("print(noExiste);", PipelineOptions { run: false, run_mips: true });
+    let response = compiscript("print(noExiste);", PipelineOptions { run_mips: true, ..Default::default() });
 
     assert!(response.problems.iter().any(|problem| problem["code"] == "S002"));
     assert!(response.mips.is_empty() && response.mips_stats.is_null());

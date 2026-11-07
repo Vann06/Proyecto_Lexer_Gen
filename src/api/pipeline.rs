@@ -2,8 +2,9 @@
 // (léxico) y alimenta ese stream al parser (sintáctico) en una sola pasada,
 // devolviendo un ParseResponse con line/col adjunta para que el frontend
 // resalte la línea fuente en cada paso del trace.
-use crate::codigo_objetivo::generate as generate_mips;
+use crate::codigo_objetivo::generate_with as generate_mips;
 use crate::codigo_objetivo::sim::{run_mars, DEFAULT_TIMEOUT};
+use crate::codigo_objetivo::Allocator;
 use crate::intermedio::gen::{extend_layout, generate};
 use crate::intermedio::spec::IntermediateSpec;
 use crate::intermedio::symtab::ExtendedSymbolTable;
@@ -34,6 +35,8 @@ pub struct PipelineOptions {
     pub run: bool,
     /// Ejecutar el MIPS generado en MARS.
     pub run_mips: bool,
+    /// Cómo asignar los registros del MIPS.
+    pub allocator: Allocator,
 }
 
 /// Punto de entrada usado por los binarios/tests existentes: mismo contrato
@@ -87,7 +90,7 @@ pub fn build_pipeline_response_named_with_run(
     source_name: &str,
     run: bool,
 ) -> Result<ParseResponse, String> {
-    let options = PipelineOptions { run, run_mips: false };
+    let options = PipelineOptions { run, ..Default::default() };
     build_pipeline_response_with_options(yal, yalp, source, mode, source_name, options)
 }
 
@@ -216,8 +219,8 @@ pub fn build_pipeline_response_with_options(
             // same "which token was the driver stuck on" heuristic as before — when
             // recovery isn't available or finds nothing (e.g. LL(1) mode).
             let recovered = match &lr_table {
-                Some(table) => collect_lr_syntax_errors_with(table, &grammar_for_filter, &token_map),
-                None => collect_lr_syntax_errors(yalp, &token_map, mode),
+                Some(table) => collect_lr_syntax_errors_with(table, &grammar_for_filter, &token_map, yal),
+                None => collect_lr_syntax_errors(yalp, &token_map, mode, yal),
             };
             if !recovered.is_empty() {
                 for (kind, lexeme, line, col, msg) in &recovered {
@@ -335,7 +338,7 @@ pub fn build_pipeline_response_with_options(
                                         &mut lex_problems,
                                         &program,
                                         source_name,
-                                        options.run_mips,
+                                        options,
                                     );
                                 }
                                 Err(errors) => {
@@ -380,9 +383,9 @@ fn add_mips(
     problems: &mut Vec<Value>,
     program: &TacProgram,
     source_name: &str,
-    run: bool,
+    options: PipelineOptions,
 ) {
-    let mips = match generate_mips(program) {
+    let mips = match generate_mips(program, options.allocator) {
         Ok(mips) => mips,
         Err(errors) => {
             problems.extend(errors.iter().map(|error| error.to_problem(source_name)));
@@ -391,7 +394,7 @@ fn add_mips(
     };
     response.mips = mips.to_string();
     response.mips_stats = mips.to_json()["stats"].clone();
-    if !run {
+    if !options.run_mips {
         return;
     }
     match run_mars(&response.mips, DEFAULT_TIMEOUT) {

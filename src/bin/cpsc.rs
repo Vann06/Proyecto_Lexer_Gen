@@ -1,17 +1,22 @@
-use lexer_generator::api::build_pipeline_response_named_with_run;
+use lexer_generator::api::{build_pipeline_response_with_options, PipelineOptions};
+use lexer_generator::codigo_objetivo::Allocator;
 use serde_json::Value;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const HELP: &str = "Compilador de CompiScript\n\nUSO:\n    cpsc <programa.cps> [--run] [--slr]\n\nOPCIONES:\n    --run       Ejecuta el TAC y muestra la salida del programa\n    --slr       Usa el parser SLR (por defecto se usa LALR)\n    -h, --help  Muestra esta ayuda";
+const HELP: &str = "Compilador de CompiScript\n\nUSO:\n    cpsc <programa.cps> [--run] [--slr] [--mips] [-o salida.asm] [--sim] [--pila]\n\nOPCIONES:\n    --run           Ejecuta el TAC y muestra la salida del programa\n    --slr           Usa el parser SLR (por defecto se usa LALR)\n    --mips          Muestra el ensamblador MIPS\n    -o <archivo>    Escribe el ensamblador MIPS en un archivo\n    --sim           Ejecuta el MIPS en MARS y muestra la salida del programa\n    --pila          Asigna los registros por pila (por defecto se usa getReg)\n    -h, --help      Muestra esta ayuda";
 
 #[derive(Debug, PartialEq, Eq)]
 struct Options {
     source: PathBuf,
     run: bool,
     mode: &'static str,
+    mips: bool,
+    output: Option<PathBuf>,
+    sim: bool,
+    allocator: Allocator,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -24,12 +29,24 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, String>
     let mut source = None;
     let mut run = false;
     let mut mode = "lalr";
+    let mut mips = false;
+    let mut output = None;
+    let mut sim = false;
+    let mut allocator = Allocator::default();
 
-    for arg in args {
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "-h" | "--help" => return Ok(Command::Help),
             "--run" => run = true,
             "--slr" => mode = "slr",
+            "--mips" => mips = true,
+            "--sim" => sim = true,
+            "--pila" => allocator = Allocator::Pila,
+            "-o" => match args.next() {
+                Some(path) if !path.starts_with('-') => output = Some(PathBuf::from(path)),
+                _ => return Err("falta el archivo después de -o".to_string()),
+            },
             _ if arg.starts_with('-') => return Err(format!("opción desconocida: {arg}")),
             _ if source.is_some() => {
                 return Err(format!("solo se admite un archivo fuente; sobra: {arg}"));
@@ -39,7 +56,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, String>
     }
 
     let source = source.ok_or_else(|| "falta el archivo .cps".to_string())?;
-    Ok(Command::Compile(Options { source, run, mode }))
+    Ok(Command::Compile(Options { source, run, mode, mips, output, sim, allocator }))
 }
 
 fn read_text(path: &Path, description: &str) -> Result<String, String> {
@@ -74,6 +91,12 @@ fn print_section(title: &str, body: &str) {
     }
 }
 
+/// Un problema al ejecutar en la VM o en MARS: el programa sí compiló, y lo que
+/// alcanzó a imprimir se muestra igual.
+fn is_execution_problem(problem: &Value) -> bool {
+    matches!(problem_field(problem, "code"), "R001" | "M901" | "M902" | "M903" | "M904" | "M905" | "M906")
+}
+
 fn compile(options: Options) -> Result<(), String> {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace = project_root.join("workspace");
@@ -89,13 +112,18 @@ fn compile(options: Options) -> Result<(), String> {
         .and_then(|name| name.to_str())
         .unwrap_or("programa.cps");
 
-    let response = build_pipeline_response_named_with_run(
+    let pipeline_options = PipelineOptions {
+        run: options.run,
+        run_mips: options.sim,
+        allocator: options.allocator,
+    };
+    let response = build_pipeline_response_with_options(
         &yal,
         &yalp,
         &source,
         options.mode,
         source_name,
-        options.run,
+        pipeline_options,
     )
     .map_err(|error| format!("falló el pipeline de compilación: {error}"))?;
 
@@ -106,7 +134,7 @@ fn compile(options: Options) -> Result<(), String> {
     let has_errors = response
         .problems
         .iter()
-        .any(|problem| problem_field(problem, "level") == "err");
+        .any(|problem| problem_field(problem, "level") == "err" && !is_execution_problem(problem));
     if has_errors || !response.accepted {
         return Err("la compilación terminó con errores".to_string());
     }
@@ -128,6 +156,36 @@ fn compile(options: Options) -> Result<(), String> {
             .ok_or_else(|| "la VM no devolvió una salida".to_string())?;
         println!();
         print_section("SALIDA", output);
+    }
+
+    if options.mips {
+        println!();
+        print_section("MIPS", &response.mips);
+    }
+
+    if let Some(path) = &options.output {
+        fs::write(path, &response.mips)
+            .map_err(|error| format!("no se pudo escribir '{}': {error}", path.display()))?;
+        println!();
+        println!("MIPS escrito en {}", path.display());
+    }
+
+    if options.sim {
+        let output = response
+            .mips_output
+            .as_deref()
+            .ok_or_else(|| "no se pudo ejecutar en MARS".to_string())?;
+        println!();
+        print_section("SALIDA DE MARS", output);
+        match response.mips_exit_code {
+            Some(0) => {}
+            Some(code) => return Err(format!("el programa terminó en MARS con código {code}")),
+            None => return Err("MARS no devolvió un código de salida".to_string()),
+        }
+    }
+
+    if response.problems.iter().any(|problem| problem_field(problem, "code") == "R001") {
+        return Err("el programa falló al ejecutarse".to_string());
     }
 
     Ok(())
@@ -169,6 +227,10 @@ mod tests {
                 source: PathBuf::from("programa.cps"),
                 run: false,
                 mode: "lalr",
+                mips: false,
+                output: None,
+                sim: false,
+                allocator: Allocator::GetReg,
             }))
         );
     }
@@ -181,8 +243,35 @@ mod tests {
                 source: PathBuf::from("programa.cps"),
                 run: true,
                 mode: "slr",
+                mips: false,
+                output: None,
+                sim: false,
+                allocator: Allocator::GetReg,
             }))
         );
+    }
+
+    #[test]
+    fn accepts_the_mips_options_in_any_position() {
+        assert_eq!(
+            parse_args(args(&["--sim", "-o", "salida.asm", "programa.cps", "--pila", "--mips"])),
+            Ok(Command::Compile(Options {
+                source: PathBuf::from("programa.cps"),
+                run: false,
+                mode: "lalr",
+                mips: true,
+                output: Some(PathBuf::from("salida.asm")),
+                sim: true,
+                allocator: Allocator::Pila,
+            }))
+        );
+    }
+
+    #[test]
+    fn rejects_o_without_a_file() {
+        let error = Err("falta el archivo después de -o".to_string());
+        assert_eq!(parse_args(args(&["programa.cps", "-o"])), error);
+        assert_eq!(parse_args(args(&["programa.cps", "-o", "--sim"])), error);
     }
 
     #[test]
