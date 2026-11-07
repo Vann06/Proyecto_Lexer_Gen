@@ -28,8 +28,8 @@ function FileTree({ active, onPick, onLoadFile }){
           <input type="file" accept=".yalp,.yapar" hidden onChange={e => e.target.files[0] && onLoadFile("yalp", e.target.files[0])}/>
         </label>
         <label className="load-btn">
-          ↑ input.txt / .cps
-          <input type="file" accept=".txt,.cps,text/plain" hidden onChange={e => e.target.files[0] && onLoadFile("test", e.target.files[0])}/>
+          ↑ input.txt / .cps / .rs
+          <input type="file" accept=".txt,.cps,.rs,text/plain" hidden onChange={e => e.target.files[0] && onLoadFile("test", e.target.files[0])}/>
         </label>
         <label className="load-btn">
           ↑ .g4 (referencia)
