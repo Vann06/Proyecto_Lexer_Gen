@@ -523,8 +523,12 @@ exactamente la salida del intérprete.
 - `sim.rs`:
   - `pub fn mars_available() -> bool`;
   - `pub fn run_mars(asm: &str, timeout: Duration) -> Result<SimResult, SimError>`
-    con `SimResult { stdout: String, exit_code: i32 }` y `SimError::{NoJava,
-    NoJar, Timeout, Assemble(String)}`;
+    con `SimResult { stdout: String, exit_code: i32, stop: Option<SimStop> }`
+    y `SimError::{NoJava, NoJar, Assemble(String)}`;
+  - `SimStop` dice por qué MARS no dejó terminar al programa, y la salida
+    impresa hasta ahí se conserva: `StepLimit` (`M902`) y `Timeout` (`M903`)
+    son un posible ciclo infinito, `StackOverflow` (`M904`) una posible
+    recursión infinita, `OutOfMemory` (`M905`) y `Fault` (`M906`) el resto;
   - escribe el `.asm` a un archivo temporal, corre el comando de §4.1,
     decodifica la salida como UTF-8 y corta a los 10 segundos.
 - `tools/Mars4_5.jar` y, en `ci.yml`, `actions/setup-java` (Java 17) y
@@ -555,8 +559,7 @@ exactamente la salida del intérprete.
 
 **Pruebas** (`tests/api_mips_tests.rs` y las de `cpsc`):
 - `run_mars` con un `hola.asm` a mano (salida y código de salida), con un
-  `.asm` que no ensambla (`SimError::Assemble`) y con un ciclo infinito
-  (`Timeout`).
+  `.asm` que no ensambla (`SimError::Assemble`) y con cada `SimStop`.
 - `/api/pipeline` devuelve `mips` para un programa válido y no lo devuelve
   si hay errores.
 - `cpsc --mips -o` escribe el archivo.

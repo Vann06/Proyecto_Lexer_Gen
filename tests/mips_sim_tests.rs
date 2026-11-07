@@ -3,7 +3,7 @@
 #[allow(dead_code)]
 mod common;
 
-use lexer_generator::codigo_objetivo::sim::{run_mars, SimError, SimResult, DEFAULT_TIMEOUT};
+use lexer_generator::codigo_objetivo::sim::{run_mars, SimError, SimResult, SimStop, DEFAULT_TIMEOUT};
 use std::time::Duration;
 
 /// Un programa que imprime `texto` y termina con `salida` (`syscall` 17).
@@ -13,12 +13,21 @@ fn imprime(texto: &str, salida: i32) -> String {
     )
 }
 
+/// Un programa que imprime `1` y sigue con `resto`, que nunca termina bien.
+fn imprime_y_sigue(resto: &str) -> String {
+    format!(".text\n.globl main\nmain:\n  li $a0, 1\n  li $v0, 1\n  syscall\nsigue:\n{resto}\n")
+}
+
 fn corre(asm: &str) -> Option<Result<SimResult, SimError>> {
     common::hay_mars().then(|| run_mars(asm, DEFAULT_TIMEOUT))
 }
 
 fn resultado(stdout: &str, exit_code: i32) -> Result<SimResult, SimError> {
-    Ok(SimResult { stdout: stdout.to_string(), exit_code })
+    Ok(SimResult { stdout: stdout.to_string(), exit_code, stop: None })
+}
+
+fn detenido(stdout: &str, stop: SimStop) -> Result<SimResult, SimError> {
+    Ok(SimResult { stdout: stdout.to_string(), exit_code: 2, stop: Some(stop) })
 }
 
 #[test]
@@ -55,18 +64,42 @@ fn un_asm_invalido_es_un_error_de_ensamblado_con_el_mensaje_de_mars() {
 }
 
 #[test]
-fn un_fallo_durante_la_simulacion_da_codigo_dos() {
-    if let Some(r) = corre(".text\n.globl main\nmain:\n  li $t0, 1\n  lw $t1, 0($t0)\n") {
-        let r = r.unwrap();
-        assert_eq!(r.exit_code, 2);
-        assert!(r.stdout.contains("Runtime exception"), "{}", r.stdout);
+fn un_ciclo_infinito_alcanza_el_limite_y_conserva_la_salida() {
+    if let Some(r) = corre(&imprime_y_sigue("  j sigue")) {
+        assert_eq!(r, detenido("1", SimStop::StepLimit));
     }
 }
 
 #[test]
-fn un_ciclo_infinito_se_detiene_por_tiempo() {
+fn una_recursion_infinita_agota_la_pila_y_conserva_la_salida() {
+    if let Some(r) = corre(&imprime_y_sigue("  addi $sp, $sp, -4\n  sw $ra, 0($sp)\n  j sigue")) {
+        assert_eq!(r, detenido("1", SimStop::StackOverflow));
+    }
+}
+
+#[test]
+fn reservar_sin_fin_agota_la_memoria_y_conserva_la_salida() {
+    if let Some(r) = corre(&imprime_y_sigue("  li $a0, 1048576\n  li $v0, 9\n  syscall\n  j sigue")) {
+        assert_eq!(r, detenido("1", SimStop::OutOfMemory));
+    }
+}
+
+#[test]
+fn otro_fallo_de_la_simulacion_trae_el_motivo_de_mars() {
+    if let Some(r) = corre(&imprime_y_sigue("  li $t0, 1\n  lw $t1, 0($t0)")) {
+        let r = r.unwrap();
+        assert_eq!((r.stdout.as_str(), r.exit_code), ("1", 2));
+        match r.stop {
+            Some(SimStop::Fault(motivo)) => assert!(motivo.contains("not aligned") && !motivo.contains(".asm"), "{motivo}"),
+            otro => panic!("{otro:?}"),
+        }
+    }
+}
+
+#[test]
+fn si_se_acaba_el_tiempo_se_detiene() {
     if common::hay_mars() {
-        let r = run_mars(".text\n.globl main\nmain:\n  j main\n", Duration::from_secs(3));
-        assert_eq!(r, Err(SimError::Timeout));
+        let r = run_mars(".text\n.globl main\nmain:\n  j main\n", Duration::from_millis(100)).unwrap();
+        assert_eq!((r.exit_code, r.stop), (2, Some(SimStop::Timeout)));
     }
 }

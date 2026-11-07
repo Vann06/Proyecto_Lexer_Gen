@@ -2,6 +2,8 @@
 // (léxico) y alimenta ese stream al parser (sintáctico) en una sola pasada,
 // devolviendo un ParseResponse con line/col adjunta para que el frontend
 // resalte la línea fuente en cada paso del trace.
+use crate::codigo_objetivo::generate as generate_mips;
+use crate::codigo_objetivo::sim::{run_mars, DEFAULT_TIMEOUT};
 use crate::intermedio::gen::{extend_layout, generate};
 use crate::intermedio::spec::IntermediateSpec;
 use crate::intermedio::symtab::ExtendedSymbolTable;
@@ -24,6 +26,15 @@ use super::sintactico::{
     push_syntax_problem,
 };
 use super::ParseResponse;
+
+/// Qué ejecutar además de compilar. Por defecto, nada.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PipelineOptions {
+    /// Ejecutar el TAC en la VM.
+    pub run: bool,
+    /// Ejecutar el MIPS generado en MARS.
+    pub run_mips: bool,
+}
 
 /// Punto de entrada usado por los binarios/tests existentes: mismo contrato
 /// que antes, con `source_name` fijo en `"input.txt"` (el nombre que el
@@ -75,6 +86,19 @@ pub fn build_pipeline_response_named_with_run(
     mode: &str,
     source_name: &str,
     run: bool,
+) -> Result<ParseResponse, String> {
+    let options = PipelineOptions { run, run_mips: false };
+    build_pipeline_response_with_options(yal, yalp, source, mode, source_name, options)
+}
+
+/// Pipeline completo: compila hasta MIPS y ejecuta lo que pida `options`.
+pub fn build_pipeline_response_with_options(
+    yal: &str,
+    yalp: &str,
+    source: &str,
+    mode: &str,
+    source_name: &str,
+    options: PipelineOptions,
 ) -> Result<ParseResponse, String> {
     let lexer_table = build_lexer_table_from_str(yal)?;
 
@@ -288,7 +312,7 @@ pub fn build_pipeline_response_named_with_run(
                                     response.symbols_ext =
                                         ExtendedSymbolTable::build(&analysis, &program).to_json();
 
-                                    if run {
+                                    if options.run {
                                         let mut vm = Vm::new(&program);
                                         match vm.run() {
                                             Ok(result) => response.run_output = Some(result.output),
@@ -305,6 +329,14 @@ pub fn build_pipeline_response_named_with_run(
                                             }
                                         }
                                     }
+
+                                    add_mips(
+                                        &mut response,
+                                        &mut lex_problems,
+                                        &program,
+                                        source_name,
+                                        options.run_mips,
+                                    );
                                 }
                                 Err(errors) => {
                                     lex_problems.extend(
@@ -340,6 +372,48 @@ pub fn build_pipeline_response_named_with_run(
     response.problems = lex_problems;
     response.token_map = token_map_json;
     Ok(response)
+}
+
+/// Traduce el TAC a MIPS y, si se pidió, lo ejecuta en MARS.
+fn add_mips(
+    response: &mut ParseResponse,
+    problems: &mut Vec<Value>,
+    program: &TacProgram,
+    source_name: &str,
+    run: bool,
+) {
+    let mips = match generate_mips(program) {
+        Ok(mips) => mips,
+        Err(errors) => {
+            problems.extend(errors.iter().map(|error| error.to_problem(source_name)));
+            return;
+        }
+    };
+    response.mips = mips.to_string();
+    response.mips_stats = mips.to_json()["stats"].clone();
+    if !run {
+        return;
+    }
+    match run_mars(&response.mips, DEFAULT_TIMEOUT) {
+        Ok(result) => {
+            if let Some(stop) = &result.stop {
+                problems.push(json!({
+                    "level": "err",
+                    "code": stop.code(),
+                    "msg": stop.to_string(),
+                    "loc": source_name,
+                }));
+            }
+            response.mips_output = Some(result.stdout);
+            response.mips_exit_code = Some(result.exit_code);
+        }
+        Err(error) => problems.push(json!({
+            "level": "err",
+            "code": "M901",
+            "msg": format!("no se pudo ejecutar en MARS: {error}"),
+            "loc": source_name,
+        })),
+    }
 }
 
 fn temp_stats(program: &TacProgram) -> Vec<Value> {
