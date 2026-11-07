@@ -156,3 +156,64 @@ fn no_avisa_de_una_variable_que_tiene_valor() {
         assert!(avisos_sin_valor(fuente).is_empty(), "{fuente}");
     }
 }
+
+fn pipeline(fuente: &str) -> api::ParseResponse {
+    api::build_pipeline_response(
+        &common::read("workspace/compiscript.yal"),
+        &common::read("workspace/compiscript.yalp"),
+        fuente,
+        "lalr",
+    )
+    .expect("el pipeline debe responder")
+}
+
+/// La traza guardaba una copia de la entrada por paso: 500 líneas de `print`
+/// agotaban la memoria del servidor.
+#[test]
+fn un_programa_largo_compila_y_su_traza_no_crece_con_el_cuadrado() {
+    let respuesta = pipeline(&"print(1);\n".repeat(3000));
+
+    assert!(respuesta.problems.is_empty(), "{:#?}", respuesta.problems);
+    assert!(respuesta.accepted && !respuesta.mips.is_empty());
+    assert_eq!(respuesta.trace.last().unwrap()["action"], "acc", "el último paso siempre se conserva");
+    let traza = serde_json::to_string(&respuesta.trace).unwrap();
+    assert!(traza.len() < 30_000_000, "la traza pesa {} bytes", traza.len());
+}
+
+#[test]
+fn demasiado_anidamiento_es_un_error_y_no_tumba_el_proceso() {
+    for fuente in [
+        format!("print({}1{});\n", "(".repeat(300), ")".repeat(300)),
+        format!("{}print(1);{}\n", "{".repeat(300), "}".repeat(300)),
+        format!("print({}1{});\n", "[".repeat(100_000), "]".repeat(100_000)),
+    ] {
+        let respuesta = pipeline(&fuente);
+        assert_eq!(respuesta.problems.len(), 1, "{:#?}", respuesta.problems);
+        assert_eq!(respuesta.problems[0]["code"], "P002");
+        assert!(!respuesta.accepted);
+    }
+}
+
+#[test]
+fn un_anidamiento_dentro_del_limite_compila() {
+    let respuesta = pipeline(&format!("print({}1{});\n", "(".repeat(190), ")".repeat(190)));
+    assert!(respuesta.problems.is_empty(), "{:#?}", respuesta.problems);
+    assert!(!respuesta.mips.is_empty());
+}
+
+#[test]
+fn un_programa_con_demasiados_tokens_es_un_error() {
+    let respuesta = pipeline(&"print(1);\n".repeat(11_000));
+    assert_eq!(respuesta.problems.len(), 1, "{:#?}", respuesta.problems);
+    assert_eq!(respuesta.problems[0]["code"], "P002");
+}
+
+/// El árbol de una suma es tan profundo como larga sea, y todo lo que lo recorre es
+/// recursivo. No usa el máximo de tokens porque ese tamaño tarda minutos.
+#[test]
+fn una_expresion_muy_larga_no_agota_la_pila() {
+    let respuesta = pipeline(&format!("print(1{});
+", " + 1".repeat(3000)));
+    assert!(respuesta.problems.is_empty(), "{:#?}", respuesta.problems);
+    assert!(respuesta.accepted);
+}

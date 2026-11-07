@@ -24,9 +24,21 @@ use super::lexico::{build_lexer_table_from_str, lex_is_ignored, lex_normalize_ki
 use super::sintactico::{
     build_lr_table, build_parse_response, build_parse_response_with, build_real_parse_tree,
     build_real_parse_tree_with, collect_lr_syntax_errors, collect_lr_syntax_errors_with,
-    push_syntax_problem,
+    push_syntax_problem, token_spellings,
 };
 use super::ParseResponse;
+
+/// Tokens que acepta un programa. El árbol de una lista o de una suma es tan
+/// profundo como larga sea, y todo lo que lo recorre es recursivo.
+const MAX_TOKENS: usize = 50_000;
+
+/// Paréntesis, corchetes o llaves abiertos a la vez. Cada nivel de paréntesis son
+/// unos 15 niveles del árbol, por todas las reglas de precedencia.
+const MAX_NESTING: usize = 200;
+
+/// Pila del hilo del pipeline, con margen para esos dos límites también en debug.
+/// Solo se reserva: el sistema la entrega a medida que se usa.
+const PIPELINE_STACK_BYTES: usize = 512 * 1024 * 1024;
 
 /// Qué ejecutar además de compilar. Por defecto, nada.
 #[derive(Debug, Clone, Copy, Default)]
@@ -95,7 +107,58 @@ pub fn build_pipeline_response_named_with_run(
 }
 
 /// Pipeline completo: compila hasta MIPS y ejecuta lo que pida `options`.
+///
+/// Corre en un hilo propio porque agotar la pila no es un error que se pueda
+/// atrapar: mata todo el proceso, incluido el servidor.
 pub fn build_pipeline_response_with_options(
+    yal: &str,
+    yalp: &str,
+    source: &str,
+    mode: &str,
+    source_name: &str,
+    options: PipelineOptions,
+) -> Result<ParseResponse, String> {
+    std::thread::scope(|scope| {
+        let pipeline = std::thread::Builder::new()
+            .stack_size(PIPELINE_STACK_BYTES)
+            .spawn_scoped(scope, || run_pipeline(yal, yalp, source, mode, source_name, options))
+            .expect("el sistema debe poder crear el hilo del pipeline");
+        pipeline.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
+
+/// Un programa demasiado grande o anidado para recorrerlo sin riesgo.
+fn size_problem(tokens: &[(String, String, usize, usize)], yal: &str, source_name: &str) -> Option<Value> {
+    let problem = |msg: String, line: usize, col: usize| {
+        json!({
+            "level": "err",
+            "code": "P002",
+            "msg": msg,
+            "loc": format!("{source_name}:{line}:{col}"),
+            "line": line,
+            "col": col,
+        })
+    };
+    if let Some((_, _, line, col)) = tokens.get(MAX_TOKENS) {
+        return Some(problem(format!("el programa es demasiado largo: el límite es {MAX_TOKENS} tokens"), *line, *col));
+    }
+
+    let spellings = token_spellings(yal);
+    let mut nesting = 0usize;
+    for (kind, _, line, col) in tokens {
+        match spellings.get(kind).map(String::as_str) {
+            Some("(" | "[" | "{") => nesting += 1,
+            Some(")" | "]" | "}") => nesting = nesting.saturating_sub(1),
+            _ => {}
+        }
+        if nesting > MAX_NESTING {
+            return Some(problem(format!("demasiado anidamiento: el límite es {MAX_NESTING} niveles"), *line, *col));
+        }
+    }
+    None
+}
+
+fn run_pipeline(
     yal: &str,
     yalp: &str,
     source: &str,
@@ -172,6 +235,15 @@ pub fn build_pipeline_response_with_options(
     // itself). Splitting
     // internally here both mis-locates errors in genuine multi-line input and rebuilds
     // the whole parse table once per line for no reason.
+    if let Some(problem) = size_problem(&token_map, yal, source_name) {
+        lex_problems.push(problem);
+        return Ok(ParseResponse {
+            error: Some("Error sintáctico".to_string()),
+            problems: lex_problems,
+            ..Default::default()
+        });
+    }
+
     let token_kinds: Vec<String> = token_map.iter().map(|(k, _, _, _)| k.clone()).collect();
 
     let mut response = ParseResponse::default();

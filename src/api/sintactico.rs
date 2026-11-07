@@ -180,7 +180,7 @@ const CLOSERS: &[&str] = &[";", ")", "]", "}"];
 /// Cómo se escribe cada token, leído de las reglas del `.yal` (`';' { "SEMI" }`,
 /// `kw_let { "LET" }`). Los que no tienen una sola escritura, como un identificador,
 /// no aparecen y se muestran con su nombre.
-fn token_spellings(yal: &str) -> HashMap<String, String> {
+pub(crate) fn token_spellings(yal: &str) -> HashMap<String, String> {
     let lets: HashMap<&str, &str> = yal
         .lines()
         .filter_map(|line| line.trim().strip_prefix("let ")?.split_once('='))
@@ -189,7 +189,7 @@ fn token_spellings(yal: &str) -> HashMap<String, String> {
 
     yal.lines()
         .filter_map(|line| {
-            let (pattern, action) = line.trim().trim_start_matches('|').split_once('{')?;
+            let (pattern, action) = line.trim().trim_start_matches('|').rsplit_once('{')?;
             let token = action.trim().trim_end_matches('}').trim().strip_prefix('"')?.strip_suffix('"')?;
             let pattern = pattern.trim();
             let spelling = literal_of(lets.get(pattern).copied().unwrap_or(pattern), &lets)?;
@@ -494,6 +494,8 @@ pub(crate) fn build_real_parse_tree(
 /// Lo que lo distingue de los demás es que necesita una FOTO de la pila y de
 /// lo que queda por consumir ANTES de cada acción — de ahí el callback
 /// `before_step` del observador.
+const TRACE_BUDGET: usize = 1_000_000;
+
 struct JsonTraceObserver {
     trace: Vec<Value>,
     /// Pila de símbolos en paralelo a la de estados del driver, para poder
@@ -502,7 +504,14 @@ struct JsonTraceObserver {
     /// Última foto tomada en `before_step`, que es la que acompaña a la
     /// entrada de traza de esta iteración.
     snapshot_stack: Vec<Value>,
-    snapshot_remaining: Vec<Value>,
+    /// La entrada completa y cuánto queda de ella: copiarla en cada `before_step`
+    /// costaría una entrada entera por paso aunque el paso no se guarde.
+    input: Vec<Value>,
+    remaining: usize,
+    /// Elementos que todavía caben en la traza. Cada paso guarda su pila y lo que
+    /// queda de entrada, así que sin tope crece con el cuadrado del programa: 500
+    /// líneas agotaban la memoria del servidor.
+    budget: usize,
 }
 
 impl JsonTraceObserver {
@@ -511,14 +520,26 @@ impl JsonTraceObserver {
             trace: Vec::new(),
             symbols: Vec::new(),
             snapshot_stack: Vec::new(),
-            snapshot_remaining: Vec::new(),
+            input: Vec::new(),
+            remaining: 0,
+            budget: TRACE_BUDGET,
         }
     }
 
+    /// Sin presupuesto se saltan los pasos intermedios. El último siempre se guarda:
+    /// dice cómo terminó y dónde quedó la entrada.
     fn push_entry(&mut self, action: &str, desc: String) {
+        let cost = self.snapshot_stack.len() + self.remaining;
+        let is_last = matches!(action, "acc" | "error");
+        if cost > self.budget && !is_last {
+            self.budget = 0;
+            return;
+        }
+        self.budget = self.budget.saturating_sub(cost);
+        let remaining = &self.input[self.input.len() - self.remaining..];
         self.trace.push(json!({
             "stack": self.snapshot_stack.clone(),
-            "remaining": self.snapshot_remaining.clone(),
+            "remaining": remaining,
             "action": action,
             "desc": desc,
         }));
@@ -527,7 +548,10 @@ impl JsonTraceObserver {
 
 impl ParseObserver for JsonTraceObserver {
     fn before_step(&mut self, states: &[usize], remaining: &[ParseToken]) {
-        self.snapshot_remaining = remaining.iter().map(|t| json!(t.kind)).collect();
+        if self.input.is_empty() {
+            self.input = remaining.iter().map(|t| json!(t.kind)).collect();
+        }
+        self.remaining = remaining.len();
         let mut stack_val: Vec<Value> = Vec::new();
         for (i, st) in states.iter().enumerate() {
             stack_val.push(json!(st));
