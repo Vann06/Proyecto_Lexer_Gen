@@ -15,10 +15,11 @@ use crate::semantico::closures::ClosureCollector;
 use crate::semantico::collections;
 use crate::semantico::deadcode;
 use crate::semantico::duplicates;
-use crate::semantico::errors::ErrorCollector;
+use crate::semantico::errors::{Diagnostic, ErrorCollector, ErrorKind, Severity};
 use crate::semantico::flow::{self, FlowContext};
 use crate::semantico::functions::FunctionContext;
 use crate::semantico::operators;
+use crate::semantico::returns;
 use crate::semantico::scopes::{ScopeCollector, ScopeKind};
 use crate::semantico::spec::{SemanticSpec, ChildLocator};
 use crate::semantico::bindings::{Access, Bindings, SymbolRef};
@@ -269,6 +270,8 @@ struct Analyzer<'a> {
     /// Se identifican por dirección porque el árbol no se modifica durante el
     /// recorrido, así que cada nodo tiene una identidad estable.
     unreachable: HashSet<*const ParseNode>,
+    /// Variables que ya avisaron con `W003`, para hacerlo una sola vez por cada una.
+    uninitialized_reads: HashSet<(String, usize, usize)>,
     /// El tipo de cada nodo de expresion que se llego a tipar durante el
     /// recorrido — el "arbol de analisis anotado" del libro, guardado aparte
     /// del arbol. Se llena solo: `classes::resolve_expr_type` graba cada tipo
@@ -324,6 +327,7 @@ impl<'a> Analyzer<'a> {
             switch_types: Vec::new(),
             analyzed_sequences: HashSet::new(),
             unreachable: HashSet::new(),
+            uninitialized_reads: HashSet::new(),
             types: TypeAnnotations::new(),
             global_alloc: FrameAllocator::new_static(&target),
             bindings: Bindings::new(),
@@ -372,6 +376,20 @@ impl<'a> Analyzer<'a> {
                 });
             }
         }
+    }
+}
+
+/// No es un error: la variable tiene su valor por defecto, igual en la VM y en MIPS.
+/// Solo mira si alguna asignación aparece antes en el texto, así que no avisa de
+/// una que solo se asigna en una rama.
+fn uninitialized_read(name: &str, line: usize, col: usize) -> Diagnostic {
+    Diagnostic {
+        kind: ErrorKind::Ambito,
+        code: "W003".to_string(),
+        message: format!("variable '{name}' leída sin haberle asignado un valor: usa su valor por defecto"),
+        line,
+        col,
+        severity: Severity::Warning,
     }
 }
 
@@ -443,6 +461,19 @@ impl<'a> Visitor for Analyzer<'a> {
                             let fn_name = fn_name.clone();
                             self.closures.record_capture(&fn_name, name, node.line, node.col);
                         }
+                    }
+
+                    // Desde otra función no se sabe qué ya corrió: la que declara
+                    // la variable pudo asignarla antes de llamarla.
+                    let same_function = self.function_stack.last().map_or(true, |(boundary, _)| def_depth >= *boundary);
+                    let tracks_initializers = self.spec.declarations.iter().any(|rule| rule.init_child.is_some());
+                    if tracks_initializers
+                        && same_function
+                        && sym.kind == SymbolKind::Variable
+                        && !sym.initialized
+                        && self.uninitialized_reads.insert((name.to_string(), sym.line, sym.col))
+                    {
+                        self.errors.push(uninitialized_read(name, node.line, node.col));
                     }
                 }
                 None => {
@@ -1325,6 +1356,11 @@ impl<'a> Visitor for Analyzer<'a> {
 
         let frame = self.frames.pop().expect("enter empujó un frame para cada nodo visitado");
         if frame.opened_function {
+            if !node.children.last().is_some_and(|body| returns::body_always_returns(body, self.spec)) {
+                if let Some(error) = self.fn_context.missing_return(node.line, node.col) {
+                    self.errors.push_function(&error);
+                }
+            }
             self.function_stack.pop();
             // Lockstep con el push de `enter`: las dos pilas de función se
             // mantienen alineadas subiendo y bajando en los mismos puntos.

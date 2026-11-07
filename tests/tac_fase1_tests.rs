@@ -265,13 +265,17 @@ endfunc"#
 fn foreach_recorre_la_lista_por_indice() {
     // La lista: `[longitud][e0][e1]…`, elementos de 4 bytes desde el byte 4.
     let tac = main_tac(
-        "let notas: integer[];\n\
+        "let notas: integer[] = [1, 2];\n\
          foreach (n in notas) { if (n == 0) { continue; } print(n); }\n",
     );
     assert_eq!(
         tac,
         r#"func main nivel 0 marco 32
-    notas = null
+    t0 = alloc 12
+    t0[0] = 2
+    t0[4] = 1
+    t0[8] = 2
+    notas = t0
     t0 = notas
     t1 = t0[0]
     t2 = 0

@@ -9,6 +9,7 @@ use crate::semantico::scopes::ScopeKind;
 use crate::semantico::symbols::SymbolKind;
 use crate::semantico::operators::{ComparisonOperator, LogicalOperator, UnaryOperator};
 use crate::semantico::types::{ArithmeticOperator, Type};
+use crate::sintactico::gramatica::flow::FlowDirective;
 use crate::sintactico::gramatica::grammar::Grammar;
 
 #[derive(Default)]
@@ -99,6 +100,9 @@ pub struct SemanticSpec {
     pub returns: Vec<ReturnRule>,
     /// Reglas de control de flujo declaradas por la gramática.
     pub flow: FlowSpec,
+    /// Forma de cada construcción de control de flujo (`%flow`). Vacío: no se
+    /// revisa que una función retorne en todos sus caminos.
+    pub flow_shapes: Vec<FlowDirective>,
     /// Bucles `foreach` declarados con `%foreach`. Vacío: la gramática no
     /// tiene iteración sobre colecciones.
     pub foreaches: Vec<ForeachRule>,
@@ -641,6 +645,7 @@ impl SemanticSpec {
                     iterable_child: child_locator_from_directive(iterable),
                 })
                 .collect(),
+            flow_shapes: grammar.flow_directives.clone(),
             deadcode: DeadCodeSpec {
                 sequences: grammar.stmt_list_directives.clone(),
                 // Las sentencias que cortan el flujo ya están nombradas por

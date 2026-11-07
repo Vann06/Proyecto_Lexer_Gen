@@ -289,6 +289,18 @@ impl FunctionContext {
         self.active.pop().is_some()
     }
 
+    /// El error de una función con tipo de retorno cuyo cuerpo puede terminar sin
+    /// devolver un valor. Un procedimiento o un tipo desconocido no exigen nada.
+    pub fn missing_return(&self, line: usize, col: usize) -> Option<FunctionError> {
+        let active = self.active.last()?;
+        (!matches!(active.returns, Type::Void | Type::Unknown)).then(|| FunctionError::MissingReturnValue {
+            function: active.name.clone(),
+            expected: active.returns.clone(),
+            line,
+            col,
+        })
+    }
+
     pub fn depth(&self) -> usize {
         self.active.len()
     }
