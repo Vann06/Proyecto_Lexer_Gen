@@ -327,6 +327,13 @@
   }
   .tac-code{ min-height:220px; flex:1; }
   .tac-empty{ padding:20px; border:1px dashed var(--line); }
+  .mips-toolbar{ flex-wrap:wrap; }
+  .mips-actions{ display:flex; flex-wrap:wrap; gap:8px; }
+  .mips-actions .cbtn.icon{ font-size:12px; padding:2px 8px; white-space:nowrap; }
+  .mips-code{ flex:none; max-height:340px; }
+  .mips-section{ display:flex; flex-direction:column; gap:6px; }
+  .mips-output{ min-height:0; flex:none; max-height:220px; }
+  .mips-stop{ padding:6px 10px; border:1px solid var(--red); color:var(--coral); font-size:18px; }
 
   /* tokens */
   .tok{
@@ -467,7 +474,7 @@
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@viz-js/viz@3.2.4/lib/viz-standalone.js"></script>
 
-<script type="text/babel" src="./data.jsx?v=5"></script>
-<script type="text/babel" src="./app.jsx?v=13"></script>
+<script type="text/babel" src="./data.jsx?v=6"></script>
+<script type="text/babel" src="./app.jsx?v=15"></script>
 </body>
 </html>

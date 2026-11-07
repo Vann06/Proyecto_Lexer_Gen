@@ -61,4 +61,9 @@ window.IDE_DATA = {
   TAC: "",
   SYMBOLS_EXT: null,
   TEMPS: [],
+  // Fase de MIPS: el `.asm`, sus estadísticas por función y el resultado de la
+  // última ejecución en MARS (`{ output, exitCode }`, null si no se ejecutó).
+  MIPS: "",
+  MIPS_STATS: [],
+  MIPS_RUN: null,
 };

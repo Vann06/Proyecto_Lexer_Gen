@@ -96,6 +96,16 @@ const HL_RULES = {
     { re: /[A-Za-z_$][A-Za-z0-9_.$]*(?=:)/y, cls: "nonterm" },
     { re: /[+\-*/%<>=!&\[\](),:]+/y, cls: "op" },
   ],
+  mips: [
+    { re: /#[^\n]*/y, cls: "com" },
+    { re: /"(\\.|[^"\\])*"/y, cls: "str" },
+    { re: /\.[a-z]+\b/y, cls: "term" },
+    { re: /[A-Za-z_][A-Za-z0-9_.]*(?=:)/y, cls: "nonterm" },
+    { re: /(?<=^[ \t]*)[a-z]+\b/my, cls: "kw" },
+    { re: /\$[a-z0-9]+/y, cls: "fn" },
+    { re: /[A-Za-z_][A-Za-z0-9_.]*/y, cls: "ident" },
+    { re: /-?(?:0x[0-9a-fA-F]+|[0-9]+)/y, cls: "num" },
+  ],
   g4: [
     { re: /\/\/[^\n]*/y, cls: "com" },
     { re: /\/\*[\s\S]*?\*\//y, cls: "com" },
@@ -694,7 +704,7 @@ function TypesView(){
 
 /* Fase de un problema, por el prefijo de su código (ver los `code` que
    emiten `api::pipeline`, `api::sintactico` y `semantico::errors`). */
-const PROBLEM_PHASE = { L:"léxico", P:"sintáctico", S:"semántico", C:"TAC", R:"runtime", W:"advertencia", E:"IDE", G:"gramática", I:"IDE" };
+const PROBLEM_PHASE = { L:"léxico", P:"sintáctico", S:"semántico", C:"TAC", R:"runtime", M:"MIPS", W:"advertencia", E:"IDE", G:"gramática", I:"IDE" };
 
 /* TODOS los problemas de la última corrida —errores, advertencias e info, de
    cualquier fase—, ordenados por posición. Antes esta vista filtraba solo
@@ -783,12 +793,129 @@ function TacView(){
     </div>
   );
 }
+/* La salida de un ciclo que imprime sin parar llega a pesar varios MB. */
+const MIPS_OUTPUT_LIMIT = 20000;
+
+/* El `.asm` se baja con el nombre del fuente: `ejemplo.cps` → `ejemplo.asm`. */
+function downloadAsm(){
+  const name = D.FILES.test.name.replace(/\.[^.]*$/, "") + ".asm";
+  const url = URL.createObjectURL(new Blob([D.MIPS], { type: "text/plain" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+/* Lo que devolvió MARS en la última ejecución. `D.MIPS_RUN` es null si el
+   programa todavía no se ejecutó, o si el backend no pudo correr MARS. */
+function MipsRunPanel({ problems }){
+  const run = D.MIPS_RUN;
+  if (!run && !problems.length) return null;
+  const output = run ? run.output : "";
+  const cut = output.length > MIPS_OUTPUT_LIMIT;
+
+  return (
+    <div className="mips-section">
+      <div className="h-pixel" style={{color:"var(--cyan)"}}>
+        ▍ SALIDA DE MARS
+        {run && <span className="dim" style={{marginLeft:10}}>· código {run.exitCode}</span>}
+      </div>
+      {problems.map((problem, i) =>
+        <div key={i} className="mips-stop"><b>{problem.code}</b> {problem.msg}</div>
+      )}
+      {run && (
+        <pre className="tac-code mips-output">
+          {output ? output.slice(0, MIPS_OUTPUT_LIMIT) : "(el programa no imprimió nada)"}
+        </pre>
+      )}
+      {cut && (
+        <div className="dim">
+          Se muestran {MIPS_OUTPUT_LIMIT} de {output.length} caracteres.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MipsStatsTable(){
+  if (!D.MIPS_STATS.length) return null;
+  return (
+    <div className="mips-section">
+      <div className="h-pixel" style={{color:"var(--pink)"}}>▍ REGISTROS POR FUNCIÓN</div>
+      <table className="t">
+        <thead>
+          <tr><th>Función</th><th>Registros</th><th>Derrames</th><th>$s guardados</th></tr>
+        </thead>
+        <tbody>
+          {D.MIPS_STATS.map(row =>
+            <tr key={row.funcion}>
+              <td>{row.funcion}</td>
+              <td>{row.registros_usados}</td>
+              <td>{row.derrames}</td>
+              <td>{row.s_guardados}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* MIPS generado desde el TAC. Ejecutar vuelve a compilar el fuente actual, así
+   que lo que corre en MARS es siempre lo que está en el editor. */
+function MipsView({ onRunMips, loading }){
+  const mips = D.MIPS || "";
+  const problems = D.PROBLEMS.filter(problem => /^M\d/.test(problem.code));
+
+  return (
+    <div className="tac-view">
+      <div className="tac-toolbar mips-toolbar">
+        <div className="h-pixel" style={{color:"var(--pink)"}}>
+          ▍ ENSAMBLADOR MIPS
+          {mips && (
+            <span className="dim" style={{marginLeft:10}}>
+              · {mips.split("\n").length} líneas
+            </span>
+          )}
+        </div>
+        {mips && (
+          <div className="mips-actions">
+            <button className="cbtn icon cyan" onClick={downloadAsm}>⬇ DESCARGAR .asm</button>
+            <button className="cbtn icon cyan" onClick={onRunMips} disabled={loading}>
+              {loading ? "EJECUTANDO…" : "▶ EJECUTAR EN MARS"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      <MipsRunPanel problems={problems}/>
+
+      {mips
+        ? (
+          <pre
+            className="tac-code mips-code"
+            dangerouslySetInnerHTML={{__html:tokenize(mips, "mips")}}
+          />
+        )
+        : (
+          <div className="dim tac-empty">
+            Presiona ▶ ANALIZAR para generar MIPS.
+          </div>
+        )
+      }
+
+      <MipsStatsTable/>
+    </div>
+  );
+}
 /* ============================== Right results panel ============================== */
 
-function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, resultsSize, onJump }){
+function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, resultsSize, onJump, onRunMips, loading }){
   const problemCount = D.PROBLEMS.length;
   const TABS = [
     {id:"tac",      label:"TAC", badge: D.TAC ? D.TAC.split("\n").length : null},
+    {id:"mips",     label:"MIPS", badge: D.MIPS ? D.MIPS.split("\n").length : null},
     {id:"tokens",   label:"TOKENS", badge: D.TOKENS.length || null},
     {id:"tree",     label:"ÁRBOL SINTÁCTICO"},
     {id:"symbols",  label:"SÍMBOLOS", badge: (D.SCOPES && D.SCOPES.length) || null},
@@ -816,6 +943,7 @@ function ResultsPanel({ activeTab, setActiveTab, renderKey, onToggleSize, result
         </div>
         <div className="rbody">
           {activeTab==="tac"     && <TacView/>}
+          {activeTab==="mips"    && <MipsView onRunMips={onRunMips} loading={loading}/>}
           {activeTab==="tokens"  && <TokensView/>}
           {activeTab==="tree"    && <ParseTreeView renderKey={renderKey}/>}
           {activeTab==="symbols" && <SymbolTableView/>}
@@ -1008,7 +1136,7 @@ function App(){
   // ── ANALIZAR: pipeline completo (.yal + .yalp + fuente) en un solo paso —
   // sin stepper, así que no hace falta separar compilar-gramática de
   // parsear-una-cadena como en el IDE completo. ───────────────────────────
-  const runPipeline = async () => {
+  const analyze = async (runMips) => {
     if (!D.FILES.yal.rawContent.trim() || !D.FILES.yalp.rawContent.trim() || !D.FILES.test.rawContent.trim()) {
       D.PROBLEMS = [{ level:"err", code:"E000", msg:"Cargá .yal, .yalp y el fuente de prueba antes de analizar.", loc:"" }];
       setTab("errors");
@@ -1027,6 +1155,7 @@ function App(){
           source_name:  D.FILES.test.name,
           mode,
           run: false,
+          run_mips: runMips,
         }),
       });
       if (!res.ok) throw new Error(await res.text());
@@ -1040,13 +1169,19 @@ function App(){
       D.TAC             = data.tac || "";
       D.SYMBOLS_EXT     = data.symbols_ext && typeof data.symbols_ext === "object" ? data.symbols_ext : null;
       D.TEMPS           = Array.isArray(data.temps) ? data.temps : [];
+      D.MIPS            = data.mips || "";
+      D.MIPS_STATS      = Array.isArray(data.mips_stats) ? data.mips_stats : [];
+      D.MIPS_RUN        = data.mips_exit_code === undefined
+        ? null
+        : { output: data.mips_output || "", exitCode: data.mips_exit_code };
       D.PARSE_ACCEPTED = !!data.accepted;
       D.PARSE_ERROR = data.error || null;
       D.PROBLEMS = data.problems && data.problems.length ? data.problems : [];
 
       bump(n => n + 1);
       const hasErrors = !data.accepted || (data.problems && data.problems.some(p => p.level === "err"));
-      setTab(hasErrors && !data.tac ? "errors" : "tac");
+      if (hasErrors && !data.tac) setTab("errors");
+      else setTab(runMips ? "mips" : "tac");
       rerender();
     } catch(e) {
       console.error("API /pipeline:", e);
@@ -1060,6 +1195,9 @@ function App(){
       D.TAC = "";
       D.SYMBOLS_EXT = null;
       D.TEMPS = [];
+      D.MIPS = "";
+      D.MIPS_STATS = [];
+      D.MIPS_RUN = null;
       D.PARSE_ACCEPTED = null;
       D.PARSE_ERROR = msg;
       D.PROBLEMS = [{ level:"err", code:"E001", msg, loc:`pipeline ${mode.toUpperCase()}` }];
@@ -1069,6 +1207,9 @@ function App(){
       setLoading(false);
     }
   };
+
+  const runPipeline = () => analyze(false);
+  const runMips = () => analyze(true);
 
   // ── Auto-reanalizar cuando el modo cambia, si ya se corrió antes ──────────
   const prevModeRef = useRef(mode);
@@ -1152,6 +1293,8 @@ function App(){
           onToggleSize={cycleResults}
           resultsSize={resultsSize}
           onJump={handleJump}
+          onRunMips={runMips}
+          loading={loading}
         />
       </div>
 
