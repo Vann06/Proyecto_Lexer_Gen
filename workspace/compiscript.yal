@@ -33,8 +33,10 @@ let num_lit = digit+
 let str_safe = alnum | [' ''.''!''?'','':'';''-''_']
 let string_l = '"' str_safe* '"'
 
-(* --- Comentario de una linea: inicia con // --- *)
-let cmt_char    = alnum | [' ''.''!''?'','':'';''_''=''-']
+(* --- Comentario de una linea: inicia con // y sigue hasta el fin de linea,
+   como COMMENT en Compiscript.g4. La clase negada incluye acentos y demas
+   caracteres no ASCII. --- *)
+let cmt_char    = [^'\n''\r']
 let line_comment = '/''/' cmt_char*
 
 (* --- Operadores compuestos --- *)

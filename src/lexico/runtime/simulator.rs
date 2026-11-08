@@ -101,9 +101,6 @@ impl<'a> Simulator<'a> {
 
         while self.pos < self.input.len() {
             let c = self.input[self.pos];
-            if (c as usize) >= 128 {
-                break;
-            }
             let next = self.table.next(state as usize, c);
             if next == DEAD {
                 break;

@@ -217,3 +217,28 @@ fn una_expresion_muy_larga_no_agota_la_pila() {
     assert!(respuesta.problems.is_empty(), "{:#?}", respuesta.problems);
     assert!(respuesta.accepted);
 }
+
+/// Un comentario sigue hasta el fin de línea, con cualquier carácter: antes se
+/// cortaba en el primer acento o símbolo y el resto se analizaba como código.
+#[test]
+fn un_comentario_acepta_cualquier_caracter_hasta_el_fin_de_linea() {
+    let fuente = concat!(
+        "// Código muerto: instrucciones inalcanzables tras una sentencia terminal.\n",
+        "//!Una sentencia TERMINAL transfiere el control — `return`, `break`.\n",
+        "//! (`%return`, `%break`) * / { } [ ] # @ $ & | ^ ~ \" ' \\ < > ñ ¿¡ → 😀\n",
+        "let a: integer = 1; // también al final de una línea: a + b * (c)\n",
+        "print(a);\n",
+        "// y en la última línea, sin salto final",
+    );
+    let respuesta = pipeline(fuente);
+    assert!(respuesta.problems.is_empty(), "{:#?}", respuesta.problems);
+    assert!(respuesta.accepted && !respuesta.mips.is_empty());
+}
+
+/// Fuera de un comentario, un carácter no ASCII sigue siendo un error léxico.
+#[test]
+fn un_caracter_no_ascii_fuera_de_un_comentario_es_un_error() {
+    let respuesta = pipeline("let año: integer = 1;\n// ñ aquí sí vale\n");
+    assert!(!respuesta.problems.is_empty());
+    assert_eq!(respuesta.problems[0]["line"], 1, "{:#?}", respuesta.problems);
+}

@@ -300,6 +300,8 @@ pub fn build_nfa_from_ast(ast: &crate::lexico::regex::ast::RegexAst, id_counter:
                         inverted.push(ch);
                     }
                 }
+                // Lo que no es ASCII tampoco está en la lista de excluidos.
+                inverted.push(crate::lexico::table::transition_table::NON_ASCII);
                 expanded_chars = inverted;
             }
 
