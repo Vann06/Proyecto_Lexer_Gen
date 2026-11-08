@@ -119,12 +119,14 @@ const HL_RULES = {
 };
 
 /* Extensión real del archivo cargado, no el slot fijo — así un .cps se
-   resalta como Compiscript y un input.txt plano sigue sin resaltado. */
+   resalta como Compiscript y un input.txt plano sigue sin resaltado. Un .rs
+   también se resalta como Compiscript: es como lo analiza el compilador, así
+   que lo que queda sin color es lo que el lenguaje no reconoce. */
 function langForFile(f){
   const name = (f && f.name) || "";
   if (name.endsWith(".yal") || name.endsWith(".yalex")) return "yal";
   if (name.endsWith(".yalp") || name.endsWith(".yapar")) return "yalp";
-  if (name.endsWith(".cps")) return "cps";
+  if (name.endsWith(".cps") || name.endsWith(".rs")) return "cps";
   if (name.endsWith(".g4")) return "g4";
   return "txt";
 }
