@@ -1,167 +1,227 @@
-# Lexer Generator
+# Proyecto Lexer Generator
 
-Generador de analizadores léxicos (YALex) y sintácticos LR/LL (YAPar), con una
-API HTTP y un IDE web (`frontend/IDE-lite/`) para compilar gramáticas y ver la
-traza de parseo paso a paso. Ver [GUIA_USO.md](GUIA_USO.md) para levantar el
-IDE + API, o seguir leyendo para el generador de lexers standalone (CLI).
-Cubre léxico y sintáctico (Fases 0–14 del libro del dragón) y el **análisis
-semántico completo** (Fase 15), ya conectado a la API y al IDE: tabla de
-símbolos con entornos anidados, sistema de tipos, clases y herencia, funciones
-y closures, control de flujo, colecciones, duplicados y código muerto — 40
-diagnósticos con línea y columna. Ver
-[ARQUITECTURA.md](ARQUITECTURA.md) para cómo está construida esa fase, incluida
-[la explicación de por qué el analizador sintáctico es propio y no
-ANTLR](ARQUITECTURA.md#por-qué-no-se-usó-antlr).
+Compilador educativo escrito en Rust que implementa el flujo completo desde
+una especificación léxica y sintáctica hasta código intermedio y código objetivo
+MIPS. El proyecto incluye una CLI, una API HTTP y un IDE web para explorar las
+distintas fases de compilación.
 
-También genera **código intermedio** (Fase 16, Proyecto 2): código de tres
-direcciones (TAC) con reciclaje de temporales, registros de activación con
-enlaces de control y de acceso, funciones anidadas, clases con vtables y
-listas, más un intérprete que lo ejecuta. El lenguaje intermedio, la
-arquitectura y cómo usarlo están en
-[CODIGO_INTERMEDIO.md](CODIGO_INTERMEDIO.md). Código objetivo sigue en el
-roadmap — ver [ORGANIZACION.md](ORGANIZACION.md#fases-futuras-no-implementadas).
+El lenguaje principal de las pruebas de extremo a extremo es **CompiScript**.
+También se incluyen gramáticas y fuentes de ejemplo para expresiones, C,
+Python y Pascalito.
 
-```bash
-cargo run --bin cpsc -- workspace/rubrica.cps --run   # TAC, tabla extendida y salida
-cargo test --test tac_battery_tests                   # batería de casos exitosos y fallidos
-```
+## Demostración
 
-**¿Buscas los entregables?**
-[ARQUITECTURA.md §0](ARQUITECTURA.md#0-dónde-está-cada-entregable) mapea cada
-uno —analizador, árbol visual, tabla de símbolos por entorno, batería de
-pruebas, IDE y documentación— a su archivo y al comando que lo ejecuta,
-incluida la **batería de 45 casos** (`workspace/casos_semanticos.txt`) con su
-tabla regla→código y cómo recorrerla desde el IDE.
+[Ver el video de demostración: generación y ejecución de código ensamblador](https://uvggt-my.sharepoint.com/:v:/r/personal/cas23201_uvg_edu_gt/_layouts/15/stream.aspx?id=%2Fpersonal%2Fcas23201_uvg_edu_gt%2FDocuments%2F2026_S2%2FCompis%2FViedo_Codigo_Asm.mp4&share=cQo2uBzm0AnqTYr2mVBe54PREgUCESTBC_BIG_vT4RxA3aHrNg&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJPbmVEcml2ZUZvckJ1c2luZXNzIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXciLCJyZWZlcnJhbFZpZXciOiJNeUZpbGVzTGlua0NvcHkifX0)
 
-**¿Vas a escribir código?** Revisa primero
-[API_REFERENCE.md](API_REFERENCE.md) — índice de cada función y método del
-proyecto (backend y frontend) con `archivo:línea`, para no reimplementar lo que
-ya existe.
-
-## Objetivo
-Leer un archivo `.yal`, procesar sus definiciones y reglas, construir internamente los autómatas necesarios y generar un analizador léxico funcional.
-
-## Flujo del proyecto
-1. Parseo de especificación YALex
-2. Expansión de definiciones (`let`)
-3. Parseo de expresiones regulares a AST
-4. Construcción de AFN (Thompson)
-5. Conversión AFN -> AFD
-6. Minimización de AFD
-7. Generación de tabla de transiciones
-8. Simulación del lexer
-9. Generación de código fuente del analizador
-
----
-
-## 2. Estructura general
+## Flujo del compilador
 
 ```text
-lexer-generator/
-├── Cargo.toml
-├── .gitignore
-├── README.md
-├── Dockerfile.api
-├── docker-compose.yml
-├── frontend/IDE-lite/    # IDE React (servido por nginx en el contenedor)
-├── examples/
-│   ├── lexer/            # .yal de ejemplo (ejemplo_c.yal, hardtest.yal, ...)
-│   ├── grammar/          # .yalp de ejemplo
-│   ├── source/           # fuentes de prueba para tokenizar/parsear
-│   └── cases/            # casos de extremo a extremo (lexer+grammar+input+README por caso)
-├── workspace/            # archivos que sirve /api/workspace (montados como volumen en Docker)
-├── generated/            # salida de `cargo run` — crate standalone con el lexer generado
-├── tests/                # tests de integración (cargo test)
-└── src/
-    ├── lib.rs                # raíz del crate — declara lexico, sintactico, api, error
-    ├── main.rs                # CLI del generador de lexers standalone
-    ├── error.rs
-    ├── lexico/                # ── ANÁLISIS LÉXICO ──
-    │   ├── spec/              #   parseo de .yal (header, definiciones, reglas, trailer)
-    │   ├── regex/              #   parseo de expresiones regulares a AST
-    │   ├── automata/            #   Thompson (NFA), subset construction (DFA), minimización
-    │   ├── table/                #   tabla de transiciones del DFA
-    │   ├── runtime/               #   simulador del lexer (maximal munch) + síntesis INDENT/DEDENT
-    │   ├── codegen/                #   emite el lexer.rs standalone
-    │   └── graph/                   #   exporta AST/DFA a Graphviz DOT
-    ├── sintactico/            # ── ANÁLISIS SINTÁCTICO ──
-    │   ├── gramatica/          #   gramática YAPar (.yalp → Grammar), FIRST/FOLLOW
-    │   ├── automatas/           #   LR(0)/LR(1)/LALR
-    │   ├── tablas.rs             #   tabla ACTION/GOTO, conflictos
-    │   └── runtime/               #   parser LR dirigido por tabla, LL(1), árbol de derivación
-    ├── semantico/             # ── ANÁLISIS SEMÁNTICO (FASE 15, EN PROGRESO) ──
-    │   ├── analyzer/          #   walker genérico sobre ParseNode
-    │   ├── scopes/            #   entornos global/función/clase/bloque
-    │   ├── symbols/           #   tabla de símbolos y validación de asignaciones/const
-    │   ├── types/             #   Type, tabla de compatibilidad y coerciones
-    │   ├── spec/              #   reglas declarativas por gramática
-    │   ├── flow/              #   condiciones, break/continue, pila de contexto
-    │   └── operators/         #   lógicas, comparaciones, unarias, operando-no-valor
-    ├── api/                   # ── CAPA HTTP COMPARTIDA ── (lógica del servidor y los tests)
-    └── bin/
-        ├── api.rs                 # servidor HTTP (Axum) — expone api:: al IDE
-        ├── test_lalr.rs            # REPL de consola para LALR(1)/LR(1)
-        ├── test_ll1.rs              # REPL de consola para LL(1)
-        └── test_pipeline.rs          # pipeline completo por CLI: .yal + .yalp + fuente → árbol
+.yal + .yalp/.yapar + .cps
+             │
+             ▼
+  análisis léxico (AFN → AFD → AFD mínimo)
+             │
+             ▼
+  análisis sintáctico (LL(1), SLR, LR(1), LALR)
+             │
+             ▼
+  análisis semántico y tabla de símbolos
+             │
+             ▼
+  código de tres direcciones (TAC) + VM
+             │
+             ▼
+  ensamblador MIPS para MARS 4.5
 ```
 
----
+### Componentes principales
 
-## Avance del análisis semántico
+- **Lexer YALex:** definiciones regulares, construcción de AFN por Thompson,
+  conversión a AFD, minimización, *maximal munch*, simulación y generación de
+  un lexer standalone en Rust.
+- **Parser YAPar:** cálculo de `FIRST`/`FOLLOW`, tablas LL(1), SLR, LR(1) y
+  LALR, detección de conflictos y árbol de derivación exportable a DOT.
+- **Semántica:** ámbitos anidados, tipos, funciones, cierres, clases,
+  herencia, colecciones, flujo de control, duplicados, código muerto y
+  diagnósticos con línea y columna.
+- **Código intermedio:** TAC organizado por funciones, registros de
+  activación, enlaces de control y acceso, vtables, listas, manejo de errores
+  y una máquina virtual usada como oráculo de ejecución.
+- **Código objetivo MIPS:** secciones `.data`/`.text`, llamadas directas y
+  virtuales, prólogos y epílogos, runtime, `try`/`catch`, análisis de vida,
+  asignación `getReg()` sobre registros `$t`/`$s` y derrames a pila.
+- **Herramientas de uso:** CLI `cpsc`, API con Axum, IDE web y despliegue con
+  Docker Compose.
 
-El módulo `src/semantico/types/` concentra las reglas de tipado para evitar
-que el walker, la tabla de símbolos y las futuras fases reimplementen la misma
-política. Actualmente incluye:
+## Estado de la entrega MIPS
 
-- `Type`: `Int`, `Float`, `Bool`, `Str`, `Void`, tipos nominales, arreglos y
-  `Unknown`.
-- `CompatibilityTable`: resolución central de operaciones y asignaciones.
-- Verificación de `+`, `-`, `*` y `/` para operandos `integer`/`float`.
-- Coerción implícita segura `integer -> float`; no se permite
-  `float -> integer`.
-- Validación del valor inicial y de cada asignación contra el tipo declarado.
-- Inicializador obligatorio para constantes y rechazo de su reasignación.
-- `Unknown` ("esta fase no supo tipar la expresión") es NEUTRO: no participa
-  en ninguna incompatibilidad, ni como destino ni como valor. Es la diferencia
-  entre "no lo sé" y "está mal" — tratarlo como tipo real convertía cada hueco
-  de tipado en un diagnóstico falso.
+Las fases 0–4 de [PLAN_MIPS.md](PLAN_MIPS.md) están implementadas en
+`src/codigo_objetivo/`:
 
-La tabla numérica compartida por los cuatro operadores es:
+| Parte | Implementación |
+|---|---|
+| Emisión del programa | `asm.rs`, `data.rs`, `names.rs`, `mod.rs` |
+| Expresiones, control, listas y campos | `instr.rs` |
+| Llamadas, retorno y registros de activación | `calls.rs` |
+| Rutinas de apoyo y excepciones | `runtime.asm`, `runtime.rs` |
+| Vida de temporales y `getReg()` | `liveness.rs`, `regs.rs` |
 
-| Izquierda | Derecha | Resultado | Coerción |
-|---|---|---|---|
-| `integer` | `integer` | `integer` | ninguna |
-| `integer` | `float` | `float` | izquierda a `float` |
-| `float` | `integer` | `float` | derecha a `float` |
-| `float` | `float` | `float` | ninguna |
+El ensamblador producido está diseñado para **MARS 4.5** y las pruebas de las
+fases 0–4 lo ejecutan cuando Java y `tools/Mars4_5.jar` están disponibles. El
+JAR no está versionado en este repositorio.
 
-Las pruebas de integración están en `tests/type_system_tests.rs` y se pueden
-ejecutar de forma aislada con:
+> **Estado actual de `main`:** la integración final de la Fase 5 descrita en
+> `PLAN_MIPS.md` —`sim.rs`, `cpsc --mips/--sim` y las vistas MIPS de la API y
+> el IDE— todavía no forma parte del código. La generación MIPS se consume hoy
+> mediante `codigo_objetivo::generate` y se valida desde las pruebas.
+
+### Probar la generación con MARS
+
+Requisitos:
+
+- Rust estable y Cargo.
+- Java 8 o posterior.
+- MARS 4.5 guardado localmente como `tools/Mars4_5.jar`.
+
+```powershell
+# Ejecuta únicamente las pruebas de las fases MIPS.
+cargo test --test mips_fase0_tests
+cargo test --test mips_fase1_tests
+cargo test --test mips_fase2_tests
+cargo test --test mips_fase3_tests
+cargo test --test mips_fase4_tests
+
+# Obliga a que las pruebas fallen si Java o el JAR de MARS no están presentes.
+$env:MIPS_REQUIRED = "1"
+cargo test --test mips_fase3_tests
+```
+
+Sin `MIPS_REQUIRED=1`, las comprobaciones puramente estructurales siempre se
+ejecutan y los casos que necesitan MARS se omiten con un aviso cuando falta el
+simulador.
+
+Para abrir y ejecutar manualmente un `.asm` ya generado:
+
+```powershell
+java -Dfile.encoding=ISO-8859-1 -jar tools/Mars4_5.jar nc sm se2 ae3 output/programa.asm
+```
+
+Las opciones `nc sm se2 ae3` evitan la interfaz gráfica, ejecutan el programa
+y hacen que MARS propague el código de salida del programa simulado.
+
+## Inicio rápido
+
+### Compilar y ejecutar pruebas
 
 ```bash
-cargo test --test type_system_tests
+cargo build
+cargo test
 ```
 
-La infraestructura semántica **sí** forma parte de la respuesta del pipeline
-HTTP: `api::build_pipeline_response_named` corre el analizador sobre el árbol
-real y devuelve `problems`, `symbol_table` y `closures`
-(`src/api/pipeline.rs`). Se activa cuando el `.yalp` trae `%ident` y el modo no
-es `ll1` — LL(1) renombra producciones al factorizar, así que un `SemanticSpec`
-escrito contra los nombres originales dejaría de encontrarlas.
+### Compilar CompiScript a TAC
 
----
+La CLI toma por defecto `workspace/compiscript.yal` y
+`workspace/compiscript.yalp`:
 
+```bash
+# Muestra TAC y la tabla de símbolos extendida.
+cargo run --bin cpsc -- workspace/rubrica.cps
 
-## Ejecución (CLI del generador de lexers)
+# Además ejecuta el TAC en la máquina virtual.
+cargo run --bin cpsc -- workspace/rubrica.cps --run
 
-Pruebas con varios .txt de entrada en `examples/` y generación de lexers en `generated/`.
-Input txt propuestos en el proyecto (bajo `examples/source/`):
-* `input_test.txt`, `input_test2.txt`: texto de prueba con tokens válidos e inválidos.
-* `input_errors.txt`: texto de prueba con errores léxicos.
+# Usa la tabla SLR en lugar de LALR.
+cargo run --bin cpsc -- workspace/rubrica.cps --slr
+```
+
+### Generar un lexer standalone
 
 ```bash
 cargo run -- examples/lexer/ejemplo_c.yal examples/source/input_test2.txt
 ```
 
-El código generado queda en `generated/src/lexer.rs` (crate standalone,
-`cargo run` dentro de `generated/` lo compila y ejecuta sobre el `.txt`).
+El lexer generado queda en `generated/src/lexer.rs`. El directorio
+`generated/` es un crate independiente que puede compilarse y ejecutarse con
+`cargo run`.
+
+## IDE y API
+
+La forma más sencilla de levantar ambos servicios es Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+| Servicio | Dirección |
+|---|---|
+| IDE web | [http://localhost:4000](http://localhost:4000) |
+| API Rust | [http://localhost:8080](http://localhost:8080) |
+| Health check | [http://localhost:8080/health](http://localhost:8080/health) |
+
+También se pueden iniciar por separado:
+
+```bash
+# Terminal 1
+cargo run --bin api
+
+# Terminal 2
+python3 -m http.server 5500 --directory frontend/IDE-lite
+```
+
+El IDE permite editar archivos del `workspace`, analizar una fuente y revisar
+tokens, traza del parser, árbol sintáctico anotado, problemas, tablas de
+símbolos, tipos, layouts y TAC. Los endpoints y formatos completos están en
+[GUIA_USO.md](GUIA_USO.md) y [API_REFERENCE.md](API_REFERENCE.md).
+
+## Estructura del repositorio
+
+```text
+Proyecto_Lexer_Gen/
+├── src/
+│   ├── lexico/              # especificaciones, regex, autómatas y runtime
+│   ├── sintactico/          # gramáticas, autómatas LR/LL y tablas
+│   ├── semantico/           # símbolos, tipos, ámbitos y layouts
+│   ├── intermedio/          # generación TAC y máquina virtual
+│   ├── codigo_objetivo/     # generación de ensamblador MIPS
+│   ├── api/                 # lógica compartida por HTTP y pruebas
+│   └── bin/
+│       ├── api.rs           # servidor Axum
+│       └── cpsc.rs          # compilador de CompiScript por consola
+├── frontend/IDE-lite/       # IDE web en React
+├── examples/                # lexers, gramáticas, fuentes y casos completos
+├── workspace/               # archivos editables y casos de la rúbrica
+├── tests/                   # pruebas unitarias y de integración
+├── generated/               # crate del lexer generado
+├── output/                  # salidas locales no versionadas
+├── PLAN_MIPS.md             # plan y contrato de la entrega MIPS
+├── CODIGO_INTERMEDIO.md     # diseño y contrato del TAC
+├── ARQUITECTURA.md          # arquitectura general
+└── GUIA_USO.md              # guía del IDE y la API
+```
+
+## Documentación
+
+- [ARQUITECTURA.md](ARQUITECTURA.md): diseño del compilador y ubicación de
+  los entregables.
+- [CODIGO_INTERMEDIO.md](CODIGO_INTERMEDIO.md): instrucciones TAC, VM y
+  contrato TAC → MIPS.
+- [PLAN_MIPS.md](PLAN_MIPS.md): fases, decisiones y pruebas del backend MIPS.
+- [GUIA_USO.md](GUIA_USO.md): uso del IDE, API y Docker.
+- [API_REFERENCE.md](API_REFERENCE.md): referencia de funciones y endpoints.
+- [ORGANIZACION.md](ORGANIZACION.md): organización histórica de las fases.
+
+## Pruebas
+
+El proyecto contiene pruebas unitarias dentro de los módulos y pruebas de
+integración en `tests/`, que cubren el lexer, los parsers, la semántica, TAC,
+la VM, la API y las fases MIPS.
+
+```bash
+# Batería completa
+cargo test
+
+# Algunos grupos útiles durante el desarrollo
+cargo test --test semantic_analysis_tests
+cargo test --test tac_battery_tests
+cargo test --test api_pipeline_tests
+```
