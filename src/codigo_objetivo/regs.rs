@@ -385,7 +385,10 @@ impl GetRegAlloc {
             .get(self.current)
             .cloned()
             .unwrap_or_default();
-        let temps: Vec<(usize, Reg)> = self.temp_register.iter().map(|(&t, &r)| (t, r)).collect();
+        // En orden de temporal: un `HashMap` no tiene orden fijo y el `.asm` cambiaría
+        // entre dos compilaciones del mismo programa.
+        let mut temps: Vec<(usize, Reg)> = self.temp_register.iter().map(|(&t, &r)| (t, r)).collect();
+        temps.sort_unstable_by_key(|&(temp, _)| temp);
         for (temp, reg) in temps {
             if live.contains(&temp) && !self.temp_in_memory.get(&temp).copied().unwrap_or(false) {
                 instr(out, "sw", &[&reg, &self.slot(temp)]);
@@ -525,7 +528,10 @@ impl RegAlloc for GetRegAlloc {
     }
 
     fn before_call(&mut self, out: &mut Vec<AsmLine>) {
-        let temps: Vec<(usize, Reg)> = self.temp_register.iter().map(|(&t, &r)| (t, r)).collect();
+        // En orden de temporal: un `HashMap` no tiene orden fijo y el `.asm` cambiaría
+        // entre dos compilaciones del mismo programa.
+        let mut temps: Vec<(usize, Reg)> = self.temp_register.iter().map(|(&t, &r)| (t, r)).collect();
+        temps.sort_unstable_by_key(|&(temp, _)| temp);
         for (temp, reg) in temps {
             if matches!(reg, Reg::T(_)) && !self.temp_in_memory.get(&temp).copied().unwrap_or(false)
             {

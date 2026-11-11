@@ -61,11 +61,11 @@ pub fn emit_string(
     code.push_str(&format!("const N_STATES: usize = {};\n", n));
     code.push_str("const DEAD: i32 = -1;\n\n");
 
-    code.push_str(&format!("static DELTA: [[i32; 128]; {}] = [\n", n));
+    code.push_str(&format!("static DELTA: [[i32; 129]; {}] = [\n", n));
     for s in 0..n {
         code.push_str("    [");
-        let row: Vec<String> = (0..128u8)
-            .map(|c| tt.delta[s][c as usize].to_string())
+        let row: Vec<String> = (0..transition_table::COLUMNS)
+            .map(|c| tt.delta[s][c].to_string())
             .collect();
         code.push_str(&row.join(", "));
         code.push_str("],\n");
@@ -114,8 +114,8 @@ pub fn emit_string(
     code.push_str("    let (mut last_pos, mut last_tok, mut last_action) = (None::<usize>, None::<&str>, None::<&str>);\n");
     code.push_str("    let (mut last_line, mut last_col) = (start_line, start_col);\n\n");
     code.push_str("    while *pos < input.len() {\n");
-    code.push_str("        let c = input[*pos] as usize;\n");
-    code.push_str("        if c >= 128 { break; }\n");
+    // Todo carácter no ASCII cae en la columna 128, igual que en el simulador.
+    code.push_str("        let c = (input[*pos] as usize).min(128);\n");
     code.push_str("        let next = DELTA[state as usize][c];\n");
     code.push_str("        if next == DEAD { break; }\n");
     code.push_str("        state = next; *pos += 1;\n");

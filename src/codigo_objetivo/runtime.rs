@@ -24,11 +24,11 @@ pub fn data_section() -> Vec<AsmLine> {
         AsmLine::Label("rt_null".into()),
         AsmLine::Directive(r#".asciiz "null""#.into()),
         AsmLine::Label("rt_error_prefix".into()),
-        AsmLine::Directive(".byte 69, 114, 114, 111, 114, 32, 101, 110, 32, 116, 105, 101, 109, 112, 111, 32, 100, 101, 32, 101, 106, 101, 99, 117, 99, 105, 195, 179, 110, 58, 32, 0".into()),
+        AsmLine::Directive(r#".asciiz "Error en tiempo de ejecucion: ""#.into()),
         AsmLine::Label("rt_msg_index".into()),
-        AsmLine::Directive(".byte 195, 173, 110, 100, 105, 99, 101, 32, 102, 117, 101, 114, 97, 32, 100, 101, 32, 114, 97, 110, 103, 111, 0".into()),
+        AsmLine::Directive(r#".asciiz "indice fuera de rango""#.into()),
         AsmLine::Label("rt_msg_div0".into()),
-        AsmLine::Directive(".byte 100, 105, 118, 105, 115, 105, 195, 179, 110, 32, 112, 111, 114, 32, 99, 101, 114, 111, 0".into()),
+        AsmLine::Directive(r#".asciiz "division por cero""#.into()),
     ]
 }
 

@@ -15,7 +15,8 @@ mod sintactico;
 pub use codegen::build_codegen_response;
 pub use pipeline::{
     build_pipeline_response, build_pipeline_response_named,
-    build_pipeline_response_named_with_run, build_pipeline_response_with_run,
+    build_pipeline_response_named_with_run, build_pipeline_response_with_options,
+    build_pipeline_response_with_run, PipelineOptions,
 };
 pub use sintactico::{build_compile_response, build_parse_response};
 // Re-exportada porque tests/semantic_analysis_tests.rs la necesita para
@@ -113,6 +114,19 @@ pub struct ParseResponse {
     /// `run: true` y existió un TAC válido para ejecutar.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_output: Option<String>,
+    /// Ensamblador MIPS. Vacío si no hubo TAC o si el programa no se puede
+    /// traducir (el motivo llega como `M###` en `problems`).
+    pub mips: String,
+    /// Registros, derrames y `$s` guardados por función. `null` si no hay `mips`.
+    pub mips_stats: Value,
+    /// Lo que imprimió el programa en MARS. Solo con `run_mips: true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mips_output: Option<String>,
+    /// Código de salida en MARS: 0 bien, 1 error sin `try`, 2 si no llegó a
+    /// terminar (el motivo llega como `M902`–`M906` en `problems`). Solo con
+    /// `run_mips: true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mips_exit_code: Option<i32>,
 }
 
 #[derive(Serialize)]

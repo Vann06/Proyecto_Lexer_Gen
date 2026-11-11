@@ -72,14 +72,17 @@ Módulo de destino: `src/codigo_objetivo/` (hoy solo tiene un comentario
 - El `.jar` va en el repositorio: `tools/Mars4_5.jar` (licencia MIT). Así
   las pruebas y el CI usan siempre la misma versión, sin descargar nada.
 - Se corre sin interfaz:
-  `java -Dfile.encoding=ISO-8859-1 -jar tools/Mars4_5.jar nc sm se2 ae3 programa.asm`
+  `java -Dline.separator=<LF> -Dfile.encoding=ISO-8859-1 -jar tools/Mars4_5.jar nc sm se2 ae3 programa.asm`
   - `nc`: sin aviso de copyright; `sm`: empieza en `main`;
   - `se2` / `ae3`: código de salida 2 si falla la simulación, 3 si falla el
     ensamblado (para distinguirlos del `1` del programa, §4.7).
-  - `-Dfile.encoding=ISO-8859-1`: MARS escribe cada byte como un carácter;
-    con Latin-1 los bytes salen tal cual y la prueba los decodifica como
-    UTF-8 (necesario por `índice`, `división`). **Verificar en la Fase 5**;
-    en Java 18+ puede hacer falta también `-Dstdout.encoding=ISO-8859-1`.
+  - `-Dfile.encoding=ISO-8859-1` (y `-Dstdout.encoding`, para Java 18+): MARS
+    escribe cada byte como un carácter y con Latin-1 salen tal cual.
+  - `-Dline.separator`: al terminar, MARS escribe siempre un salto de línea
+    propio, aunque el programa no imprima nada. Con esta opción es `
+` en
+    todos los sistemas, y `run_mars` quita ese único salto: lo que devuelve es
+    exactamente lo que imprimió el programa.
 - Requiere Java 8 o superior. Si no hay `java` o no está el `.jar`, las
   pruebas que ejecutan MARS **se saltan con un aviso**, salvo que exista la
   variable `MIPS_REQUIRED=1` (el CI la pone y ahí fallan).
@@ -186,12 +189,12 @@ termina con `li $v0, 10` / `syscall`.
   `try_end` lo desapila. (El TAC ya emite un `try_end` antes de cada
   `return` o `break` que sale de un `try`, así que la pila queda balanceada.)
 - Al fallar (`rt_error` con la dirección del mensaje en `$a0`):
-  - si `rt_try_top` es 0: imprime `Error en tiempo de ejecución: <mensaje>`
+  - si `rt_try_top` es 0: imprime `Error en tiempo de ejecucion: <mensaje>`
     y termina con código 1 (`syscall` 17);
   - si no: desapila, restaura `$fp`, `$s0–$s7` y `$sp`, guarda el mensaje en
     `rt_exception` y salta a `L`. `x = exception` lee `rt_exception`.
-- Mensajes fijos (los mismos del intérprete): `índice fuera de rango`,
-  `división por cero`.
+- Mensajes fijos (los mismos del intérprete), sin acentos para que sean
+  ASCII: `indice fuera de rango`, `division por cero`.
 
 ### 4.8 Supuestos
 - `float` no existe en la gramática: `+f`, `-f`, `*f`, `/f`, `minusf`,
@@ -520,8 +523,12 @@ exactamente la salida del intérprete.
 - `sim.rs`:
   - `pub fn mars_available() -> bool`;
   - `pub fn run_mars(asm: &str, timeout: Duration) -> Result<SimResult, SimError>`
-    con `SimResult { stdout: String, exit_code: i32 }` y `SimError::{NoJava,
-    NoJar, Timeout, Assemble(String)}`;
+    con `SimResult { stdout: String, exit_code: i32, stop: Option<SimStop> }`
+    y `SimError::{NoJava, NoJar, Assemble(String)}`;
+  - `SimStop` dice por qué MARS no dejó terminar al programa, y la salida
+    impresa hasta ahí se conserva: `StepLimit` (`M902`) y `Timeout` (`M903`)
+    son un posible ciclo infinito, `StackOverflow` (`M904`) una posible
+    recursión infinita, `OutOfMemory` (`M905`) y `Fault` (`M906`) el resto;
   - escribe el `.asm` a un archivo temporal, corre el comando de §4.1,
     decodifica la salida como UTF-8 y corta a los 10 segundos.
 - `tools/Mars4_5.jar` y, en `ci.yml`, `actions/setup-java` (Java 17) y
@@ -552,8 +559,7 @@ exactamente la salida del intérprete.
 
 **Pruebas** (`tests/api_mips_tests.rs` y las de `cpsc`):
 - `run_mars` con un `hola.asm` a mano (salida y código de salida), con un
-  `.asm` que no ensambla (`SimError::Assemble`) y con un ciclo infinito
-  (`Timeout`).
+  `.asm` que no ensambla (`SimError::Assemble`) y con cada `SimStop`.
 - `/api/pipeline` devuelve `mips` para un programa válido y no lo devuelve
   si hay errores.
 - `cpsc --mips -o` escribe el archivo.

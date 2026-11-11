@@ -6,9 +6,23 @@ use crate::lexico::automata::dfa::Dfa;
 
 pub const DEAD: i32 = -1;
 
+/// Representa a TODOS los caracteres no ASCII en una sola columna de la tabla.
+/// Solo lo producen las clases negadas (`[^...]`): "cualquier cosa menos estos"
+/// incluye acentos, `ñ`, rayas y demás, que no caben uno por uno en la tabla.
+pub const NON_ASCII: char = '\u{80}';
+
+/// Columnas de la tabla: los 128 caracteres ASCII más la de `NON_ASCII`.
+pub const COLUMNS: usize = 129;
+
+/// Columna que le toca a un carácter: el suyo si es ASCII, si no la compartida.
+pub fn column(c: char) -> usize {
+    (c as usize).min(NON_ASCII as usize)
+}
+
 #[derive(Debug, Clone)]
 pub struct TransitionTable {
-    /// delta[state][char as usize] = next_state o DEAD (solo ASCII 0..127)
+    /// delta[state][column(char)] = next_state o DEAD (ASCII 0..127 y la columna 128
+    /// para cualquier carácter no ASCII)
     pub delta: Vec<Vec<i32>>,
     /// accept[state] = Some(acción/token) o None
     pub accept: Vec<Option<String>>,
@@ -19,10 +33,10 @@ pub struct TransitionTable {
 
 impl TransitionTable {
     pub fn next(&self, state: usize, c: char) -> i32 {
-        if state >= self.n_states || (c as usize) >= 128 {
+        if state >= self.n_states {
             return DEAD;
         }
-        self.delta[state][c as usize]
+        self.delta[state][column(c)]
     }
 
     pub fn is_accepting(&self, state: usize) -> bool {
@@ -95,14 +109,16 @@ pub fn kind_from_action(action: &str) -> String {
 /// Se asume que los IDs de estado del DFA son contiguos 0..n-1.
 pub fn build(dfa: &Dfa) -> TransitionTable {
     let n = dfa.states.len();
-    let mut delta: Vec<Vec<i32>> = vec![vec![DEAD; 128]; n];
+    let mut delta: Vec<Vec<i32>> = vec![vec![DEAD; COLUMNS]; n];
     let mut accept: Vec<Option<String>> = vec![None; n];
     let mut alphabet_set: HashSet<char> = HashSet::new();
 
     for (_id, state) in &dfa.states {
         for (c, to_id) in &state.transitions {
-            if (*c as usize) < 128 {
-                delta[state.id][*c as usize] = *to_id as i32;
+            if c.is_ascii() || *c == NON_ASCII {
+                delta[state.id][column(*c)] = *to_id as i32;
+            }
+            if c.is_ascii() {
                 alphabet_set.insert(*c);
             }
         }

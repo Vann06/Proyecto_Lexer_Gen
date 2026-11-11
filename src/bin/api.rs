@@ -48,6 +48,9 @@ struct PipelineRequest {
     /// contrato de las peticiones anteriores.
     #[serde(default)]
     run: bool,
+    /// Ejecutar el MIPS generado en MARS. Ausente equivale a `false`.
+    #[serde(default)]
+    run_mips: bool,
 }
 
 #[derive(Deserialize)]
@@ -135,13 +138,13 @@ async fn parse_tokens(
 async fn run_pipeline(
     Json(req): Json<PipelineRequest>,
 ) -> Result<Json<api::ParseResponse>, (StatusCode, Json<Value>)> {
-    api::build_pipeline_response_named_with_run(
+    api::build_pipeline_response_with_options(
         &req.yal_content,
         &req.yalp_content,
         &req.source,
         &req.mode,
         &req.source_name,
-        req.run,
+        api::PipelineOptions { run: req.run, run_mips: req.run_mips, ..Default::default() },
     )
         .map(Json)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))

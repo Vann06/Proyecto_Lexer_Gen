@@ -9,6 +9,8 @@ services:
       - "8080:8080"
     volumes:
       - ./workspace:/app/workspace
+    # Un programa no puede dejar sin memoria a toda la maquina.
+    mem_limit: 1g
     restart: unless-stopped
 
   # UI estática — sirve el IDE (frontend/IDE-lite) en :4000: TAC, tokens,

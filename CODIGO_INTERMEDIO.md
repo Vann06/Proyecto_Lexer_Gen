@@ -721,7 +721,7 @@ más. Cada error lleva código, mensaje, archivo, línea y columna:
 | `P` | Sintáctica | `P001` token inesperado, con los tokens esperados y sugerencia "¿quisiste decir?" |
 | `S` | Semántica | `S002` no declarada, `S006` asignación incompatible, `S013`/`S014` aridad/tipo de argumento, `S016` retorno… (lista completa en `CUMPLIMIENTO_REQUISITOS.md`) |
 | `C` | Generación | `C001` no se genera porque hay errores semánticos; `C002` hay símbolos sin tipo (no se sabe su tamaño); `C003` un literal entero que no cabe en 32 bits |
-| `R` | Ejecución (solo con `--run`) | índice fuera de rango (`check_bounds`), división entre cero (`check_zero`); se pueden capturar con `try/catch`. La variable del `catch` recibe un **texto fijo**, sin números: `índice fuera de rango`, `división por cero` (también para `%`, porque `check_zero` va antes de los dos) o, para cualquier otro error interno, `error en tiempo de ejecución` |
+| `R` | Ejecución (solo con `--run`) | índice fuera de rango (`check_bounds`), división entre cero (`check_zero`); se pueden capturar con `try/catch`. La variable del `catch` recibe un **texto fijo**, sin números ni acentos (así es igual en MARS): `indice fuera de rango`, `division por cero` (también para `%`, porque `check_zero` va antes de los dos) o, para cualquier otro error interno, `error en tiempo de ejecucion` |
 
 Los casos de error de la batería están en `workspace/tac/error/`
 (`lexical.cps`, `syntax.cps`, `semantic_errors.cps`) y los de ejecución en
@@ -815,8 +815,8 @@ desde `fp-12` y debajo los temporales (`tk` en `fp - (marco_sin_temporales +
 | `x = alloc n` | `syscall` 9 (sbrk) |
 | `concat` | Mide los dos textos, reserva y copia |
 | `streq` / `strne` | Compara carácter por carácter |
-| `check_bounds a, i` | Lee la longitud en `a[0]`; si `i` está fuera, error `índice fuera de rango` |
-| `check_zero x` | Si `x` es 0, error `división por cero` |
+| `check_bounds a, i` | Lee la longitud en `a[0]`; si `i` está fuera, error `indice fuera de rango` |
+| `check_zero x` | Si `x` es 0, error `division por cero` |
 | `try_begin L` / `try_end` / `x = exception` | Una pila de manejadores (etiqueta + `$fp`/`$sp` a restaurar); un error salta al de arriba con el mensaje fijo, o termina el programa si no hay ninguno |
 
 ### Lo que decide la fase de MIPS

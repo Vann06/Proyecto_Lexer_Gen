@@ -2,6 +2,9 @@
 // (léxico) y alimenta ese stream al parser (sintáctico) en una sola pasada,
 // devolviendo un ParseResponse con line/col adjunta para que el frontend
 // resalte la línea fuente en cada paso del trace.
+use crate::codigo_objetivo::generate_with as generate_mips;
+use crate::codigo_objetivo::sim::{run_mars, DEFAULT_TIMEOUT};
+use crate::codigo_objetivo::Allocator;
 use crate::intermedio::gen::{extend_layout, generate};
 use crate::intermedio::spec::IntermediateSpec;
 use crate::intermedio::symtab::ExtendedSymbolTable;
@@ -21,9 +24,32 @@ use super::lexico::{build_lexer_table_from_str, lex_is_ignored, lex_normalize_ki
 use super::sintactico::{
     build_lr_table, build_parse_response, build_parse_response_with, build_real_parse_tree,
     build_real_parse_tree_with, collect_lr_syntax_errors, collect_lr_syntax_errors_with,
-    push_syntax_problem,
+    push_syntax_problem, token_spellings,
 };
 use super::ParseResponse;
+
+/// Tokens que acepta un programa. El árbol de una lista o de una suma es tan
+/// profundo como larga sea, y todo lo que lo recorre es recursivo.
+const MAX_TOKENS: usize = 50_000;
+
+/// Paréntesis, corchetes o llaves abiertos a la vez. Cada nivel de paréntesis son
+/// unos 15 niveles del árbol, por todas las reglas de precedencia.
+const MAX_NESTING: usize = 200;
+
+/// Pila del hilo del pipeline, con margen para esos dos límites también en debug.
+/// Solo se reserva: el sistema la entrega a medida que se usa.
+const PIPELINE_STACK_BYTES: usize = 512 * 1024 * 1024;
+
+/// Qué ejecutar además de compilar. Por defecto, nada.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PipelineOptions {
+    /// Ejecutar el TAC en la VM.
+    pub run: bool,
+    /// Ejecutar el MIPS generado en MARS.
+    pub run_mips: bool,
+    /// Cómo asignar los registros del MIPS.
+    pub allocator: Allocator,
+}
 
 /// Punto de entrada usado por los binarios/tests existentes: mismo contrato
 /// que antes, con `source_name` fijo en `"input.txt"` (el nombre que el
@@ -75,6 +101,70 @@ pub fn build_pipeline_response_named_with_run(
     mode: &str,
     source_name: &str,
     run: bool,
+) -> Result<ParseResponse, String> {
+    let options = PipelineOptions { run, ..Default::default() };
+    build_pipeline_response_with_options(yal, yalp, source, mode, source_name, options)
+}
+
+/// Pipeline completo: compila hasta MIPS y ejecuta lo que pida `options`.
+///
+/// Corre en un hilo propio porque agotar la pila no es un error que se pueda
+/// atrapar: mata todo el proceso, incluido el servidor.
+pub fn build_pipeline_response_with_options(
+    yal: &str,
+    yalp: &str,
+    source: &str,
+    mode: &str,
+    source_name: &str,
+    options: PipelineOptions,
+) -> Result<ParseResponse, String> {
+    std::thread::scope(|scope| {
+        let pipeline = std::thread::Builder::new()
+            .stack_size(PIPELINE_STACK_BYTES)
+            .spawn_scoped(scope, || run_pipeline(yal, yalp, source, mode, source_name, options))
+            .expect("el sistema debe poder crear el hilo del pipeline");
+        pipeline.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
+
+/// Un programa demasiado grande o anidado para recorrerlo sin riesgo.
+fn size_problem(tokens: &[(String, String, usize, usize)], yal: &str, source_name: &str) -> Option<Value> {
+    let problem = |msg: String, line: usize, col: usize| {
+        json!({
+            "level": "err",
+            "code": "P002",
+            "msg": msg,
+            "loc": format!("{source_name}:{line}:{col}"),
+            "line": line,
+            "col": col,
+        })
+    };
+    if let Some((_, _, line, col)) = tokens.get(MAX_TOKENS) {
+        return Some(problem(format!("el programa es demasiado largo: el límite es {MAX_TOKENS} tokens"), *line, *col));
+    }
+
+    let spellings = token_spellings(yal);
+    let mut nesting = 0usize;
+    for (kind, _, line, col) in tokens {
+        match spellings.get(kind).map(String::as_str) {
+            Some("(" | "[" | "{") => nesting += 1,
+            Some(")" | "]" | "}") => nesting = nesting.saturating_sub(1),
+            _ => {}
+        }
+        if nesting > MAX_NESTING {
+            return Some(problem(format!("demasiado anidamiento: el límite es {MAX_NESTING} niveles"), *line, *col));
+        }
+    }
+    None
+}
+
+fn run_pipeline(
+    yal: &str,
+    yalp: &str,
+    source: &str,
+    mode: &str,
+    source_name: &str,
+    options: PipelineOptions,
 ) -> Result<ParseResponse, String> {
     let lexer_table = build_lexer_table_from_str(yal)?;
 
@@ -145,6 +235,15 @@ pub fn build_pipeline_response_named_with_run(
     // itself). Splitting
     // internally here both mis-locates errors in genuine multi-line input and rebuilds
     // the whole parse table once per line for no reason.
+    if let Some(problem) = size_problem(&token_map, yal, source_name) {
+        lex_problems.push(problem);
+        return Ok(ParseResponse {
+            error: Some("Error sintáctico".to_string()),
+            problems: lex_problems,
+            ..Default::default()
+        });
+    }
+
     let token_kinds: Vec<String> = token_map.iter().map(|(k, _, _, _)| k.clone()).collect();
 
     let mut response = ParseResponse::default();
@@ -192,8 +291,8 @@ pub fn build_pipeline_response_named_with_run(
             // same "which token was the driver stuck on" heuristic as before — when
             // recovery isn't available or finds nothing (e.g. LL(1) mode).
             let recovered = match &lr_table {
-                Some(table) => collect_lr_syntax_errors_with(table, &grammar_for_filter, &token_map),
-                None => collect_lr_syntax_errors(yalp, &token_map, mode),
+                Some(table) => collect_lr_syntax_errors_with(table, &grammar_for_filter, &token_map, yal),
+                None => collect_lr_syntax_errors(yalp, &token_map, mode, yal),
             };
             if !recovered.is_empty() {
                 for (kind, lexeme, line, col, msg) in &recovered {
@@ -288,7 +387,7 @@ pub fn build_pipeline_response_named_with_run(
                                     response.symbols_ext =
                                         ExtendedSymbolTable::build(&analysis, &program).to_json();
 
-                                    if run {
+                                    if options.run {
                                         let mut vm = Vm::new(&program);
                                         match vm.run() {
                                             Ok(result) => response.run_output = Some(result.output),
@@ -305,6 +404,14 @@ pub fn build_pipeline_response_named_with_run(
                                             }
                                         }
                                     }
+
+                                    add_mips(
+                                        &mut response,
+                                        &mut lex_problems,
+                                        &program,
+                                        source_name,
+                                        options,
+                                    );
                                 }
                                 Err(errors) => {
                                     lex_problems.extend(
@@ -340,6 +447,48 @@ pub fn build_pipeline_response_named_with_run(
     response.problems = lex_problems;
     response.token_map = token_map_json;
     Ok(response)
+}
+
+/// Traduce el TAC a MIPS y, si se pidió, lo ejecuta en MARS.
+fn add_mips(
+    response: &mut ParseResponse,
+    problems: &mut Vec<Value>,
+    program: &TacProgram,
+    source_name: &str,
+    options: PipelineOptions,
+) {
+    let mips = match generate_mips(program, options.allocator) {
+        Ok(mips) => mips,
+        Err(errors) => {
+            problems.extend(errors.iter().map(|error| error.to_problem(source_name)));
+            return;
+        }
+    };
+    response.mips = mips.to_string();
+    response.mips_stats = mips.to_json()["stats"].clone();
+    if !options.run_mips {
+        return;
+    }
+    match run_mars(&response.mips, DEFAULT_TIMEOUT) {
+        Ok(result) => {
+            if let Some(stop) = &result.stop {
+                problems.push(json!({
+                    "level": "err",
+                    "code": stop.code(),
+                    "msg": stop.to_string(),
+                    "loc": source_name,
+                }));
+            }
+            response.mips_output = Some(result.stdout);
+            response.mips_exit_code = Some(result.exit_code);
+        }
+        Err(error) => problems.push(json!({
+            "level": "err",
+            "code": "M901",
+            "msg": format!("no se pudo ejecutar en MARS: {error}"),
+            "loc": source_name,
+        })),
+    }
 }
 
 fn temp_stats(program: &TacProgram) -> Vec<Value> {

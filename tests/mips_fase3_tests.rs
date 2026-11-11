@@ -1,7 +1,6 @@
 //! Fase 3: rutinas de apoyo, errores en ejecución y `try`.
-
-use std::path::Path;
-use std::process::Command;
+#[allow(dead_code)]
+mod common;
 
 use lexer_generator::codigo_objetivo::{generate_with, Allocator};
 use lexer_generator::intermedio::tac::{BinOp, Instr, Operand, PrintKind, TacFunction, TacProgram};
@@ -14,37 +13,6 @@ fn programa(body: Vec<Instr>, max_temps: usize) -> TacProgram {
         main: Some(main),
         ..Default::default()
     }
-}
-
-fn correr_mars(asm: &str, nombre: &str) -> Option<(String, i32)> {
-    let java = Command::new("java")
-        .arg("-version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    let jar = Path::new("tools/Mars4_5.jar");
-    if !java || !jar.exists() {
-        assert!(
-            std::env::var("MIPS_REQUIRED").as_deref() != Ok("1"),
-            "MIPS_REQUIRED=1 pero falta Java o tools/Mars4_5.jar"
-        );
-        eprintln!("AVISO: se omite MARS para {nombre}");
-        return None;
-    }
-    let file = std::env::temp_dir().join(format!("mips_fase3_{nombre}_{}.asm", std::process::id()));
-    std::fs::write(&file, asm).unwrap();
-    let output = Command::new("java")
-        .args(["-Dfile.encoding=ISO-8859-1", "-jar"])
-        .arg(jar)
-        .args(["nc", "sm", "se2", "ae3"])
-        .arg(&file)
-        .output()
-        .unwrap();
-    let _ = std::fs::remove_file(file);
-    Some((
-        String::from_utf8_lossy(&output.stdout).into_owned(),
-        output.status.code().unwrap_or(-1),
-    ))
 }
 
 #[test]
@@ -199,11 +167,11 @@ fn todas_las_instrucciones_de_runtime_se_traducen_y_corren_si_hay_mars() {
     ] {
         assert!(asm.contains(routine), "falta {routine}\n{asm}");
     }
-    if let Some((output, code)) = correr_mars(&asm, "runtime") {
+    if let Some((output, code)) = common::correr_mars(&asm) {
         assert_eq!(code, 0, "{output}");
         assert_eq!(
             output,
-            "42\ntrue\nhola\nnull\nab\ntrue\ndivisión por cero\n"
+            "42\ntrue\nhola\nnull\nab\ntrue\ndivision por cero\n"
         );
     }
 }
@@ -216,9 +184,9 @@ fn error_sin_try_termina_con_codigo_uno_si_hay_mars() {
     )
     .unwrap()
     .to_string();
-    if let Some((output, code)) = correr_mars(&asm, "error_fatal") {
+    if let Some((output, code)) = common::correr_mars(&asm) {
         assert_eq!(code, 1);
-        assert_eq!(output, "Error en tiempo de ejecución: división por cero\n");
+        assert_eq!(output, "Error en tiempo de ejecucion: division por cero\n");
     }
 }
 
@@ -268,9 +236,9 @@ fn try_anidado_entre_funciones_desapila_el_handler_correcto() {
     let asm = generate_with(&program, Allocator::Pila)
         .unwrap()
         .to_string();
-    if let Some((output, code)) = correr_mars(&asm, "try_anidado") {
+    if let Some((output, code)) = common::correr_mars(&asm) {
         assert_eq!(code, 0, "{output}");
-        assert_eq!(output, "división por cero\ndivisión por cero\n");
+        assert_eq!(output, "division por cero\ndivision por cero\n");
     }
 }
 
@@ -306,7 +274,7 @@ fn return_dentro_de_try_desapila_antes_del_epilogo() {
     let asm = generate_with(&program, Allocator::Pila)
         .unwrap()
         .to_string();
-    if let Some((output, code)) = correr_mars(&asm, "return_try") {
+    if let Some((output, code)) = common::correr_mars(&asm) {
         assert_eq!((output.as_str(), code), ("7\n", 0));
     }
 }

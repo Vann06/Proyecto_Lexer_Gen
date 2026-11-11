@@ -200,6 +200,38 @@ impl LRTable {
         tokens
     }
 
+    /// Terminales que de verdad pueden seguir a `stack`, en orden alfabético.
+    ///
+    /// `expected_tokens` de un solo estado se queda corto: LALR fusiona estados, y
+    /// el resultado trae tokens que solo sirven en otro contexto (y que fallarían
+    /// tras una reducción). Aquí se simula cada uno hasta que avanza o falla.
+    pub fn viable_tokens(&self, stack: &[usize]) -> Vec<String> {
+        let Some(&state) = stack.last() else {
+            return Vec::new();
+        };
+        self.expected_tokens(state).into_iter().filter(|token| self.accepts(stack, token)).collect()
+    }
+
+    fn accepts(&self, stack: &[usize], token: &str) -> bool {
+        let mut stack = stack.to_vec();
+        loop {
+            let Some(&top) = stack.last() else {
+                return false;
+            };
+            match self.action.get(&(top, token.to_string())) {
+                Some(Action::Shift(_) | Action::Accept) => return true,
+                Some(Action::Reduce { head, body }) => {
+                    stack.truncate(stack.len().saturating_sub(body.len()));
+                    let Some(&next) = stack.last().and_then(|&state| self.goto.get(&(state, head.clone()))) else {
+                        return false;
+                    };
+                    stack.push(next);
+                }
+                None => return false,
+            }
+        }
+    }
+
     /// Imprime la tabla en formato 2D (terminales + no-terminales como columnas).
     pub fn print_table(&self, grammar: &Grammar) {
         // Recopilar columnas

@@ -8,31 +8,6 @@ use lexer_generator::codigo_objetivo::names::{func_label, label_of, ret_label, S
 use lexer_generator::codigo_objetivo::{generate, generate_partial, Allocator};
 use lexer_generator::intermedio::tac::{BinOp, Instr, Operand, TacFunction, TacProgram};
 use std::collections::HashSet;
-use std::path::Path;
-use std::process::Command;
-
-/// Corre `asm` en MARS. `None` (con aviso) si no hay `java` o `tools/Mars4_5.jar`,
-/// salvo que `MIPS_REQUIRED=1`: ahí es un fallo.
-fn correr_mars(asm: &str) -> Option<(String, i32)> {
-    let hay_java = Command::new("java").arg("-version").output().map(|o| o.status.success()).unwrap_or(false);
-    let jar = Path::new("tools/Mars4_5.jar");
-    if !hay_java || !jar.exists() {
-        assert!(std::env::var("MIPS_REQUIRED").as_deref() != Ok("1"), "MIPS_REQUIRED=1 pero no hay java o tools/Mars4_5.jar");
-        eprintln!("AVISO: se omite la prueba con MARS (no hay java o tools/Mars4_5.jar)");
-        return None;
-    }
-    let archivo = std::env::temp_dir().join(format!("mips_fase0_{}.asm", std::process::id()));
-    std::fs::write(&archivo, asm).unwrap();
-    let o = Command::new("java")
-        .args(["-Dfile.encoding=ISO-8859-1", "-jar"])
-        .arg(jar)
-        .args(["nc", "sm", "se2", "ae3"])
-        .arg(&archivo)
-        .output()
-        .expect("java debe ejecutarse");
-    let _ = std::fs::remove_file(&archivo);
-    Some((String::from_utf8_lossy(&o.stdout).into_owned(), o.status.code().unwrap_or(-1)))
-}
 
 fn texto(lineas: &[AsmLine]) -> String {
     lineas.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n")
@@ -111,7 +86,7 @@ fn un_programa_vacio_ensambla_y_termina_con_cero() {
     let program = TacProgram { main: Some(funcion("main", 0, vec![])), ..Default::default() };
     let asm = generate(&program).expect("programa vacío").to_string();
     assert!(asm.contains(".globl main") && asm.contains("main:") && asm.contains("syscall"), "{asm}");
-    if let Some((salida, codigo)) = correr_mars(&asm) {
+    if let Some((salida, codigo)) = common::correr_mars(&asm) {
         assert_eq!((salida.as_str(), codigo), ("", 0));
     }
 }

@@ -11,6 +11,12 @@ Python y Pascalito.
 
 ## Demostración
 
+```bash
+cargo run --bin cpsc -- workspace/rubrica.cps --run   # TAC, tabla extendida y salida
+cargo run --bin cpsc -- workspace/rubrica.cps -o rubrica.asm --sim  # MIPS a un archivo y ejecución en MARS
+cargo test --test tac_battery_tests                   # batería de casos exitosos y fallidos
+```
+
 [Ver el video de demostración: generación y ejecución de código ensamblador](https://uvggt-my.sharepoint.com/:v:/r/personal/cas23201_uvg_edu_gt/_layouts/15/stream.aspx?id=%2Fpersonal%2Fcas23201_uvg_edu_gt%2FDocuments%2F2026_S2%2FCompis%2FViedo_Codigo_Asm.mp4&share=cQo2uBzm0AnqTYr2mVBe54PREgUCESTBC_BIG_vT4RxA3aHrNg&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJPbmVEcml2ZUZvckJ1c2luZXNzIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXciLCJyZWZlcnJhbFZpZXciOiJNeUZpbGVzTGlua0NvcHkifX0)
 
 ## Flujo del compilador

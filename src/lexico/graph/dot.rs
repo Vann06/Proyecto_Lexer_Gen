@@ -82,6 +82,8 @@ pub fn write_dfa_dot(path: &str, dfa: &Dfa) -> std::io::Result<()> {
         for (c, to_id) in &state.transitions {
             let label = if *c == '\0' {
                 "ε".to_string()
+            } else if *c == crate::lexico::table::transition_table::NON_ASCII {
+                "no ASCII".to_string()
             } else {
                 c.to_string()
             };

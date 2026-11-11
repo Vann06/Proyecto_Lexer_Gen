@@ -19,8 +19,8 @@ switch (2) { case 1: continue; }
 // Una funcion anidada no puede saltar al bucle que la rodea: la frontera de
 // funcion corta la busqueda del contexto.
 while (true) {
-    function saleMal(): integer { break; }
-    function sigueMal(): integer { continue; }
+    function saleMal() { break; }
+    function sigueMal() { continue; }
     print(1);
 }
 

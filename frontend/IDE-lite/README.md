@@ -32,6 +32,7 @@ recalcula ni se reconstruye en el cliente:
 | Pestaña | Campo de `/api/pipeline` |
 |---|---|
 | TAC | `tac`, con resaltado ligero de instrucciones, temporales y etiquetas |
+| MIPS | `mips`, `mips_stats`, y `mips_output` y `mips_exit_code` al ejecutar en MARS |
 | TOKENS | `token_map` |
 | ÁRBOL SINTÁCTICO | `parse_tree_dot` — sale auto-anotado con el tipo de cada expresión en cuanto hay análisis semántico (el "árbol de análisis anotado" del libro del dragón: mismo campo, el backend decide en `api/pipeline.rs` si lo dibuja plano o anotado según si corrió `analyze()`) |
 | SÍMBOLOS | `symbols_ext` (área, offset, tamaño, etiqueta, nivel y frames) **+** `symbol_table` (estado final) **+** `scopes` (una foto de cada entorno Function/Class/Block al cerrarse) |

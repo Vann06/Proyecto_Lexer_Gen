@@ -45,7 +45,7 @@ pub enum ErrorCause {
 #[derive(Debug, Clone)]
 pub enum DriveError {
     /// Error sintáctico y el observador pidió abortar.
-    Syntax { state: usize, ip: usize, token: ParseToken },
+    Syntax { state: usize, ip: usize, token: ParseToken, expected: Vec<String> },
     /// `GOTO[top, head]` no existe: la tabla es internamente inconsistente.
     /// Sin cortar acá, el bucle seguiría con la pila ya reducida y sin avanzar.
     MissingGoto { top: usize, head: String, ip: usize, token: ParseToken },
@@ -89,7 +89,7 @@ pub trait ParseObserver {
     fn on_error(
         &mut self,
         _cause: ErrorCause,
-        _state: usize,
+        _stack: &[usize],
         _ip: usize,
         _token: &ParseToken,
         _table: &LRTable,
@@ -165,7 +165,7 @@ pub fn drive<O: ParseObserver + ?Sized>(
                 // Ciclo detectado: la recuperación anterior no avanzó. Se
                 // fuerza el consumo de un token para garantizar progreso.
                 if last_panic_ip == Some(ip) {
-                    obs.on_error(ErrorCause::LoopGuard, s, ip, &current, table);
+                    obs.on_error(ErrorCause::LoopGuard, &state_stack, ip, &current, table);
                     ip += 1;
                     last_panic_ip = None;
                     if ip >= input.len() {
@@ -175,8 +175,9 @@ pub fn drive<O: ParseObserver + ?Sized>(
                 }
                 last_panic_ip = Some(ip);
 
-                if obs.on_error(ErrorCause::NoAction, s, ip, &current, table) == OnError::Abort {
-                    return Err(DriveError::Syntax { state: s, ip, token: current });
+                if obs.on_error(ErrorCause::NoAction, &state_stack, ip, &current, table) == OnError::Abort {
+                    let expected = table.viable_tokens(&state_stack);
+                    return Err(DriveError::Syntax { state: s, ip, token: current, expected });
                 }
 
                 // ── Modo pánico ───────────────────────────────────────────
@@ -193,18 +194,18 @@ pub fn drive<O: ParseObserver + ?Sized>(
 
                 // 2. Desapilar hasta un estado que acepte ese símbolo.
                 let sync_kind = input[ip].kind.clone();
-                let mut recovered = false;
-                while state_stack.len() > 1 {
-                    let top = *state_stack.last().expect("len > 1");
+                // El estado inicial también cuenta: un error en la primera
+                // sentencia solo se recupera ahí.
+                loop {
+                    let top = *state_stack.last().expect("la pila nunca queda vacía");
                     if table.action.contains_key(&(top, sync_kind.clone())) {
-                        recovered = true;
                         break;
+                    }
+                    if state_stack.len() == 1 {
+                        return Err(DriveError::Unrecovered);
                     }
                     state_stack.pop();
                     obs.on_discard_state();
-                }
-                if !recovered {
-                    return Err(DriveError::Unrecovered);
                 }
                 // 3. Seguir desde el punto de sincronización.
             }
